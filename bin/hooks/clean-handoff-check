@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+# Stop-event clean-handoff audit — lecture-12 "clean state is part of done".
+#
+# When the session ends inside a babysit ticket, check that it leaves a clean
+# handoff: no uncommitted changes in the worktree, and a checkpoint no older
+# than the last commit. Audit-only — like verify-skill-output it never blocks
+# (a Stop hook that blocks would force the agent to keep going); it logs the
+# result to skill-usage.jsonl and emits a systemMessage only on a dirty exit.
+#
+# Ad-hoc shells (no ticket resolves) are never audited — same fail-open rule
+# as pre-tool-gate.
+#
+# Input:  hook JSON on stdin (.cwd).
+# Output: optional systemMessage JSON; always exit 0.
+set -uo pipefail
+
+command -v jq >/dev/null 2>&1 || exit 0   # no jq → silently skip (audit-only)
+
+INPUT="$(cat)"
+CWD="$(printf '%s' "$INPUT" | jq -r '.cwd // empty' 2>/dev/null)"
+[ -n "$CWD" ] && cd "$CWD" 2>/dev/null
+git rev-parse --is-inside-work-tree >/dev/null 2>&1 || exit 0
+
+_bbs_resolve() {
+  local shim="$HOME/.claude/$1" repo="$HOME/.claude/skills/babysit/bin/$1"
+  if [ -x "$shim" ]; then echo "$shim"
+  elif [ -x "$repo" ]; then echo "$repo"
+  elif command -v "$1" >/dev/null 2>&1; then echo "$1"
+  else echo ""; fi
+}
+TICKET_BIN="$(_bbs_resolve bbs-ticket)"
+[ -n "$TICKET_BIN" ] || exit 0
+TICKET="$("$TICKET_BIN" resolve 2>/dev/null)" || exit 0
+[ -n "$TICKET" ] || exit 0
+
+ISSUES=""
+if [ -n "$(git status --porcelain 2>/dev/null | head -1)" ]; then
+  ISSUES="uncommitted changes in the worktree"
+fi
+
+# Checkpoint staleness — only when both a checkpoint and a commit exist.
+CKPT="$("$TICKET_BIN" path checkpoint --read 2>/dev/null || true)"
+if [ -n "$CKPT" ] && [ -f "$CKPT" ]; then
+  LAST_COMMIT="$(git log -1 --format=%ct 2>/dev/null || true)"
+  CKPT_MTIME="$(stat -f %m "$CKPT" 2>/dev/null || stat -c %Y "$CKPT" 2>/dev/null || true)"
+  if [ -n "$LAST_COMMIT" ] && [ -n "$CKPT_MTIME" ] && [ "$CKPT_MTIME" -lt "$LAST_COMMIT" ]; then
+    ISSUES="${ISSUES:+$ISSUES; }checkpoint predates the last commit"
+  fi
+fi
+
+TS="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+LOG="$HOME/.babysit/analytics/skill-usage.jsonl"
+mkdir -p "$(dirname "$LOG")" 2>/dev/null || true
+printf '{"ts":"%s","event":"clean-handoff-audit","ticket":"%s","clean":%s,"issues":"%s"}\n' \
+  "$TS" "$TICKET" "$([ -z "$ISSUES" ] && echo true || echo false)" "$ISSUES" \
+  >> "$LOG" 2>/dev/null || true
+
+if [ -n "$ISSUES" ]; then
+  printf '{"systemMessage":"clean-handoff: session on ticket %s is ending dirty — %s. Commit or stash, and refresh the checkpoint before handing off."}\n' \
+    "$TICKET" "$ISSUES"
+fi
+exit 0

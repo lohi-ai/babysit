@@ -1,0 +1,557 @@
+#!/usr/bin/env bash
+# bbs-ticket-test — smoke test for `bbs-ticket path` / `list` subcommands.
+#
+# Tests run against a tracer ticket under the project's real
+# $BABYSIT_PROJECT_HOME (we can't override it: bbs-slug exports it
+# unconditionally). The tracer is wiped clean before and after.
+#
+# Exit 0 on full pass, 1 on any failure.
+
+set -u
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+BBS_TICKET_BIN="$SCRIPT_DIR/bbs-ticket"
+[ -x "$BBS_TICKET_BIN" ] || { echo "FATAL: $BBS_TICKET_BIN not executable" >&2; exit 1; }
+
+export BBS_TICKET="bs-tracer-$$"
+# Pin legacy sunset/hard-fail to far-future so test outcomes don't drift after
+# the real _LEGACY_HARDFAIL date (2026-09-29) silently flips the resolver.
+export BBS_LEGACY_SUNSET="2099-01-01"
+export BBS_LEGACY_HARDFAIL="2099-01-01"
+SLUG_OUT="$("$SCRIPT_DIR/bbs-slug" env 2>/dev/null || true)"
+eval "$SLUG_OUT"
+PROJECT_HOME="${BABYSIT_PROJECT_HOME:-$HOME/.babysit/projects/${SLUG:-unknown}}"
+TH="$PROJECT_HOME/tickets/$BBS_TICKET"
+
+cleanup() { rm -rf "$TH" 2>/dev/null || true; }
+trap cleanup EXIT
+cleanup
+mkdir -p "$TH"
+
+PASS=0
+FAIL=0
+FAILURES=()
+
+# --- assertion helpers ----------------------------------------------------
+_record() {
+  local outcome="$1" name="$2" detail="${3:-}"
+  if [ "$outcome" = pass ]; then
+    PASS=$((PASS + 1))
+    printf '  ok   %s\n' "$name"
+  else
+    FAIL=$((FAIL + 1))
+    FAILURES+=("$name${detail:+ — $detail}")
+    printf '  FAIL %s%s\n' "$name" "${detail:+: $detail}"
+  fi
+}
+
+# expect_exit NAME EXPECTED_EXIT CMD...
+expect_exit() {
+  local name="$1" expected="$2"; shift 2
+  local actual=0
+  "$@" >/dev/null 2>&1 || actual=$?
+  if [ "$actual" = "$expected" ]; then
+    _record pass "$name"
+  else
+    _record fail "$name" "exit=$actual want=$expected"
+  fi
+}
+
+# expect_stdout NAME EXPECTED_EXIT EXPECTED_STDOUT CMD...
+expect_stdout() {
+  local name="$1" expected_exit="$2" expected_out="$3"; shift 3
+  local actual_out actual_exit=0
+  actual_out="$("$@" 2>/dev/null)" || actual_exit=$?
+  if [ "$actual_exit" = "$expected_exit" ] && [ "$actual_out" = "$expected_out" ]; then
+    _record pass "$name"
+  else
+    _record fail "$name" "exit=$actual_exit/$expected_exit out='$actual_out' want='$expected_out'"
+  fi
+}
+
+# expect_stderr_contains NAME EXPECTED_EXIT NEEDLE CMD...
+expect_stderr_contains() {
+  local name="$1" expected_exit="$2" needle="$3"; shift 3
+  local actual_err actual_exit=0
+  actual_err="$("$@" 2>&1 >/dev/null)" || actual_exit=$?
+  if [ "$actual_exit" = "$expected_exit" ] && printf '%s' "$actual_err" | grep -qF "$needle"; then
+    _record pass "$name"
+  else
+    _record fail "$name" "exit=$actual_exit/$expected_exit err='$actual_err'"
+  fi
+}
+
+# expect_stdout_lines NAME EXPECTED_EXIT EXPECTED_LINE_COUNT CMD...
+expect_stdout_lines() {
+  local name="$1" expected_exit="$2" expected_lines="$3"; shift 3
+  local actual_out actual_exit=0 actual_lines
+  actual_out="$("$@" 2>/dev/null)" || actual_exit=$?
+  if [ -z "$actual_out" ]; then actual_lines=0
+  else actual_lines="$(printf '%s\n' "$actual_out" | grep -c .)"
+  fi
+  if [ "$actual_exit" = "$expected_exit" ] && [ "$actual_lines" = "$expected_lines" ]; then
+    _record pass "$name"
+  else
+    _record fail "$name" "exit=$actual_exit/$expected_exit lines=$actual_lines/$expected_lines"
+  fi
+}
+
+bbs() { "$BBS_TICKET_BIN" "$@"; }
+
+# ============================================================================
+# Resolver — read/write semantics
+# ============================================================================
+echo "== Resolver semantics =="
+
+# canonical write prints path, creates parent
+expect_stdout "path plan --write prints canonical" 0 "$TH/plan.md" \
+  bbs path plan --write
+[ -d "$TH" ] && _record pass "plan --write parent exists" || _record fail "plan --write parent exists"
+
+# read with no file → exit 1
+expect_exit "path plan --read (none)" 1 \
+  bbs path plan --read
+
+# write content, read returns canonical
+echo "the plan" > "$TH/plan.md"
+expect_stdout "path plan --read (canonical hit)" 0 "$TH/plan.md" \
+  bbs path plan --read
+
+# legacy-only hit (Layout B → C migration)
+rm -f "$TH/plan.md"
+mkdir -p "$TH/plan-feature"
+echo "legacy plan" > "$TH/plan-feature/plan.md"
+expect_stdout "path plan --read (legacy hit)" 0 "$TH/plan-feature/plan.md" \
+  bbs path plan --read
+
+# both present → canonical wins, BBS_PATH_DUAL on stderr
+echo "canonical plan" > "$TH/plan.md"
+expect_stdout "path plan --read (both → canonical)" 0 "$TH/plan.md" \
+  bbs path plan --read
+expect_stderr_contains "BBS_PATH_DUAL emitted when both exist" 0 "BBS_PATH_DUAL" \
+  bbs path plan --read
+rm -rf "$TH/plan-feature" "$TH/plan.md"
+
+# ============================================================================
+# Append-only writers rejected
+# ============================================================================
+echo "== Append-only writer rejection =="
+expect_exit "handoff --write rejected" 2 \
+  bbs path handoff --skill build --write
+expect_stderr_contains "handoff --write hint" 2 "add-handoff" \
+  bbs path handoff --skill build --write
+expect_exit "verdict --write rejected" 2 \
+  bbs path verdict --skill build --write
+expect_exit "review --write rejected" 2 \
+  bbs path review --skill build --write
+
+# ============================================================================
+# Selector validation (path traversal → exit 3, other → exit 2)
+# ============================================================================
+echo "== Selector validation =="
+expect_exit "skill ../etc → exit 3" 3 \
+  bbs path verdict --skill ../etc --read
+expect_exit "name ../wat → exit 3" 3 \
+  bbs path evidence --skill build --name ../wat --write
+expect_exit "skill /abs → exit 3" 3 \
+  bbs path verdict --skill /abs --read
+expect_exit "skill foo/bar → exit 3" 3 \
+  bbs path verdict --skill foo/bar --read
+expect_exit "skill 'foo bar' → exit 2 (forbidden chars)" 2 \
+  bbs path verdict --skill 'foo bar' --read
+expect_exit "seq abc → exit 2" 2 \
+  bbs path sub-ticket --seq abc --slug x --read
+expect_exit "missing required --skill → exit 2" 2 \
+  bbs path verdict --read
+expect_exit "missing required --slug on sub-ticket write → exit 2" 2 \
+  bbs path sub-ticket --seq 1 --write
+expect_exit "missing required --name on evidence write → exit 2" 2 \
+  bbs path evidence --skill build --write
+
+# ============================================================================
+# Unknown kind / no args
+# ============================================================================
+echo "== Help / unknown kind =="
+expect_exit "no args → exit 2 (kind table)" 2 \
+  bbs path
+expect_stderr_contains "no args prints kind table" 2 "Kinds (canonical Layout C" \
+  bbs path
+expect_exit "unknown kind → exit 2" 2 \
+  bbs path bogus
+expect_stderr_contains "unknown kind hint" 2 "unknown kind" \
+  bbs path bogus
+expect_exit "kind without mode → exit 2 (per-kind help)" 2 \
+  bbs path plan
+expect_stderr_contains "per-kind help shows synopsis" 2 "Canonical:" \
+  bbs path plan
+
+# ============================================================================
+# List semantics
+# ============================================================================
+echo "== List semantics =="
+# empty list → exit 0 (NOT 1)
+rm -rf "$TH/verdicts" "$TH/handoffs" "$TH/sub-tickets"
+expect_stdout "list verdict empty → exit 0" 0 "" \
+  bbs list verdict
+expect_stdout "list handoff empty → exit 0" 0 "" \
+  bbs list handoff
+expect_stdout "list sub-ticket empty → exit 0" 0 "" \
+  bbs list sub-ticket
+
+# verdict list, sorted
+mkdir -p "$TH/verdicts"
+touch "$TH/verdicts/zeta.md" "$TH/verdicts/alpha.md" "$TH/verdicts/build.md"
+expect_stdout_lines "list verdict (3)" 0 3 \
+  bbs list verdict
+ALPHA_FIRST="$(bbs list verdict 2>/dev/null | head -1)"
+[ "$ALPHA_FIRST" = "$TH/verdicts/alpha.md" ] \
+  && _record pass "list verdict sorted alphabetically" \
+  || _record fail "list verdict sorted alphabetically" "got '$ALPHA_FIRST'"
+
+# handoff list with --skill filter
+bbs add-handoff --skill build --status done --body x >/dev/null
+bbs add-handoff --skill quality --status done --body y >/dev/null
+bbs add-handoff --skill build --status done --body z >/dev/null
+expect_stdout_lines "list handoff (all 3)" 0 3 \
+  bbs list handoff
+expect_stdout_lines "list handoff --skill build (2)" 0 2 \
+  bbs list handoff --skill build
+expect_stdout_lines "list handoff --skill quality (1)" 0 1 \
+  bbs list handoff --skill quality
+expect_stdout_lines "list handoff --skill missing (0)" 0 0 \
+  bbs list handoff --skill nonexistent
+
+# ============================================================================
+# handoff --latest --read
+# ============================================================================
+echo "== handoff --latest semantics =="
+LATEST="$(bbs path handoff --skill build --latest --read 2>/dev/null)"
+case "$LATEST" in
+  *003-build-done.md) _record pass "handoff --latest picks highest seq" ;;
+  *) _record fail "handoff --latest picks highest seq" "got '$LATEST'" ;;
+esac
+expect_exit "handoff --latest missing skill → exit 1" 1 \
+  bbs path handoff --skill never --latest --read
+
+# ============================================================================
+# Evidence
+# ============================================================================
+echo "== Evidence =="
+expect_stdout "evidence --write canonical" 0 "$TH/evidence/quality/report.txt" \
+  bbs path evidence --skill quality --name report.txt --write
+[ -d "$TH/evidence/quality" ] \
+  && _record pass "evidence --write created parent dir" \
+  || _record fail "evidence --write created parent dir"
+echo data > "$TH/evidence/quality/report.txt"
+expect_stdout "evidence --read hit" 0 "$TH/evidence/quality/report.txt" \
+  bbs path evidence --skill quality --name report.txt --read
+
+# ============================================================================
+# Sub-ticket
+# ============================================================================
+echo "== Sub-ticket =="
+expect_stdout "sub-ticket --write canonical" 0 "$TH/sub-tickets/001-api.md" \
+  bbs path sub-ticket --seq 1 --slug api --write
+echo x > "$TH/sub-tickets/001-api.md"
+expect_stdout "sub-ticket --read hit" 0 "$TH/sub-tickets/001-api.md" \
+  bbs path sub-ticket --seq 1 --slug api --read
+
+# ============================================================================
+# checkpoint / index / requirement / design / manifest / history (simple kinds)
+# ============================================================================
+echo "== Simple kinds =="
+expect_stdout "checkpoint --write" 0 "$TH/checkpoint.json" \
+  bbs path checkpoint --write
+expect_stdout "index --write" 0 "$TH/index.json" \
+  bbs path index --write
+expect_stdout "requirement --write" 0 "$TH/requirement.md" \
+  bbs path requirement --write
+expect_stdout "design --write" 0 "$TH/design.md" \
+  bbs path design --write
+expect_stdout "manifest --write" 0 "$TH/manifest.md" \
+  bbs path manifest --write
+expect_stdout "history --write" 0 "$TH/history.jsonl" \
+  bbs path history --write
+expect_stdout "home --read" 0 "$TH" \
+  bbs path home --read
+
+# ============================================================================
+# Telemetry — opt-out via BBS_PATH_TELEMETRY=0
+# ============================================================================
+echo "== Telemetry =="
+TELEMETRY_FILE="${BABYSIT_HOME:-$HOME/.babysit}/analytics/path-fallbacks.jsonl"
+# Trigger a legacy hit, then check telemetry was appended.
+rm -rf "$TH/plan-feature" "$TH/plan.md"
+mkdir -p "$TH/plan-feature"; echo legacy > "$TH/plan-feature/plan.md"
+SIZE_BEFORE=0; [ -f "$TELEMETRY_FILE" ] && SIZE_BEFORE=$(wc -l < "$TELEMETRY_FILE")
+bbs path plan --read >/dev/null 2>&1
+SIZE_AFTER=0; [ -f "$TELEMETRY_FILE" ] && SIZE_AFTER=$(wc -l < "$TELEMETRY_FILE")
+if [ "$SIZE_AFTER" -gt "$SIZE_BEFORE" ]; then
+  _record pass "telemetry appended on legacy hit (default ON)"
+else
+  _record fail "telemetry appended on legacy hit (default ON)" "before=$SIZE_BEFORE after=$SIZE_AFTER"
+fi
+# Opt-out
+SIZE_BEFORE=$SIZE_AFTER
+BBS_PATH_TELEMETRY=0 bbs path plan --read >/dev/null 2>&1
+SIZE_AFTER=0; [ -f "$TELEMETRY_FILE" ] && SIZE_AFTER=$(wc -l < "$TELEMETRY_FILE")
+if [ "$SIZE_AFTER" = "$SIZE_BEFORE" ]; then
+  _record pass "telemetry suppressed by BBS_PATH_TELEMETRY=0"
+else
+  _record fail "telemetry suppressed by BBS_PATH_TELEMETRY=0" "before=$SIZE_BEFORE after=$SIZE_AFTER"
+fi
+
+# ============================================================================
+# Linter self-test against fixture
+# ============================================================================
+echo "== Linter fixture =="
+LINT_BIN="$SCRIPT_DIR/bbs-ticket-lint"
+FIXTURE="$(cd "$SCRIPT_DIR/.." && pwd)/.claude/skills/references/lint-test-fixtures.md"
+if [ -x "$LINT_BIN" ] && [ -f "$FIXTURE" ]; then
+  HITS_OUT="$("$LINT_BIN" --mode enforce --path "$FIXTURE" --manifest /dev/null 2>/dev/null)"
+  ENFORCE_EXIT=0
+  "$LINT_BIN" --mode enforce --path "$FIXTURE" --manifest /dev/null >/dev/null 2>&1 || ENFORCE_EXIT=$?
+  HIT_LINES="$(printf '%s' "$HITS_OUT" | grep -c . 2>/dev/null || echo 0)"
+  if [ "$ENFORCE_EXIT" = 1 ] && [ "$HIT_LINES" = 5 ]; then
+    _record pass "linter fixture: exactly 5 unapproved hits, exit 1"
+  else
+    _record fail "linter fixture: 5 unapproved hits, exit 1" "exit=$ENFORCE_EXIT lines=$HIT_LINES"
+  fi
+  # Allow-marker line must NOT appear.
+  if printf '%s' "$HITS_OUT" | grep -q 'lint:allow-direct-path'; then
+    _record fail "linter fixture: allow-marker line filtered out"
+  else
+    _record pass "linter fixture: allow-marker line filtered out"
+  fi
+else
+  _record fail "linter fixture: bbs-ticket-lint or fixture missing"
+fi
+
+# ============================================================================
+# Existing subcommands still work (regression sanity)
+# ============================================================================
+echo "== Regression: existing subcommands =="
+LATEST_VIA_OLD="$(bbs latest-handoff --skill build 2>/dev/null)"
+LATEST_VIA_NEW="$(bbs path handoff --skill build --latest --read 2>/dev/null)"
+if [ "$LATEST_VIA_OLD" = "$LATEST_VIA_NEW" ] && [ -n "$LATEST_VIA_OLD" ]; then
+  _record pass "latest-handoff agrees with path handoff --latest"
+else
+  _record fail "latest-handoff agrees with path handoff --latest" \
+    "old='$LATEST_VIA_OLD' new='$LATEST_VIA_NEW'"
+fi
+
+# ============================================================================
+# End-to-end skill lifecycle scenarios
+#
+# These verify that multi-skill workflows can resume from disk artifacts
+# written by earlier skills — the integration story the per-kind tests
+# above don't cover. Each scenario starts from a wiped ticket and walks
+# the broker calls a real skill would make in that entry shape.
+# ============================================================================
+echo "== Lifecycle: scenario 1 — office-hours full flow =="
+rm -rf "$TH" && mkdir -p "$TH"
+expect_stdout "S1: office-hours design --write" 0 "$TH/design.md" \
+  bbs path design --write
+echo "design body" > "$TH/design.md"
+expect_stdout "S1: plan-feature reads design" 0 "$TH/design.md" \
+  bbs path design --read
+expect_stdout "S1: plan-feature plan --write" 0 "$TH/plan.md" \
+  bbs path plan --write
+echo "plan body" > "$TH/plan.md"
+expect_stdout "S1: decompose reads plan" 0 "$TH/plan.md" \
+  bbs path plan --read
+expect_stdout "S1: decompose sub-ticket 001" 0 "$TH/sub-tickets/001-step-one.md" \
+  bbs path sub-ticket --seq 1 --slug step-one --write
+echo x > "$TH/sub-tickets/001-step-one.md"
+expect_stdout "S1: decompose sub-ticket 002" 0 "$TH/sub-tickets/002-step-two.md" \
+  bbs path sub-ticket --seq 2 --slug step-two --write
+echo x > "$TH/sub-tickets/002-step-two.md"
+expect_stdout_lines "S1: list sub-ticket enumerates both" 0 2 \
+  bbs list sub-ticket
+
+echo "== Lifecycle: scenario 2 — plan-feature entry (skip office-hours) =="
+rm -rf "$TH" && mkdir -p "$TH"
+echo "design" > "$TH/design.md"
+expect_stdout "S2: plan-feature reads existing design" 0 "$TH/design.md" \
+  bbs path design --read
+expect_exit "S2: plan --read missing → exit 1" 1 \
+  bbs path plan --read
+expect_stdout "S2: plan --write canonical" 0 "$TH/plan.md" \
+  bbs path plan --write
+echo "plan" > "$TH/plan.md"
+expect_stdout "S2: plan --read after write" 0 "$TH/plan.md" \
+  bbs path plan --read
+
+echo "== Lifecycle: scenario 3 — decompose entry (large requirement) =="
+rm -rf "$TH" && mkdir -p "$TH"
+echo "req" > "$TH/requirement.md"
+echo "plan" > "$TH/plan.md"
+expect_stdout "S3: decompose reads requirement" 0 "$TH/requirement.md" \
+  bbs path requirement --read
+expect_stdout "S3: decompose reads plan" 0 "$TH/plan.md" \
+  bbs path plan --read
+for i in 1 2 3 4 5; do
+  expect_stdout "S3: write sub-ticket $i" 0 "$TH/sub-tickets/00$i-step-$i.md" \
+    bbs path sub-ticket --seq $i --slug "step-$i" --write
+  echo "x" > "$TH/sub-tickets/00$i-step-$i.md"
+done
+expect_stdout_lines "S3: list sub-ticket (5)" 0 5 \
+  bbs list sub-ticket
+expect_stdout "S3: read by seq+slug" 0 "$TH/sub-tickets/003-step-3.md" \
+  bbs path sub-ticket --seq 3 --slug step-3 --read
+expect_stdout "S3: read by seq-only fallback" 0 "$TH/sub-tickets/004-step-4.md" \
+  bbs path sub-ticket --seq 4 --read
+expect_exit "S3: bad slug → exit 3" 3 \
+  bbs path sub-ticket --slug "../etc" --read
+
+echo "== Lifecycle: scenario 4 — implement entry (small requirement) =="
+rm -rf "$TH" && mkdir -p "$TH"
+echo "small req" > "$TH/requirement.md"
+echo "plan" > "$TH/plan.md"
+expect_stdout "S4: implement reads requirement" 0 "$TH/requirement.md" \
+  bbs path requirement --read
+expect_stdout "S4: implement reads plan" 0 "$TH/plan.md" \
+  bbs path plan --read
+expect_stderr_contains "S4: handoff --write redirects to add-handoff" 2 "add-handoff" \
+  bbs path handoff --skill implement --write
+expect_stderr_contains "S4: verdict --write redirects to set-verdict" 2 "set-verdict" \
+  bbs path verdict --skill implement --write
+bbs add-handoff --skill implement --status "FIXED(1 commit)" --brief "added cmd" >/dev/null
+bbs set-verdict --skill implement --status PASS --note "tests green" >/dev/null
+expect_exit "S4: read implement handoff back" 0 \
+  bbs path handoff --skill implement --latest --read
+expect_stdout "S4: read implement verdict back" 0 "$TH/verdicts/implement.md" \
+  bbs path verdict --skill implement --read
+
+echo "== Lifecycle: scenario 5 — work build workflow =="
+rm -rf "$TH" && mkdir -p "$TH"
+expect_stdout "S5: bbs-ticket init creates index.json" 0 "$TH/index.json" \
+  bbs init
+expect_exit "S5: set-pointer base_branch" 0 \
+  bbs set-pointer base_branch main
+expect_stdout "S5: get pointers.base_branch" 0 "main" \
+  bbs get pointers.base_branch
+BRIEF_TMP="$(mktemp)"; printf "## Build\n- 1 commit\n" > "$BRIEF_TMP"
+expect_stdout "S5: add-handoff --body-file" 0 "$TH/handoffs/001-build-done.md" \
+  bbs add-handoff --skill build --status DONE --body-file "$BRIEF_TMP"
+rm -f "$BRIEF_TMP"
+expect_stdout "S5: checkpoint --write" 0 "$TH/checkpoint.json" \
+  bbs path checkpoint --write
+expect_stdout "S5: evidence --write under build namespace" 0 "$TH/evidence/build/log.txt" \
+  bbs path evidence --skill build --name log.txt --write
+
+echo "== Lifecycle: scenario 6 — work quality workflow =="
+# Builds on scenario 5 state — quality runs after build.
+expect_stdout "S6: discover build handoff via --latest" 0 "$TH/handoffs/001-build-done.md" \
+  bbs path handoff --skill build --latest --read
+expect_exit "S6: implement-handoff fallback miss → exit 1" 1 \
+  bbs path handoff --skill implement --latest --read
+expect_stdout "S6: write quality summary in evidence/quality" 0 "$TH/evidence/quality/quality-summary.md" \
+  bbs path evidence --skill quality --name quality-summary.md --write
+echo "summary" > "$TH/evidence/quality/quality-summary.md"
+expect_stdout "S6: read quality summary back" 0 "$TH/evidence/quality/quality-summary.md" \
+  bbs path evidence --skill quality --name quality-summary.md --read
+bbs set-verdict --skill quality --status PASS --note "all green" >/dev/null
+expect_stdout "S6: read quality verdict" 0 "$TH/verdicts/quality.md" \
+  bbs path verdict --skill quality --read
+
+# ============================================================================
+# set-evidence / evidence-status — typed, validated mid-tier artifacts
+# ============================================================================
+echo "== typed evidence =="
+expect_stdout "EV: status none before any write" 0 "none" \
+  bbs evidence-status --kind verification
+expect_stdout "EV: verification valid write returns path" 0 "$TH/evidence/verification/result.json" \
+  bbs set-evidence --kind verification --json '{"result":"PASS","after":"BUILT(S)"}'
+expect_stdout "EV: verification status valid" 0 "valid" \
+  bbs evidence-status --kind verification
+expect_exit "EV: bad result value → exit 2" 2 \
+  bbs set-evidence --kind verification --json '{"result":"MAYBE"}'
+expect_exit "EV: not-json → exit 2" 2 \
+  bbs set-evidence --kind risk-gate --json 'nope'
+expect_stderr_contains "EV: missing required field names it" 2 "high_risk" \
+  bbs set-evidence --kind risk-gate --json '{"reason":"x"}'
+expect_exit "EV: unknown kind → exit 2" 2 \
+  bbs set-evidence --kind bogus --json '{}'
+bbs set-evidence --kind risk-gate --json '{"high_risk":false,"reason":"isolated"}' >/dev/null
+expect_stdout "EV: risk-gate status valid" 0 "valid" \
+  bbs evidence-status --kind risk-gate
+bbs set-evidence --kind adversarial --json '{"disproven":[],"unverified":["claim X"]}' >/dev/null
+expect_stdout "EV: adversarial status valid" 0 "valid" \
+  bbs evidence-status --kind adversarial
+printf 'garbage' > "$TH/evidence/adversarial/result.json"
+expect_stdout "EV: malformed-on-disk → malformed" 0 "malformed" \
+  bbs evidence-status --kind adversarial
+
+# ============================================================================
+# find-similar — scoring + filtering
+#
+# Iterates over all tickets in $PROJECT_HOME/tickets, so we use unique
+# nonsense tokens in the tracer's requirement.md to guarantee we only match
+# ourselves (keeps the test hermetic against whatever real tickets exist).
+# ============================================================================
+echo "== find-similar =="
+rm -rf "$TH" && mkdir -p "$TH"
+bbs init >/dev/null
+
+# Seed a unique-token requirement on an open ticket.
+UNIQUE_A="zxqwfoomarker"
+UNIQUE_B="plongwidget"
+UNIQUE_C="gribbleflange"
+cat > "$TH/requirement.md" <<EOF
+Build a $UNIQUE_A system with $UNIQUE_B and $UNIQUE_C support.
+EOF
+# Register the branch pointer so slug extraction works (cosmetic — score
+# comes from requirement.md body here, but keep the test honest).
+bbs set-pointer branch "feat/${BBS_TICKET}_zxqw-plong-gribble" >/dev/null 2>&1 || true
+
+# Hit: input contains 2+ of the unique tokens → containment ≥ 2/3
+expect_stdout_lines "find-similar hit (containment ≥ 0.6)" 0 1 \
+  bbs find-similar --from-input "$UNIQUE_A $UNIQUE_B $UNIQUE_C"
+
+HIT_LINE="$(bbs find-similar --from-input "$UNIQUE_A $UNIQUE_B $UNIQUE_C" 2>/dev/null | head -1)"
+case "$HIT_LINE" in
+  "$BBS_TICKET"$'\t'*) _record pass "find-similar returns tracer id in first column" ;;
+  *) _record fail "find-similar returns tracer id in first column" "got '$HIT_LINE'" ;;
+esac
+
+# Miss: query with none of the unique tokens
+expect_stdout "find-similar miss (empty stdout)" 0 "" \
+  bbs find-similar --from-input "completely unrelated query about databases"
+
+# Closed ticket (status=done) is skipped even on perfect token match
+bbs set-status done >/dev/null 2>&1
+expect_stdout "find-similar skips closed tickets" 0 "" \
+  bbs find-similar --from-input "$UNIQUE_A $UNIQUE_B $UNIQUE_C"
+# Restore to a non-closed status for subsequent tests.
+bbs set-status in_progress >/dev/null 2>&1 || true
+
+# Stop-word-only input produces empty token set → no matches, exit 0
+expect_stdout "find-similar stop-word-only input" 0 "" \
+  bbs find-similar --from-input "the a an and or"
+
+# Missing --from-input → exit 2
+expect_exit "find-similar missing --from-input → exit 2" 2 \
+  bbs find-similar
+
+# --min-score filter: score 1.0 passes 0.9, score 0 fails 0.9
+expect_stdout_lines "find-similar --min-score 0.9 still hits" 0 1 \
+  bbs find-similar --from-input "$UNIQUE_A $UNIQUE_B $UNIQUE_C" --min-score 0.9
+
+# --limit caps output
+expect_stdout_lines "find-similar --limit 0 returns nothing" 0 0 \
+  bbs find-similar --from-input "$UNIQUE_A $UNIQUE_B $UNIQUE_C" --limit 0
+
+# ============================================================================
+# Summary
+# ============================================================================
+echo
+echo "──────────────────────────────────────"
+echo "  PASS: $PASS"
+echo "  FAIL: $FAIL"
+if [ "$FAIL" -gt 0 ]; then
+  echo "  Failures:"
+  for f in "${FAILURES[@]}"; do printf '    - %s\n' "$f"; done
+  exit 1
+fi
+exit 0

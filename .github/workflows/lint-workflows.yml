@@ -1,0 +1,30 @@
+name: Lint Workflows
+
+on:
+  push:
+    paths:
+      - '.claude/skills/autopilot/workflows/**.md'
+      - '.claude/workflows/**.md'
+  pull_request:
+    paths:
+      - '.claude/skills/autopilot/workflows/**.md'
+      - '.claude/workflows/**.md'
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Lint workflow files
+        run: |
+          ERRORS=0
+          for wf in .claude/skills/autopilot/workflows/*.md .claude/workflows/*.md; do
+            [ -f "$wf" ] || continue
+            echo "linting $wf"
+            bin/bbs-autopilot lint-workflow "$wf" || ERRORS=$((ERRORS + 1))
+          done
+          if [ "$ERRORS" -gt 0 ]; then
+            echo "::error::$ERRORS workflow file(s) failed lint"
+            exit 1
+          fi

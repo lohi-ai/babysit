@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# upgrade-local — sync this workspace to ~/.claude/skills/babysit and relink bins.
+# Use this instead of `git pull` when working from a local checkout.
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SRC="$(dirname "$SCRIPT_DIR")"
+DEST="$HOME/.claude/skills/babysit"
+
+echo "→ Syncing $SRC → $DEST"
+rsync -a --delete \
+  --exclude='.git' \
+  --exclude='node_modules' \
+  --exclude='.babysit' \
+  "$SRC/" "$DEST/"
+
+echo "→ Relinking bins..."
+"$SRC/bin/setup-skills"

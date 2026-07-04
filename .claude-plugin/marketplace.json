@@ -1,0 +1,20 @@
+{
+  "name": "babysit",
+  "owner": {
+    "name": "reallongnguyen",
+    "url": "https://github.com/reallongnguyen/babysit"
+  },
+  "metadata": {
+    "version": "1.51.0",
+    "description": "Babysit — autonomous Claude Code skill pack."
+  },
+  "plugins": [
+    {
+      "name": "bbs",
+      "version": "1.51.0",
+      "description": "Autonomous skill pack — scheduled runs, background jobs, CI loops. Skills invoke as /bbs:<name>.",
+      "source": "./",
+      "category": "productivity"
+    }
+  ]
+}

@@ -1,0 +1,116 @@
+#!/usr/bin/env bash
+# PreToolUse(Bash) hard-stage gate — artifact-gated approval.
+#
+# Babysit's enforcement boundary: prompts are advisory, this hook is not.
+# Before an irreversible command (git push / PR create / PR merge), it checks
+# the resolved ticket's on-disk verdict artifacts (written by review-pr / qa via
+# `bbs-ticket set-verdict`) and decides:
+#
+#   - explicit BLOCKED / NEEDS_CONTEXT verdict  → deny  (evidence says not ready)
+#   - verdict missing ("none")                  → ask   (human checkpoint)
+#   - verdict DONE / DONE_WITH_CONCERNS / PASS  → defer (no objection)
+#   - no ticket resolves, or jq unavailable     → defer (never gate ad-hoc work)
+#
+# Score never auto-approves: the gate keys on categorical verdicts, never a
+# number. Fail-open by design — when in doubt, defer; only a concrete
+# not-ready verdict produces a hard deny.
+#
+# Input:  hook JSON on stdin (.tool_input.command).
+# Output: PreToolUse permissionDecision JSON on stdout; always exit 0.
+set -uo pipefail
+
+emit() { # $1=allow|deny|ask|defer  $2=reason
+  printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"%s","permissionDecisionReason":"%s"}}\n' "$1" "$2"
+  exit 0
+}
+
+# jq is required to parse hook input; without it we cannot read the command —
+# fail open so the hook never blocks a user who lacks jq.
+command -v jq >/dev/null 2>&1 || emit defer "pre-tool-gate: jq unavailable, deferring"
+
+CMD="$(jq -r '.tool_input.command // empty' 2>/dev/null)"
+[ -n "$CMD" ] || emit defer "pre-tool-gate: no command, deferring"
+
+# Classify the hard stage first (cheap) — defer immediately on anything else, so
+# only push/PR/merge pays the ticket-resolution cost. Order matters: merge is
+# checked before a bare push so `gh pr merge` isn't mis-read as a push.
+STAGE=""
+case "$CMD" in
+  *"gh pr merge"*|*"glab mr merge"*) STAGE="merge" ;;
+  *"gh pr create"*|*"glab mr create"*) STAGE="pr" ;;
+  *"git push"*|*"git -C "*" push"*) STAGE="push" ;;
+  *) emit defer "pre-tool-gate: not a hard-stage command, deferring" ;;
+esac
+
+# Resolve bbs-ticket the way the preamble / pre-commit hook do.
+_bbs_resolve() {
+  local shim="$HOME/.claude/$1" repo="$HOME/.claude/skills/babysit/bin/$1"
+  if [ -x "$shim" ]; then echo "$shim"
+  elif [ -x "$repo" ]; then echo "$repo"
+  elif command -v "$1" >/dev/null 2>&1; then echo "$1"
+  else echo ""; fi
+}
+TICKET_BIN="$(_bbs_resolve bbs-ticket)"
+[ -n "$TICKET_BIN" ] || emit defer "pre-tool-gate: bbs-ticket not found, deferring"
+
+# Resolve the ticket. exit 0 = id; 1 = no ticket; 2 = conflict. Only gate
+# workflow tickets — ad-hoc shells (no ticket) push freely.
+TICKET="$("$TICKET_BIN" resolve 2>/dev/null)" || emit defer "pre-tool-gate: no ticket resolved, deferring"
+[ -n "$TICKET" ] || emit defer "pre-tool-gate: empty ticket, deferring"
+
+vs() { "$TICKET_BIN" verdict-status --skill "$1" 2>/dev/null || echo none; }
+
+# A verdict is "ready" if DONE or DONE_WITH_CONCERNS. "BLOCKED"/"NEEDS_CONTEXT" = not ready.
+ready() { case "$1" in DONE|DONE_WITH_CONCERNS) return 0 ;; *) return 1 ;; esac; }
+blocked() { case "$1" in BLOCKED|NEEDS_CONTEXT) return 0 ;; *) return 1 ;; esac; }
+
+REVIEW="$(vs review-pr)"
+QA="$(vs qa)"
+
+# qa-evidence classifies the qa verdict *body* (freshness, rubric, e2e evidence),
+# not just its STATUS token — a PASS can be well-formed yet contradict its own
+# rubric or carry no e2e run. Only consulted once QA reads as ready.
+qa_evidence() { "$TICKET_BIN" qa-evidence 2>/dev/null || echo none; }
+
+case "$STAGE" in
+  push)
+    if blocked "$REVIEW"; then
+      emit deny "review-pr verdict is $REVIEW on $TICKET — resolve it before pushing."
+    elif [ "$REVIEW" = none ]; then
+      emit ask "No review-pr verdict on $TICKET. Run /bbs:review-pr or approve to push anyway."
+    fi
+    emit defer "pre-tool-gate: review-pr=$REVIEW — ok to push"
+    ;;
+  pr)
+    # PR creation is babysit's real handoff-to-human boundary (autopilot never
+    # merges), so QA gates here, not only at merge. A "none" qa verdict is the
+    # missing gate that let untested branches reach a human PR — autopilot must
+    # write a qa verdict (real PASS/FIXED or a recorded no-target fallback)
+    # before this stage.
+    if blocked "$REVIEW" || blocked "$QA"; then
+      emit deny "Not ready for a PR on $TICKET — review-pr=$REVIEW, qa=$QA."
+    elif [ "$REVIEW" = none ] || [ "$QA" = none ]; then
+      emit ask "Open PR for $TICKET: review-pr=$REVIEW, qa=$QA. Run the missing check (/bbs:qa) or approve to proceed."
+    fi
+    # QA reads ready — verify the verdict body actually confirms an e2e run.
+    case "$(qa_evidence)" in
+      contradiction:*) emit deny "qa=$QA on $TICKET contradicts its own rubric ($(qa_evidence)) — not a real PASS. Re-run /bbs:qa before opening a PR." ;;
+      thin:*|unexplained) emit ask "qa=$QA on $TICKET but evidence is $(qa_evidence) — no confirmed end-to-end web run. Run /bbs:qa or approve to proceed." ;;
+    esac
+    emit defer "pre-tool-gate: review-pr=$REVIEW qa=$QA — ok to open PR"
+    ;;
+  merge)
+    if blocked "$REVIEW" || blocked "$QA"; then
+      emit deny "Not ready to merge $TICKET — review-pr=$REVIEW, qa=$QA."
+    elif [ "$REVIEW" = none ] || [ "$QA" = none ]; then
+      emit ask "Merge $TICKET: review-pr=$REVIEW, qa=$QA. Run missing checks or approve anyway."
+    fi
+    case "$(qa_evidence)" in
+      contradiction:*) emit deny "qa=$QA on $TICKET contradicts its own rubric ($(qa_evidence)) — not a real PASS. Re-run /bbs:qa before merging." ;;
+      thin:*|unexplained) emit ask "qa=$QA on $TICKET but evidence is $(qa_evidence) — no confirmed end-to-end web run. Run /bbs:qa or approve to merge anyway." ;;
+    esac
+    emit defer "pre-tool-gate: review-pr=$REVIEW qa=$QA — ok to merge"
+    ;;
+esac
+
+emit defer "pre-tool-gate: no rule matched, deferring"

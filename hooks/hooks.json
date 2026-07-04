@@ -1,0 +1,38 @@
+{
+  "description": "babysit artifact-gated approval — hard-stage gate (PreToolUse) + verdict-contract audit (PostToolUse). Prompts are advisory; these hooks are the control mechanism.",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          { "type": "command", "if": "Bash(git push *)",     "command": "${CLAUDE_PLUGIN_ROOT}/bin/hooks/pre-tool-gate", "timeout": 15 },
+          { "type": "command", "if": "Bash(gh pr create *)",  "command": "${CLAUDE_PLUGIN_ROOT}/bin/hooks/pre-tool-gate", "timeout": 15 },
+          { "type": "command", "if": "Bash(gh pr merge *)",   "command": "${CLAUDE_PLUGIN_ROOT}/bin/hooks/pre-tool-gate", "timeout": 15 },
+          { "type": "command", "if": "Bash(glab mr create *)", "command": "${CLAUDE_PLUGIN_ROOT}/bin/hooks/pre-tool-gate", "timeout": 15 },
+          { "type": "command", "if": "Bash(glab mr merge *)",  "command": "${CLAUDE_PLUGIN_ROOT}/bin/hooks/pre-tool-gate", "timeout": 15 }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Skill",
+        "hooks": [
+          { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/bin/hooks/verify-skill-output", "timeout": 10 }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/bin/hooks/qa-evidence-audit", "timeout": 10 }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/bin/hooks/clean-handoff-check", "timeout": 10 }
+        ]
+      }
+    ]
+  }
+}

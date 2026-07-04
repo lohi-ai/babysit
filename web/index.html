@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>babysit dashboard</title>
+    <link rel="stylesheet" href="https://rsms.me/inter/inter.css" />
+    <script>
+      // Pre-paint theme. Read localStorage["bbs:theme"] (with prefers-color-scheme
+      // fallback) and stamp data-theme on <html> before <body> paints — avoids
+      // flash-of-wrong-theme. Hardcoded mapping (never echo raw localStorage).
+      (function () {
+        try {
+          var v = localStorage.getItem("bbs:theme");
+          var t;
+          if (v === "dark") t = "dark";
+          else if (v === "light") t = "light";
+          else t = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+          document.documentElement.setAttribute("data-theme", t);
+        } catch (_) {
+          document.documentElement.setAttribute("data-theme", "light");
+        }
+      })();
+    </script>
+    <!--
+      data.js sets window.__BBS_DATA__ before the SPA boots. It is written
+      by `bbs-dashboard` and is intentionally not bundled by Vite -- nothing
+      in src/ imports it, so Vite leaves the static <script> tag alone.
+      A missing or corrupt data.js will throw inside loadSnapshot() at boot.
+    -->
+    <script src="./data.js"></script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

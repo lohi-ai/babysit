@@ -1,0 +1,155 @@
+#!/usr/bin/env bash
+# bbs-db — postgres snapshot/restore helpers for babysit skills
+#
+# Snapshots land under ~/.babysit/<rig>/snapshots/ as pg_dump custom-format files.
+# Per-rig rotation keeps the 3 newest snapshots for each DB name.
+#
+# Usage:
+#   bbs-db snapshot <DB_URL> [--schema <schema>] [--rig <rig_name>]
+#   bbs-db restore <snapshot> <DB_URL> [--schema <schema>]
+#   bbs-db list [--rig <rig_name>]
+set -euo pipefail
+
+usage() {
+  cat <<EOF
+bbs-db — postgres snapshot/restore helpers
+
+Usage:
+  bbs-db snapshot <DB_URL> [--schema <schema>] [--rig <rig_name>]
+                                              Create snapshot from DB URL
+  bbs-db restore <snapshot> <DB_URL> [--schema <schema>]
+                                              Restore snapshot to DB
+  bbs-db list [--rig <rig_name>]              List snapshots for rig
+
+Examples:
+  bbs-db snapshot postgresql://user:pass@localhost:5432/my_db --rig my-rig
+  bbs-db list --rig my-rig
+EOF
+}
+
+# snapshot <DB_URL> [--schema <schema>] [--rig <rig_name>]
+cmd_snapshot() {
+  local db_url="" schema="${BABYSIT_DB_SCHEMA:-public}" rig="${BABYSIT_DB_RIG:-default}"
+
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --schema) schema="$2"; shift 2 ;;
+      --rig)    rig="$2"; shift 2 ;;
+      --*)      echo "Unknown option: $1" >&2; exit 1 ;;
+      *)        db_url="$1"; shift ;;
+    esac
+  done
+
+  if [ -z "$db_url" ]; then
+    echo "bbs-db snapshot: requires DB_URL" >&2
+    exit 1
+  fi
+
+  if [[ ! "$rig" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+    echo "bbs-db: invalid rig name '$rig' (alphanumeric, hyphens, underscores only)" >&2
+    exit 1
+  fi
+
+  # Strip schema param from URL if present (pg_dump uses -n flag instead)
+  local clean_url="${db_url%%\?*}"
+  local timestamp
+  timestamp="$(date +%Y%m%d_%H%M%S)"
+  local snapshot_dir="$HOME/.babysit/$rig/snapshots"
+  mkdir -p "$snapshot_dir"
+
+  local db_name
+  db_name="$(echo "$clean_url" | sed -n 's|.*/\([^?]*\)$|\1|p')"
+  local snapshot_path="$snapshot_dir/${db_name}_${timestamp}.dump"
+
+  echo "Creating snapshot: $snapshot_path"
+  pg_dump "$clean_url" -n "$schema" -Fc --no-owner --no-acl -f "$snapshot_path"
+
+  echo "Snapshot saved: $snapshot_path ($(du -h "$snapshot_path" | cut -f1))"
+
+  local count
+  count="$(ls -1 "$snapshot_dir"/"${db_name}"*.dump 2>/dev/null | wc -l | tr -d ' ')"
+  if [ "$count" -gt 3 ]; then
+    echo "Cleaning old snapshots (keeping 3 newest)..."
+    ls -1t "$snapshot_dir"/"${db_name}"*.dump 2>/dev/null | tail -n +4 | xargs -r rm
+  fi
+}
+
+# restore <snapshot> <DB_URL> [--schema <schema>]
+cmd_restore() {
+  local snapshot="" db_url="" schema="${BABYSIT_DB_SCHEMA:-public}"
+
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --schema) schema="$2"; shift 2 ;;
+      --*)      echo "Unknown option: $1" >&2; exit 1 ;;
+      *)        [ -z "$snapshot" ] && snapshot="$1" || db_url="$1"; shift ;;
+    esac
+  done
+
+  if [ -z "$snapshot" ] || [ -z "$db_url" ]; then
+    echo "bbs-db restore: requires <snapshot> and <DB_URL>" >&2
+    exit 1
+  fi
+
+  if [ ! -f "$snapshot" ]; then
+    echo "bbs-db restore: snapshot not found: $snapshot" >&2
+    exit 1
+  fi
+
+  local clean_url="${db_url%%\?*}"
+
+  local display_url
+  display_url="$(echo "$db_url" | sed 's|://[^@]*@|://***:***@|')"
+  echo "Restoring snapshot to $display_url..."
+  pg_restore -d "$clean_url" -n "$schema" --clean --if-exists "$snapshot"
+
+  echo "Restore complete: $display_url"
+}
+
+# list [--rig <rig_name>]
+cmd_list() {
+  local rig="${BABYSIT_DB_RIG:-default}"
+
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --rig) rig="$2"; shift 2 ;;
+      --*)   echo "Unknown option: $1" >&2; exit 1 ;;
+      *)     echo "Unknown arg: $1" >&2; exit 1 ;;
+    esac
+  done
+
+  if [[ ! "$rig" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+    echo "bbs-db: invalid rig name '$rig' (alphanumeric, hyphens, underscores only)" >&2
+    exit 1
+  fi
+
+  local snapshot_dir="$HOME/.babysit/$rig/snapshots"
+  if [ ! -d "$snapshot_dir" ]; then
+    echo "No snapshots found for rig: $rig"
+    return
+  fi
+
+  echo "Snapshots for rig: $rig"
+  ls -lh "$snapshot_dir"/*.dump 2>/dev/null | awk '{print $9, $5}' | while read -r path size; do
+    echo "  $(basename "$path")  $size"
+  done
+}
+
+# ─── Main ──────────────────────────────────────────────────────
+SUBCMD="${1:-}"
+shift || true
+
+case "$SUBCMD" in
+  snapshot) cmd_snapshot "$@" ;;
+  restore)  cmd_restore "$@" ;;
+  list)     cmd_list "$@" ;;
+  help|--help|-h|"")
+    usage
+    [ -z "$SUBCMD" ] && exit 1 || exit 0
+    ;;
+  *)
+    echo "bbs-db: unknown subcommand '$SUBCMD'" >&2
+    usage >&2
+    exit 1
+    ;;
+esac

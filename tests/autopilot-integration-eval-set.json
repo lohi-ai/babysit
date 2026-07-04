@@ -1,0 +1,365 @@
+[
+  {
+    "name": "P1-inline-new-feature-clean",
+    "ticket": "bs-pipe-01",
+    "fixture": {"cache_key": "babysit-autopilot-minimal", "cmd": ["mkdir", "-p", "$DEST"]},
+    "prompt_template": "/bbs:autopilot add dark mode toggle",
+    "expect_ticket_create": true,
+    "assert_paths": ["requirement.md", "index.json"],
+    "assert_path_contents": {"requirement.md": "dark mode toggle"},
+    "assert_decisions": {"skill": "autopilot", "choice": "outcome=dispatch"}
+  },
+  {
+    "name": "P2-inline-new-feature-dirty",
+    "ticket": "bs-pipe-02",
+    "fixture": {"cache_key": "babysit-autopilot-minimal", "cmd": ["mkdir", "-p", "$DEST"]},
+    "prompt_template": "/bbs:autopilot add dark mode toggle",
+    "seed_working_tree_files": {"dirty-tracker.txt": "uncommitted changes"},
+    "assert_paths_empty": ["requirement.md", "index.json"],
+    "assert_decisions": {"choice": "outcome=blocked"},
+    "assert_output": {"SUMMARY": "uncommitted"}
+  },
+  {
+    "name": "P3-explicit-build-no-requirement",
+    "ticket": "bs-pipe-03",
+    "fixture": {"cache_key": "babysit-autopilot-minimal", "cmd": ["mkdir", "-p", "$DEST"]},
+    "prompt_template": "/bbs:autopilot $TICKET --workflow=builder",
+    "pre_setup": [["init"]],
+    "assert_paths_empty": ["requirement.md"],
+    "assert_decisions": {"choice": "outcome=blocked"},
+    "assert_output": {"SUMMARY": "requirement_md"}
+  },
+  {
+    "name": "P4-implement-unplanned",
+    "ticket": "bs-pipe-04",
+    "fixture": {"cache_key": "babysit-autopilot-minimal", "cmd": ["mkdir", "-p", "$DEST"]},
+    "prompt_template": "/bbs:autopilot $TICKET --workflow=builder",
+    "pre_setup": [["init"]],
+    "assert_paths_empty": ["checkpoint.json"],
+    "assert_decisions": {"choice": "outcome=blocked"},
+    "assert_output": {"SUMMARY": "plan_md"}
+  },
+  {
+    "name": "P5-implement-unapproved",
+    "ticket": "bs-pipe-05",
+    "fixture": {"cache_key": "babysit-autopilot-minimal", "cmd": ["mkdir", "-p", "$DEST"]},
+    "prompt_template": "/bbs:autopilot $TICKET --workflow=builder",
+    "pre_setup": [
+      ["init"],
+      ["set-pointer", "plan", "plan.md"]
+    ],
+    "seed_files": {"plan.md": "# Plan\nUnapproved test plan"},
+    "assert_paths_empty": ["checkpoint.json"],
+    "assert_decisions": {"choice": "outcome=blocked"},
+    "assert_output": {"SUMMARY": "plan_approved"}
+  },
+  {
+    "name": "P6-implement-approved",
+    "ticket": "bs-pipe-06",
+    "fixture": {"cache_key": "babysit-autopilot-minimal", "cmd": ["mkdir", "-p", "$DEST"]},
+    "prompt_template": "/bbs:autopilot $TICKET",
+    "pre_setup": [
+      ["init"],
+      ["set-pointer", "plan", "plan.md"],
+      ["set-verdict", "--skill", "plan-draft", "--body", "STATUS: DONE\nVERDICT: APPROVED"]
+    ],
+    "seed_files": {"plan.md": "# Plan\nS-scope noop"},
+    "assert_paths": ["checkpoint.json"],
+    "assert_path_contents": {"checkpoint.json": "builder"},
+    "assert_decisions": {"workflow": "builder", "choice": "outcome=dispatch"}
+  },
+  {
+    "name": "P7-quality-no-commits",
+    "ticket": "bs-pipe-07",
+    "fixture": {"cache_key": "babysit-autopilot-minimal", "cmd": ["mkdir", "-p", "$DEST"]},
+    "prompt_template": "/bbs:autopilot $TICKET --workflow=builder",
+    "pre_setup": [
+      ["init"],
+      ["set-pointer", "plan", "plan.md"],
+      ["set-verdict", "--skill", "plan-draft", "--body", "STATUS: DONE"]
+    ],
+    "seed_files": {"plan.md": "# Plan\nnoop"},
+    "assert_paths_empty": ["checkpoint.json"],
+    "assert_decisions": {"choice": "outcome=blocked"},
+    "assert_output": {"SUMMARY": "commits_ahead"}
+  },
+  {
+    "name": "P8-quality-unpushed",
+    "ticket": "bs-pipe-08",
+    "fixture": {"cache_key": "babysit-autopilot-minimal", "cmd": ["mkdir", "-p", "$DEST"]},
+    "fixture_branch": "feat/bs-pipe-08-quality-unpushed",
+    "prompt_template": "/bbs:autopilot $TICKET --workflow=builder",
+    "pre_setup": [
+      ["init"],
+      ["set-pointer", "plan", "plan.md"],
+      ["set-verdict", "--skill", "plan-draft", "--body", "STATUS: DONE"]
+    ],
+    "seed_files": {"plan.md": "# Plan\nnoop"},
+    "setup_commits": [
+      {"files": {"src/feature.ts": "export const feature = true;"}, "message": "feat: add feature"}
+    ],
+    "assert_decisions": {"choice": "outcome=blocked"},
+    "assert_output": {"SUMMARY": "branch_pushed"}
+  },
+  {
+    "name": "P9-ticket-hint-with-label",
+    "ticket": "bs-pipe-09",
+    "fixture": {"cache_key": "babysit-autopilot-minimal", "cmd": ["mkdir", "-p", "$DEST"]},
+    "prompt_template": "/bbs:autopilot $TICKET",
+    "pre_setup": [
+      ["init"],
+      ["set-pointer", "plan", "plan.md"]
+    ],
+    "seed_files": {"plan.md": "# Plan\nnoop"},
+    "assert_paths": ["checkpoint.json"],
+    "assert_decisions": {"skill": "autopilot"}
+  },
+  {
+    "name": "P10-ticket-hint-no-label",
+    "ticket": "bs-pipe-10",
+    "fixture": {"cache_key": "babysit-autopilot-minimal", "cmd": ["mkdir", "-p", "$DEST"]},
+    "prompt_template": "/bbs:autopilot $TICKET",
+    "pre_setup": [
+      ["init"],
+      ["set-pointer", "requirement", "requirement.md"]
+    ],
+    "seed_files": {"requirement.md": "Add a dark mode toggle"},
+    "assert_paths": ["checkpoint.json"],
+    "assert_decisions": {"skill": "autopilot"}
+  },
+  {
+    "name": "P11-re-plan-force",
+    "ticket": "bs-pipe-11",
+    "fixture": {"cache_key": "babysit-autopilot-minimal", "cmd": ["mkdir", "-p", "$DEST"]},
+    "prompt_template": "/bbs:autopilot $TICKET --replan",
+    "pre_setup": [
+      ["init"],
+      ["set-pointer", "plan", "plan.md"]
+    ],
+    "seed_files": {"plan.md": "# Old Plan\nShould be backed up"},
+    "assert_paths": ["plan.md.bak"],
+    "assert_path_contents": {"plan.md.bak": "Old Plan"},
+    "assert_decisions": {"choice": "force=1"}
+  },
+  {
+    "name": "P12-force-workflow-override",
+    "ticket": "bs-pipe-12",
+    "fixture": {"cache_key": "babysit-autopilot-minimal", "cmd": ["mkdir", "-p", "$DEST"]},
+    "prompt_template": "/bbs:autopilot $TICKET --workflow=builder --force",
+    "pre_setup": [
+      ["init"],
+      ["set-pointer", "plan", "plan.md"]
+    ],
+    "seed_files": {"plan.md": "# Old Plan\nShould be backed up"},
+    "assert_paths": ["plan.md.bak"],
+    "assert_path_contents": {"plan.md.bak": "Old Plan"},
+    "assert_decisions": {"choice": "force=1"}
+  },
+  {
+    "name": "P13-resume-deferred",
+    "ticket": "bs-pipe-13",
+    "fixture": {"cache_key": "babysit-autopilot-minimal", "cmd": ["mkdir", "-p", "$DEST"]},
+    "prompt_template": "/bbs:autopilot",
+    "pre_setup": [
+      ["init"],
+      ["set-pointer", "plan", "plan.md"]
+    ],
+    "seed_files": {"plan.md": "# Plan\nResume test"},
+    "autopilot_setup": [
+      ["checkpoint", "--ticket", "$TICKET", "--workflow", "builder", "--step", "requirement-review", "--status", "done_step", "--note", "test"],
+      ["set-current", "builder", "$TICKET"]
+    ],
+    "assert_paths": ["checkpoint.json"],
+    "assert_decisions": {"workflow": "builder"}
+  },
+  {
+    "name": "P14-verify-post-miss",
+    "ticket": "bs-pipe-14",
+    "fixture": {"cache_key": "babysit-autopilot-minimal", "cmd": ["mkdir", "-p", "$DEST"]},
+    "prompt_template": "/bbs:autopilot $TICKET --workflow=builder",
+    "pre_setup": [["init"]],
+    "autopilot_setup": [
+      ["checkpoint", "--ticket", "$TICKET", "--workflow", "builder", "--step", "plan", "--status", "done_step", "--note", "simulated"]
+    ],
+    "assert_paths": ["checkpoint.json"],
+    "assert_path_contents": {"checkpoint.json": "blocked"},
+    "assert_decisions": {"choice": "verify-post"}
+  },
+  {
+    "name": "P15-lint-missing-needs-state",
+    "ticket": "bs-pipe-15",
+    "fixture": {"cache_key": "babysit-autopilot-minimal", "cmd": ["mkdir", "-p", "$DEST"]},
+    "skip_claude": true,
+    "binary_test": ["lint-workflow", ".claude/workflows/test-lint.md"],
+    "lint_workflow_content": "---\nworkflow: bad\n---\n# bad\n## step1\nbody",
+    "assert_exit": 1,
+    "assert_stderr": {"missing": "missing .needs-state."}
+  },
+  {
+    "name": "P17-explain-planned-unapproved",
+    "ticket": "bs-pipe-17",
+    "fixture": {"cache_key": "babysit-autopilot-minimal", "cmd": ["mkdir", "-p", "$DEST"]},
+    "skip_claude": true,
+    "binary_test": ["explain", "$TICKET"],
+    "pre_setup": [
+      ["init"],
+      ["set-pointer", "plan", "plan.md"]
+    ],
+    "seed_files": {"plan.md": "# Plan\nUnapproved"},
+    "assert_stdout": {"plan_approved": "plan_approved"}
+  },
+  {
+    "name": "P18-dry-run-match",
+    "ticket": "bs-pipe-18",
+    "fixture": {"cache_key": "babysit-autopilot-minimal", "cmd": ["mkdir", "-p", "$DEST"]},
+    "prompt_template": "/bbs:autopilot $TICKET --dry-run",
+    "pre_setup": [
+      ["init"],
+      ["set-pointer", "plan", "plan.md"],
+      ["set-verdict", "--skill", "plan-draft", "--body", "STATUS: DONE"]
+    ],
+    "seed_files": {"plan.md": "# Plan\nnoop"},
+    "assert_paths_empty": ["checkpoint.json"],
+    "assert_decisions": {"choice": "outcome=dry-run", "workflow": "builder"}
+  },
+  {
+    "name": "P19-dry-run-block",
+    "ticket": "bs-pipe-19",
+    "fixture": {"cache_key": "babysit-autopilot-minimal", "cmd": ["mkdir", "-p", "$DEST"]},
+    "prompt_template": "/bbs:autopilot $TICKET --workflow=builder --dry-run",
+    "pre_setup": [["init"]],
+    "assert_paths_empty": ["checkpoint.json"],
+    "assert_decisions": {"choice": "outcome=blocked"},
+    "assert_output": {"SUMMARY": "plan_md"}
+  },
+  {
+    "name": "P20-explain-branch-derived",
+    "ticket": "bs-pipe-20",
+    "fixture": {"cache_key": "babysit-autopilot-minimal", "cmd": ["mkdir", "-p", "$DEST"]},
+    "fixture_branch": "feat/bs-pipe-20-explain",
+    "skip_claude": true,
+    "binary_test": ["explain"],
+    "assert_stdout": {"BRANCH": "feat/bs-pipe-20-explain"}
+  },
+  {
+    "name": "P21-sub-ticket-origin-type",
+    "ticket": "bs-pipe-21",
+    "fixture": {"cache_key": "babysit-autopilot-minimal", "cmd": ["mkdir", "-p", "$DEST"]},
+    "skip_claude": true,
+    "binary_test": ["explain", "$TICKET"],
+    "pre_setup": [
+      ["init", "--origin-type", "sub_ticket", "--parent", "bs-pipe-21-parent", "--seed", "sub-tickets/001-foo.md", "--plan", "plan.md"]
+    ],
+    "assert_stdout": {"origin_type": "origin_type:     sub_ticket"}
+  },
+  {
+    "name": "P22-manifest-present",
+    "ticket": "bs-pipe-22",
+    "fixture": {"cache_key": "babysit-autopilot-minimal", "cmd": ["mkdir", "-p", "$DEST"]},
+    "skip_claude": true,
+    "binary_test": ["explain", "$TICKET"],
+    "pre_setup": [
+      ["init"],
+      ["set-pointer", "plan", "plan.md"],
+      ["set-pointer", "manifest", "manifest.md"]
+    ],
+    "seed_files": {
+      "plan.md": "# Plan\nL-scope, decomposed",
+      "manifest.md": "# Manifest\n- 001-foo.md\n- 002-bar.md"
+    },
+    "assert_stdout": {"manifest_md": "manifest_md:     1"}
+  },
+  {
+    "name": "P24-prototyper-named-workflow",
+    "ticket": "bs-pipe-24",
+    "fixture": {"cache_key": "babysit-autopilot-minimal", "cmd": ["mkdir", "-p", "$DEST"]},
+    "prompt_template": "/bbs:autopilot $TICKET --workflow=prototyper",
+    "pre_setup": [
+      ["init"],
+      ["set-pointer", "requirement", "requirement.md"]
+    ],
+    "seed_files": {"requirement.md": "Validate whether sqlite FTS5 is fast enough for typeahead search"},
+    "assert_paths": ["checkpoint.json"],
+    "assert_path_contents": {"checkpoint.json": "prototyper"},
+    "assert_decisions": {"workflow": "prototyper", "choice": "outcome=dispatch"},
+    "assert_output": {"VERDICT": "VALIDATED|INVALIDATED|INCONCLUSIVE"}
+  },
+  {
+    "name": "P25-sweeper-named-workflow",
+    "ticket": "bs-pipe-25",
+    "fixture": {"cache_key": "babysit-autopilot-minimal", "cmd": ["mkdir", "-p", "$DEST"]},
+    "fixture_branch": "feat/bs-pipe-25-sweeper",
+    "prompt_template": "/bbs:autopilot $TICKET --workflow=sweeper",
+    "pre_setup": [["init"]],
+    "setup_commits": [
+      {"files": {"src/util.ts": "export const used = 1;\nexport const dead = 2; // unreferenced\n"}, "message": "feat: add util"}
+    ],
+    "assert_paths": ["checkpoint.json"],
+    "assert_path_contents": {"checkpoint.json": "sweeper"},
+    "assert_decisions": {"workflow": "sweeper", "choice": "outcome=dispatch"},
+    "assert_output": {"VERDICT": "SWEPT"}
+  },
+  {
+    "name": "P26-grower-ranked-plan",
+    "ticket": "bs-pipe-26",
+    "fixture": {"cache_key": "babysit-autopilot-minimal", "cmd": ["mkdir", "-p", "$DEST"]},
+    "prompt_template": "/bbs:autopilot $TICKET --workflow=grower",
+    "pre_setup": [
+      ["init"],
+      ["set-pointer", "requirement", "requirement.md"]
+    ],
+    "seed_files": {"requirement.md": "Rank growth experiments to improve signup conversion on the landing page. Do not implement anything."},
+    "assert_paths": ["checkpoint.json"],
+    "assert_path_contents": {"checkpoint.json": "grower"},
+    "assert_decisions": {"workflow": "grower", "choice": "outcome=dispatch"},
+    "assert_output": {"VERDICT": "RANKED"}
+  },
+  {
+    "name": "P27-maintainer-audit-fix",
+    "ticket": "bs-pipe-27",
+    "fixture": {"cache_key": "babysit-autopilot-minimal", "cmd": ["mkdir", "-p", "$DEST"]},
+    "prompt_template": "/bbs:autopilot $TICKET --workflow=maintainer",
+    "pre_setup": [
+      ["init"],
+      ["set-pointer", "requirement", "requirement.md"]
+    ],
+    "seed_files": {"requirement.md": "Audit this repo's dependencies for known vulnerabilities and fix the top finding if a safe fix exists."},
+    "assert_paths": ["checkpoint.json"],
+    "assert_path_contents": {"checkpoint.json": "maintainer"},
+    "assert_decisions": {"workflow": "maintainer", "choice": "outcome=dispatch"},
+    "assert_output": {"VERDICT": "AUDITED|HARDENED|FIXED"}
+  },
+  {
+    "name": "P28-builder-child-route",
+    "ticket": "bs-pipe-28",
+    "fixture": {"cache_key": "babysit-autopilot-minimal", "cmd": ["mkdir", "-p", "$DEST"]},
+    "skip_claude": true,
+    "binary_test": ["explain", "$TICKET"],
+    "pre_setup": [
+      ["init", "--origin-type", "sub_ticket", "--parent", "bs-pipe-28-parent", "--seed", "sub-tickets/001-foo.md", "--plan", "plan.md"]
+    ],
+    "assert_stdout": {"route": "sub_ticket → builder .child mode."}
+  },
+  {
+    "name": "P29-builder-orchestrate-route",
+    "ticket": "bs-pipe-29",
+    "fixture": {"cache_key": "babysit-autopilot-minimal", "cmd": ["mkdir", "-p", "$DEST"]},
+    "skip_claude": true,
+    "binary_test": ["explain", "$TICKET"],
+    "pre_setup": [
+      ["init"],
+      ["set-pointer", "manifest", "manifest.md"]
+    ],
+    "seed_files": {"manifest.md": "# Manifest\n- 001-foo.md\n- 002-bar.md"},
+    "assert_stdout": {"route": "manifest.md exists → builder .orchestrate mode."}
+  },
+  {
+    "name": "P31-explain-archetype-hint",
+    "ticket": "bs-pipe-31",
+    "fixture": {"cache_key": "babysit-autopilot-minimal", "cmd": ["mkdir", "-p", "$DEST"]},
+    "skip_claude": true,
+    "binary_test": ["explain", "$TICKET"],
+    "pre_setup": [["init"]],
+    "assert_stdout": {"hint": "prototyper | sweeper | grower | maintainer"}
+  }
+]

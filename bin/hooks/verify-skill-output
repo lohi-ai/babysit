@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+# PostToolUse(Skill) verdict-contract verifier — audit layer.
+#
+# After a bbs skill runs, check its captured output for a well-formed terminal
+# status block (STATUS: ∈ {DONE, DONE_WITH_CONCERNS, BLOCKED, NEEDS_CONTEXT}).
+# PostToolUse cannot block (the skill already ran), so this only:
+#   - logs the invocation to skill-usage.jsonl (babysit's primary feedback channel)
+#   - emits a systemMessage warning when the output *contains* a STATUS line that
+#     is malformed (wrong/garbled value) — a real contract violation.
+#
+# It deliberately does NOT warn when there's simply no STATUS line in the
+# captured text: babysit skills emit the verdict in the model's response after
+# the Skill tool returns, which may not appear in tool_result.text. No false
+# alarms — absence is silent, only a present-but-malformed block is flagged.
+#
+# Input:  hook JSON on stdin (.tool_input.name, .tool_result.text).
+# Output: optional systemMessage JSON; always exit 0.
+set -uo pipefail
+
+command -v jq >/dev/null 2>&1 || exit 0   # no jq → silently skip (audit-only)
+
+# Read stdin once — jq can only consume it once, so slurp then parse the var.
+INPUT="$(cat)"
+NAME="$(printf '%s' "$INPUT" | jq -r '.tool_input.name // empty' 2>/dev/null)"
+TEXT="$(printf '%s' "$INPUT" | jq -r '.tool_result.text // .tool_result // empty' 2>/dev/null)"
+[ -n "$NAME" ] || exit 0
+
+# Only audit babysit skills (bbs:<name> or the bare names in this pack).
+case "$NAME" in
+  bbs:*|autopilot|browse|conversion-fix|copy-rewrite|create-pr|design-ui|growth-experiment|implement|investigate|office-hours|plan-draft|qa|recon|review-pr|setup-project|social-content) : ;;
+  *) exit 0 ;;
+esac
+
+TS="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+LOG="$HOME/.babysit/analytics/skill-usage.jsonl"
+mkdir -p "$(dirname "$LOG")" 2>/dev/null || true
+
+# Is there a STATUS line at all? If so, is it valid?
+STATUS_LINE="$(printf '%s\n' "$TEXT" | grep -m1 -E '^STATUS:' 2>/dev/null || true)"
+VERDICT_CONTRACT="absent"   # absent | valid | malformed
+if [ -n "$STATUS_LINE" ]; then
+  if printf '%s\n' "$STATUS_LINE" | grep -qE '^STATUS:[[:space:]]*(DONE|DONE_WITH_CONCERNS|BLOCKED|NEEDS_CONTEXT)\b'; then
+    VERDICT_CONTRACT="valid"
+  else
+    VERDICT_CONTRACT="malformed"
+  fi
+fi
+
+# Typed-evidence audit (mid-tier gate): if this skill is an evidence producer,
+# record whether its artifact landed. Audit only — Hook A's hard-stage gate
+# still keys on verdicts, not on these. evidence-status is none|valid|malformed.
+EVIDENCE_KIND=""
+case "${NAME#bbs:}" in
+  implement|browse|investigate|qa) EVIDENCE_KIND="verification" ;;
+esac
+EVIDENCE_STATUS=""
+if [ -n "$EVIDENCE_KIND" ]; then
+  _resolve() {
+    local shim="$HOME/.claude/$1" repo="$HOME/.claude/skills/babysit/bin/$1"
+    if [ -x "$shim" ]; then echo "$shim"
+    elif [ -x "$repo" ]; then echo "$repo"
+    elif command -v "$1" >/dev/null 2>&1; then echo "$1"
+    else echo ""; fi
+  }
+  TB="$(_resolve bbs-ticket)"
+  if [ -n "$TB" ] && "$TB" resolve >/dev/null 2>&1; then
+    EVIDENCE_STATUS="$("$TB" evidence-status --kind "$EVIDENCE_KIND" 2>/dev/null || echo none)"
+  fi
+fi
+
+if [ -n "$EVIDENCE_KIND" ]; then
+  printf '{"ts":"%s","event":"skill-verdict-audit","skill":"%s","verdict_contract":"%s","evidence_kind":"%s","evidence":"%s"}\n' \
+    "$TS" "$NAME" "$VERDICT_CONTRACT" "$EVIDENCE_KIND" "${EVIDENCE_STATUS:-unchecked}" >> "$LOG" 2>/dev/null || true
+else
+  printf '{"ts":"%s","event":"skill-verdict-audit","skill":"%s","verdict_contract":"%s"}\n' \
+    "$TS" "$NAME" "$VERDICT_CONTRACT" >> "$LOG" 2>/dev/null || true
+fi
+
+if [ "$VERDICT_CONTRACT" = "malformed" ]; then
+  printf '{"systemMessage":"verdict-contract: %s emitted a malformed STATUS line (expected STATUS: DONE|DONE_WITH_CONCERNS|BLOCKED|NEEDS_CONTEXT per handoff-contracts.md)."}\n' "$NAME"
+fi
+exit 0

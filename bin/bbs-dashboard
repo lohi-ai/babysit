@@ -1,0 +1,779 @@
+#!/usr/bin/env bash
+# bbs-dashboard — snapshot babysit state into web/dist/data.js and open the dashboard.
+#
+# Usage:
+#   bbs-dashboard                  Walk every project under ~/.babysit/projects/ (v2 default).
+#   bbs-dashboard build            Run `npm install && npm run build` in web/.
+#   bbs-dashboard --slug <name>    DEPRECATED: kept for one release; cross-project view is now default.
+#                                  Filter the snapshot to a single project by slug.
+#   bbs-dashboard --no-open        Snapshot only -- don't open browser (for CI/tests).
+#   bbs-dashboard --dev            Dev mode: snapshot to web/public/data.js, run vite dev on :5173
+#                                  with HMR, open browser. Sibling of the default file:// path.
+#   bbs-dashboard --help           Print usage.
+#
+# Env overrides:
+#   BABYSIT_STATE_DIR              Default: ~/.babysit
+#   BABYSIT_DASHBOARD_REPO         Default: dirname of this script's repo root
+#   BBS_DASHBOARD_MAX_BYTES        Default: 5000000. If data.js exceeds this, caps are
+#                                  tightened to 1000/100 and one retry is attempted.
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="${BABYSIT_DASHBOARD_REPO:-$(cd "$SCRIPT_DIR/.." && pwd)}"
+STATE_DIR="${BABYSIT_STATE_DIR:-$HOME/.babysit}"
+WEB_DIR="$REPO_ROOT/web"
+DIST_DIR="$WEB_DIR/dist"
+MAX_BYTES="${BBS_DASHBOARD_MAX_BYTES:-5000000}"
+
+usage() {
+  sed -n '3,18p' "$0" | sed 's/^# \{0,1\}//'
+}
+
+err() { printf 'bbs-dashboard: %s\n' "$*" >&2; }
+
+require_jq() {
+  command -v jq >/dev/null 2>&1 || {
+    err "jq not found in PATH; install jq and retry"
+    exit 2
+  }
+}
+
+# ---- flag parsing -----------------------------------------------
+SUBCMD=""
+SLUG_OVERRIDE=""
+OPEN=1
+DEV=0
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --help|-h) usage; exit 0 ;;
+    --no-open) OPEN=0; shift ;;
+    --dev) DEV=1; shift ;;
+    --slug)
+      [ $# -ge 2 ] || { err "--slug requires a name"; exit 1; }
+      SLUG_OVERRIDE="$2"; shift 2 ;;
+    --slug=*) SLUG_OVERRIDE="${1#--slug=}"; shift ;;
+    build) SUBCMD="build"; shift ;;
+    --) shift; break ;;
+    -*) err "unknown flag: $1"; exit 1 ;;
+    *)  err "unknown argument: $1"; exit 1 ;;
+  esac
+done
+
+# ---- subcommand: build ------------------------------------------
+if [ "$SUBCMD" = "build" ]; then
+  [ -d "$WEB_DIR" ] || { err "web/ not found at $WEB_DIR"; exit 2; }
+  command -v npm >/dev/null 2>&1 || { err "npm not found; install Node.js and retry"; exit 2; }
+  cd "$WEB_DIR"
+  npm install --silent
+  npm run build
+  exit 0
+fi
+
+require_jq
+
+# ---- validate --slug override (deprecated) -----------------------
+if [ -n "$SLUG_OVERRIDE" ]; then
+  err "--slug is DEPRECATED: kept for one release; cross-project view is now default"
+  case "$SLUG_OVERRIDE" in
+    *[!a-zA-Z0-9_.-]*|.|..|''|/*|*/*)
+      err "invalid slug '$SLUG_OVERRIDE' (allowed: a-z A-Z 0-9 _ . -, no slashes)"
+      exit 1 ;;
+  esac
+  PROJECT_DIR="$STATE_DIR/projects/$SLUG_OVERRIDE"
+  if [ ! -d "$PROJECT_DIR" ]; then
+    err "no babysit state for slug '$SLUG_OVERRIDE' at $PROJECT_DIR"
+    exit 1
+  fi
+fi
+
+# ---- reconcile statuses before snapshotting ----------------------
+# Status in index.json is event-driven (skills write it on completion), so
+# interrupted runs and skills that never wrote a final set-status call leave
+# tickets stuck at stale values. Reconcile runs first so the snapshot
+# reflects observable filesystem state rather than the last successful skill
+# write. Idempotent: only advances along the ladder, never downgrades, never
+# touches terminal/explicit states.
+#
+# Set BBS_DASHBOARD_NO_RECONCILE=1 to skip — useful when debugging the
+# snapshot itself or when the user wants to see raw stored statuses.
+if [ -z "${BBS_DASHBOARD_NO_RECONCILE:-}" ]; then
+  TICKET_BIN="$SCRIPT_DIR/bbs-ticket"
+  [ -x "$TICKET_BIN" ] || TICKET_BIN="$(command -v bbs-ticket 2>/dev/null || true)"
+  if [ -n "$TICKET_BIN" ] && [ -d "$STATE_DIR/projects" ]; then
+    while IFS= read -r _proj_dir; do
+      [ -z "$_proj_dir" ] && continue
+      [ -d "$_proj_dir/tickets" ] || continue
+      # Reconcile output (one line per advancement) goes to stderr so it's
+      # visible in the dashboard run log without polluting stdout. --quiet
+      # suppresses no-op lines for tickets already at their derived status.
+      BABYSIT_PROJECT_HOME="$_proj_dir" "$TICKET_BIN" reconcile --all --quiet 1>&2 || true
+    done < <(find "$STATE_DIR/projects" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | LC_ALL=C sort)
+  fi
+fi
+
+# ---- snapshot composition helpers --------------------------------
+SNAPSHOT_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+BABYSIT_VERSION="$(cat "$REPO_ROOT/VERSION" 2>/dev/null || echo unknown)"
+
+file_or_null() {
+  local f="$1"
+  if [ -f "$f" ]; then jq -Rs . < "$f"; else echo null; fi
+}
+
+# file_or_null with a byte cap (cap_bytes arg); truncates at that many bytes.
+file_capped_or_null() {
+  local f="$1"
+  local cap_bytes="$2"
+  if [ ! -f "$f" ]; then echo null; return; fi
+  local size
+  size=$(wc -c < "$f" 2>/dev/null || echo 0)
+  if [ "$size" -le "$cap_bytes" ]; then
+    jq -Rs . < "$f"
+  else
+    # Truncate to cap_bytes; mark with a trailing sentinel so the SPA knows
+    dd if="$f" bs=1 count="$cap_bytes" 2>/dev/null | jq -Rs '. + "\n[...truncated at 50KB]\n"'
+  fi
+}
+
+named_files_json() {
+  local dir="$1"
+  local pattern="$2"
+  if [ ! -d "$dir" ]; then echo '[]'; return; fi
+  local files
+  files=$(find "$dir" -mindepth 1 -maxdepth 1 -type f -name "$pattern" 2>/dev/null \
+          | sed "s|^$dir/||" | LC_ALL=C sort || true)
+  if [ -z "$files" ]; then echo '[]'; return; fi
+  local arr='[]'
+  while IFS= read -r f; do
+    [ -z "$f" ] && continue
+    arr=$(jq --arg name "$f" --rawfile body "$dir/$f" '. + [{name: $name, body: $body}]' <<<"$arr")
+  done <<<"$files"
+  echo "$arr"
+}
+
+# Parse a single session yaml — flat key:value schema written by the preamble
+# session-writer hook. Emits {id, ticket, product, cwd, age_min, started_at}.
+# Reads filename for id (canonical), file body for the rest. Tolerant of
+# missing fields (emits null) so a half-written file doesn't break the dash.
+session_yaml_to_json() {
+  local f="$1"
+  local age_min="$2"
+  python3 - "$f" "$age_min" <<'EOF'
+import json, os, sys
+path, age = sys.argv[1], int(sys.argv[2])
+sid = os.path.basename(path).removesuffix(".yaml")
+fields = {}
+try:
+    with open(path) as fh:
+        for ln in fh:
+            ln = ln.rstrip("\n")
+            if not ln or ln.startswith("#") or ":" not in ln:
+                continue
+            k, v = ln.split(":", 1)
+            fields[k.strip()] = v.strip().strip("'\"")
+except OSError:
+    pass
+out = {
+    "id": sid,
+    "ticket": fields.get("ticket") or None,
+    "product": fields.get("product") or None,
+    "cwd": fields.get("cwd") or None,
+    "started_at": fields.get("started_at") or None,
+    "age_min": age,
+}
+json.dump(out, sys.stdout)
+EOF
+}
+
+active_sessions_json() {
+  local d="$STATE_DIR/sessions"
+  if [ ! -d "$d" ]; then echo '{"count":0,"slugs":[],"sessions":[]}'; return; fi
+  local now
+  now=$(date +%s)
+  local count=0
+  local slugs='[]'
+  local sessions='[]'
+  while IFS= read -r f; do
+    [ -z "$f" ] && continue
+    local mt age_s age_min
+    mt=$(stat -f %m "$f" 2>/dev/null || stat -c %Y "$f" 2>/dev/null || echo 0)
+    [ "$mt" -gt 0 ] || continue
+    age_s=$((now - mt))
+    age_min=$((age_s / 60))
+    [ "$age_min" -gt 120 ] && continue
+    count=$((count + 1))
+    local id session_obj
+    id=$(basename "$f")
+    slugs=$(jq --arg id "$id" '. + [$id]' <<<"$slugs")
+    session_obj=$(session_yaml_to_json "$f" "$age_min" 2>/dev/null) || session_obj='null'
+    [ -z "$session_obj" ] && session_obj='null'
+    if [ "$session_obj" != "null" ]; then
+      sessions=$(jq --argjson s "$session_obj" '. + [$s]' <<<"$sessions")
+    fi
+  done < <(find "$d" -mindepth 1 -maxdepth 1 -type f -name '*.yaml' 2>/dev/null)
+  # Sort newest first by age_min ascending (smallest age = freshest)
+  sessions=$(jq 'sort_by(.age_min // 1000000)' <<<"$sessions")
+  jq -n --argjson count "$count" --argjson slugs "$slugs" --argjson sessions "$sessions" \
+    '{count: $count, slugs: $slugs, sessions: $sessions}'
+}
+
+# Parse manifest.yaml (fixed v1 schema written by bbs-ticket manifest_write).
+# Emits {repos: [{name, branch, canonical, worktree, base, pushed}, ...]} or
+# {repos: []} when missing/malformed. Schema reference: docs/identity.md.
+manifest_yaml_to_json() {
+  local f="$1"
+  if [ ! -f "$f" ]; then echo '{"repos":[]}'; return; fi
+  python3 - "$f" <<'EOF' 2>/dev/null || echo '{"repos":[]}'
+import json, sys
+path = sys.argv[1]
+try:
+    with open(path) as fh:
+        lines = fh.read().splitlines()
+except OSError:
+    print('{"repos":[]}'); sys.exit(0)
+
+def coerce(v):
+    if v == "true": return True
+    if v == "false": return False
+    if (v.startswith("'") and v.endswith("'")):
+        return v[1:-1].replace("''", "'")
+    if (v.startswith('"') and v.endswith('"')):
+        return v[1:-1]
+    return v
+
+repos = []
+cur = None
+for ln in lines:
+    if not ln or ln.lstrip().startswith("#"):
+        continue
+    if ln.startswith("  - "):
+        cur = {}
+        repos.append(cur)
+        kv = ln[4:].strip()
+        if ":" in kv:
+            k, v = kv.split(":", 1)
+            cur[k.strip()] = coerce(v.strip())
+    elif ln.startswith("    ") and cur is not None:
+        kv = ln.strip()
+        if ":" in kv:
+            k, v = kv.split(":", 1)
+            cur[k.strip()] = coerce(v.strip())
+
+# Project to fixed schema
+out_repos = []
+for r in repos:
+    out_repos.append({
+        "name": r.get("name") or None,
+        "branch": r.get("branch") or None,
+        "canonical": r.get("canonical") or None,
+        "worktree": r.get("worktree") or None,
+        "base": r.get("base") or None,
+        "pushed": r.get("pushed") if isinstance(r.get("pushed"), bool) else False,
+    })
+json.dump({"repos": out_repos}, sys.stdout)
+EOF
+}
+
+ticket_detail_json() {
+  local tdir="$1"
+  local id
+  id=$(basename "$tdir")
+  local idx="$tdir/index.json"
+  local raw
+  if ! raw=$(jq -e . "$idx" 2>/dev/null); then
+    err "skipping $id -- corrupt index at $idx: invalid JSON"
+    return 1
+  fi
+  local title
+  title=$(grep -E '^# ' "$tdir/requirement.md" 2>/dev/null | head -1 | sed 's/^# //') || true
+  [ -z "$title" ] && title="$id"
+  local req plan manifest manifest_yaml checkpoint handoffs verdicts reviews evidence verdict_statuses
+  req=$(file_capped_or_null "$tdir/requirement.md" 51200)
+  plan=$(file_capped_or_null "$tdir/plan.md" 51200)
+  manifest=$(file_capped_or_null "$tdir/manifest.md" 51200)
+  # manifest.yaml is the v1.18 identity anchor — separate from manifest.md
+  # (which is the plan-draft decomposition manifest). Emit as structured repos[].
+  if [ -f "$tdir/manifest.yaml" ]; then
+    manifest_yaml=$(manifest_yaml_to_json "$tdir/manifest.yaml")
+  else
+    manifest_yaml='{"repos":[]}'
+  fi
+  if [ -f "$tdir/checkpoint.json" ]; then
+    checkpoint=$(jq '.' "$tdir/checkpoint.json" 2>/dev/null || echo null)
+  else
+    checkpoint=null
+  fi
+  # history transport: --slurpfile reads each JSONL line as a value and
+  # binds the result as an array directly — so we point at the file and
+  # use $history (no [0]). Empty/missing → empty file → [].
+  local history_file
+  if [ -f "$tdir/history.jsonl" ]; then
+    history_file="$tdir/history.jsonl"
+  else
+    history_file="$BBS_TMP_DIR/empty_history.jsonl"
+    [ -f "$history_file" ] || : > "$history_file"
+  fi
+  handoffs=$(named_files_json "$tdir/handoffs" '*.md')
+  verdicts=$(named_files_json "$tdir/verdicts" '*.md')
+  # Per-skill categorical status, same alphabet as `bbs-ticket verdict-status`
+  # ({none|DONE|DONE_WITH_CONCERNS|BLOCKED|NEEDS_CONTEXT}) — the gate contract
+  # signal, so the UI never re-parses verdict prose.
+  verdict_statuses='{}'
+  if [ -d "$tdir/verdicts" ]; then
+    verdict_statuses=$(for vf in "$tdir"/verdicts/*.md; do
+      [ -e "$vf" ] || continue
+      vskill="${vf##*/}"; vskill="${vskill%.md}"
+      vst=$(grep -m1 -E '^STATUS:[[:space:]]*(DONE|DONE_WITH_CONCERNS|BLOCKED|NEEDS_CONTEXT)\b' "$vf" 2>/dev/null \
+        | sed -E 's/^STATUS:[[:space:]]*([A-Z_]+).*/\1/')
+      jq -n --arg k "$vskill" --arg v "${vst:-none}" '{($k): $v}'
+    done | jq -s 'add // {}')
+    [ -n "$verdict_statuses" ] || verdict_statuses='{}'
+  fi
+  reviews=$(named_files_json "$tdir/reviews" '*.md')
+  if [ -d "$tdir/evidence" ]; then
+    evidence=$(cd "$tdir/evidence" && find . -type f 2>/dev/null | sed 's|^\./||' | jq -R . | jq -s . 2>/dev/null || echo '[]')
+  else
+    evidence='[]'
+  fi
+  # named_files_json embeds full file body via --rawfile; handoffs/verdicts/
+  # reviews/evidence can each blow past per-arg ARG_MAX. Route them via slurpfile.
+  local handoffs_file verdicts_file reviews_file evidence_file
+  handoffs_file=$(_blob_to_tmpfile "$handoffs")
+  verdicts_file=$(_blob_to_tmpfile "$verdicts")
+  reviews_file=$(_blob_to_tmpfile "$reviews")
+  evidence_file=$(_blob_to_tmpfile "$evidence")
+  jq -n \
+    --argjson idx "$raw" \
+    --arg id "$id" \
+    --arg title "$title" \
+    --argjson req "$req" \
+    --argjson plan "$plan" \
+    --argjson manifest "$manifest" \
+    --argjson manifestYaml "$manifest_yaml" \
+    --argjson checkpoint "$checkpoint" \
+    --slurpfile history "$history_file" \
+    --slurpfile handoffs "$handoffs_file" \
+    --argjson verdictStatuses "$verdict_statuses" \
+    --slurpfile verdicts "$verdicts_file" \
+    --slurpfile reviews "$reviews_file" \
+    --slurpfile evidence "$evidence_file" '
+    {
+      id: $id,
+      title: $title,
+      status: ($idx.status // "unknown"),
+      phase: $idx.phase,
+      branch: ($idx.pointers.branch // null),
+      parent: ($idx.parent // null),
+      size: ($idx.pointers.ticket_size // null),
+      updated_at: ($idx.updated_at // null),
+      created_at: ($idx.created_at // null),
+      requirement: $req,
+      plan: $plan,
+      manifest: $manifest,
+      repos: ($manifestYaml.repos // []),
+      checkpoint: $checkpoint,
+      history: $history,
+      handoffs: $handoffs[0],
+      verdicts: $verdicts[0],
+      verdict_statuses: $verdictStatuses,
+      reviews: $reviews[0],
+      evidence: $evidence[0]
+    }'
+}
+
+# Walk one project directory and return JSON block { tickets, timeline, analytics }
+project_block_json() {
+  local project_dir="$1"
+  local tickets_dir="$project_dir/tickets"
+
+  local all_details='{}'
+  local all_summaries='[]'
+  local all_timeline='[]'
+
+  if [ -d "$tickets_dir" ]; then
+    while IFS= read -r tdir; do
+      [ -z "$tdir" ] && continue
+      [ -f "$tdir/index.json" ] || continue
+      local detail
+      detail=$(ticket_detail_json "$tdir") || continue
+      local id summary events
+      id=$(jq -r '.id' <<<"$detail")
+      summary=$(jq '{id, title, status, phase, branch, parent, size, updated_at, created_at}' <<<"$detail")
+      # $detail can be MB-class (carries full history + handoffs/verdicts/
+      # reviews bodies); route via slurpfile to dodge ARG_MAX.
+      local detail_file
+      detail_file=$(_blob_to_tmpfile "$detail")
+      all_details=$(jq --arg id "$id" --slurpfile d "$detail_file" \
+                       '. + {($id): $d[0]}' <<<"$all_details")
+      all_summaries=$(jq --argjson s "$summary" '. + [$s]' <<<"$all_summaries")
+      if [ -f "$tdir/history.jsonl" ]; then
+        events=$(jq -c --arg id "$id" '. + {ticket: $id}' "$tdir/history.jsonl" 2>/dev/null \
+                 | jq -s '.' 2>/dev/null || echo '[]')
+        # $events grows linearly with this project's total history rows.
+        local events_file
+        events_file=$(_blob_to_tmpfile "$events")
+        all_timeline=$(jq --slurpfile a "$events_file" \
+                          '. + $a[0]' <<<"$all_timeline")
+      fi
+    done < <(find "$tickets_dir" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | LC_ALL=C sort)
+  fi
+
+  all_summaries=$(jq 'sort_by(.updated_at // "") | reverse' <<<"$all_summaries")
+  all_timeline=$(jq 'sort_by(.ts // "") | reverse' <<<"$all_timeline")
+
+  # Per-project analytics (from per-project skill-usage if present; otherwise empty)
+  local proj_analytics_file="$project_dir/analytics/skill-usage.jsonl"
+  local proj_rows='[]'
+  if [ -f "$proj_analytics_file" ]; then
+    proj_rows=$(jq -s '.' "$proj_analytics_file" 2>/dev/null || echo '[]')
+  fi
+  local analytics
+  analytics=$(jq -n --argjson rows "$proj_rows" '
+    {
+      rows: $rows,
+      per_skill: ($rows
+        | group_by(.skill // "unknown")
+        | map({
+            skill: (.[0].skill // "unknown"),
+            runs: length,
+            total_s: (map(.duration_s // 0) | add // 0),
+            success: (map(select(.outcome == "success")) | length),
+            error:   (map(select(.outcome == "error"))   | length)
+          })
+        | sort_by(-.runs)),
+      per_day: ($rows
+        | map(.ts // "" | .[0:10])
+        | group_by(.)
+        | map({day: .[0], runs: length})
+        | sort_by(.day)),
+      outcome: ($rows
+        | group_by(.outcome // "unknown")
+        | map({outcome: (.[0].outcome // "unknown"), count: length})
+        | sort_by(-.count))
+    }')
+
+  # Final per-project compose: $all_details and $all_timeline are the same
+  # blobs the L2 accumulators built — they hit ARG_MAX here just as easily
+  # as on the way in. Route via slurpfile. $all_summaries (tag-only) and
+  # $analytics (small grouped-by) stay on argv.
+  local details_file timeline_file
+  details_file=$(_blob_to_tmpfile "$all_details")
+  timeline_file=$(_blob_to_tmpfile "$all_timeline")
+  jq -n \
+    --argjson tickets "$all_summaries" \
+    --slurpfile ticketDetail "$details_file" \
+    --slurpfile timeline "$timeline_file" \
+    --argjson analytics "$analytics" '
+    {
+      tickets: $tickets,
+      ticketDetail: $ticketDetail[0],
+      timeline: $timeline[0],
+      analytics: $analytics
+    }'
+}
+
+# Count lines in a JSONL file safely.
+count_jsonl_lines() {
+  local f="$1"
+  [ -f "$f" ] || { echo 0; return; }
+  wc -l < "$f" 2>/dev/null | tr -d ' \t'
+}
+
+# Build the top-level decisions block from analytics/decisions.jsonl with a row cap.
+# Writes total to $BBS_TMP_DIR/decisions_total (set by compose_snapshot).
+build_decisions_json() {
+  local cap="$1"
+  local f="$STATE_DIR/analytics/decisions.jsonl"
+  if [ ! -f "$f" ]; then printf '0' > "$BBS_TMP_DIR/decisions_total"; echo '[]'; return; fi
+  count_jsonl_lines "$f" > "$BBS_TMP_DIR/decisions_total"
+  # Keep newest `cap` rows (JSONL is append-only chronological — tail is newest)
+  tail -n "$cap" "$f" | jq -s '.' 2>/dev/null || echo '[]'
+}
+
+# Build the top-level skillEvents block from analytics/skill-usage.jsonl with a row cap.
+# Writes total to $BBS_TMP_DIR/skill_events_total.
+build_skill_events_json() {
+  local cap="$1"
+  local f="$STATE_DIR/analytics/skill-usage.jsonl"
+  if [ ! -f "$f" ]; then printf '0' > "$BBS_TMP_DIR/skill_events_total"; echo '[]'; return; fi
+  count_jsonl_lines "$f" > "$BBS_TMP_DIR/skill_events_total"
+  tail -n "$cap" "$f" | jq -s '.' 2>/dev/null || echo '[]'
+}
+
+builder_profile_json() {
+  local f="$STATE_DIR/builder-profile.jsonl"
+  if [ ! -f "$f" ]; then echo '[]'; return; fi
+  jq -s '.' "$f" 2>/dev/null || echo '[]'
+}
+
+journal_tail_json() {
+  local f="$STATE_DIR/journal.log"
+  if [ ! -f "$f" ]; then echo '[]'; return; fi
+  tail -n 200 "$f" | jq -R . | jq -s '.' 2>/dev/null || echo '[]'
+}
+
+# Write a single in-memory JSON blob to a fresh tempfile under
+# $BBS_TMP_DIR (which the caller has already minted) and echo the path.
+# Use printf, not echo — blobs contain literal newlines from jq's pretty-print.
+_blob_to_tmpfile() {
+  [ -n "$BBS_TMP_DIR" ] || { err "_blob_to_tmpfile: BBS_TMP_DIR not set"; return 1; }
+  local f
+  f=$(mktemp "$BBS_TMP_DIR/blob.XXXXXX") || { err "mktemp failed"; return 1; }
+  printf '%s' "$1" > "$f"
+  printf '%s' "$f"
+}
+
+# ---- compose snapshot -------------------------------------------
+compose_snapshot() {
+  local decisions_cap="$1"
+  local skill_events_cap="$2"
+
+  # Temp dir for counts that must survive subshell boundaries.
+  # `local` so a future refactor that inlines compose_snapshot outside a
+  # subshell can't leak BBS_TMP_DIR into the caller's scope.
+  # Trap fires on RETURN (normal exit) and on INT/TERM (Ctrl-C / kill);
+  # bash's RETURN pseudo-signal alone does NOT fire on signals, so a
+  # bare RETURN trap would leak the tmpdir on interrupt.
+  local BBS_TMP_DIR
+  BBS_TMP_DIR=$(mktemp -d)
+  trap 'rm -rf "$BBS_TMP_DIR"' RETURN INT TERM
+
+  # Collect per-project blocks
+  local projects_json='{}'
+
+  # Build the list of project dirs to process (either all or filtered by --slug)
+  local project_dirs=()
+  if [ -n "$SLUG_OVERRIDE" ]; then
+    project_dirs=("$STATE_DIR/projects/$SLUG_OVERRIDE")
+  else
+    while IFS= read -r d; do
+      project_dirs+=("$d")
+    done < <(find "$STATE_DIR/projects" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | LC_ALL=C sort || true)
+  fi
+
+  local found_any=0
+  for dir in "${project_dirs[@]:-}"; do
+    [ -z "$dir" ] && continue
+    local slug
+    slug=$(basename "$dir")
+    # Path-traversal guard: basename only, reject dangerous names
+    case "$slug" in
+      *[!a-zA-Z0-9_.-]*|.|..|''|/*|*/*)
+        err "skipping '$slug' (rejected by path-traversal guard)"
+        continue ;;
+    esac
+    local block
+    block=$(project_block_json "$dir") || continue
+    # $block is one full project block — can hit MB scale on a project with
+    # many tickets. Path-traversal guard on $slug is above; tempfile name
+    # uses mktemp's own template, never $slug.
+    local block_file
+    block_file=$(_blob_to_tmpfile "$block")
+    projects_json=$(jq --arg slug "$slug" --slurpfile block "$block_file" \
+      '. + {($slug): $block[0]}' <<<"$projects_json")
+    found_any=1
+  done
+
+  if [ "$found_any" = "0" ] && [ -z "$SLUG_OVERRIDE" ]; then
+    err "no projects found; run autopilot first."
+  fi
+
+  # Decisions block — totals written to temp files by build_*_json functions
+  local decisions skill_events
+  decisions=$(build_decisions_json "$decisions_cap")
+  local decisions_total
+  decisions_total=$(cat "$BBS_TMP_DIR/decisions_total" 2>/dev/null || echo 0)
+  skill_events=$(build_skill_events_json "$skill_events_cap")
+  local skill_events_total
+  skill_events_total=$(cat "$BBS_TMP_DIR/skill_events_total" 2>/dev/null || echo 0)
+
+  local builder_profile
+  builder_profile=$(builder_profile_json)
+  local journal_tail
+  journal_tail=$(journal_tail_json)
+  local sessions
+  sessions=$(active_sessions_json)
+
+  # Build truncations array
+  local truncations='[]'
+  local decisions_count
+  decisions_count=$(jq 'length' <<<"$decisions")
+  if [ "$decisions_total" -gt "$decisions_cap" ] 2>/dev/null; then
+    truncations=$(jq --arg kind "decisions" \
+      --argjson kept "$decisions_count" \
+      --argjson total "$decisions_total" \
+      '. + [{kind: $kind, kept: $kept, total: $total}]' <<<"$truncations")
+  fi
+  local skill_events_count
+  skill_events_count=$(jq 'length' <<<"$skill_events")
+  if [ "$skill_events_total" -gt "$skill_events_cap" ] 2>/dev/null; then
+    truncations=$(jq --arg kind "skillEvents" \
+      --argjson kept "$skill_events_count" \
+      --argjson total "$skill_events_total" \
+      '. + [{kind: $kind, kept: $kept, total: $total}]' <<<"$truncations")
+  fi
+
+  # Derive active_project from first project slug (for default filter context in SPA)
+  local active_project
+  active_project=$(jq -r 'keys | sort | .[0] // null' <<<"$projects_json")
+
+  # Final compose — every accumulator that grows with project / ticket /
+  # history volume routes via slurpfile. Scalars (snapshot_at, version,
+  # active_project) and bounded values (truncations, ≤2 entries) stay on argv.
+  local projects_file decisions_file skill_events_file
+  local builder_profile_file journal_tail_file sessions_file
+  projects_file=$(_blob_to_tmpfile "$projects_json")
+  decisions_file=$(_blob_to_tmpfile "$decisions")
+  skill_events_file=$(_blob_to_tmpfile "$skill_events")
+  builder_profile_file=$(_blob_to_tmpfile "$builder_profile")
+  journal_tail_file=$(_blob_to_tmpfile "$journal_tail")
+  sessions_file=$(_blob_to_tmpfile "$sessions")
+
+  jq -n \
+    --arg snapshot_at "$SNAPSHOT_AT" \
+    --arg version "$BABYSIT_VERSION" \
+    --slurpfile projects "$projects_file" \
+    --slurpfile decisions "$decisions_file" \
+    --slurpfile skillEvents "$skill_events_file" \
+    --slurpfile builderProfile "$builder_profile_file" \
+    --slurpfile journalTail "$journal_tail_file" \
+    --slurpfile sessions "$sessions_file" \
+    --argjson truncations "$truncations" \
+    --arg active_project "$active_project" '
+    {
+      meta: {
+        schema_version: 2,
+        generated_at: $snapshot_at,
+        babysit_version: $version,
+        active_project: (if $active_project == "null" then null else $active_project end),
+        truncations: $truncations
+      },
+      projects:       $projects[0],
+      decisions:      $decisions[0],
+      skillEvents:    $skillEvents[0],
+      builderProfile: $builderProfile[0],
+      journalTail:    $journalTail[0],
+      sessions:       $sessions[0]
+    }'
+}
+
+
+# Escape JSON as JS and write to dest file. Returns byte count.
+_write_escaped_json() {
+  local json="$1"
+  local dest="$2"
+  local compact
+  compact=$(jq -c . <<<"$json")
+  if command -v python3 >/dev/null 2>&1; then
+    printf '%s' "$compact" | python3 -c $'import sys\ns = sys.stdin.read()\ns = s.replace("</", "<\\\\/")\ns = s.replace("\\u2028", "\\\\u2028").replace("\\u2029", "\\\\u2029")\nsys.stdout.write("window.__BBS_DATA__ = " + s + ";\\n")' > "$dest"
+  else
+    local escaped
+    escaped=$(printf '%s' "$compact" | sed -e 's|</|<\\/|g')
+    if command -v iconv >/dev/null 2>&1; then
+      escaped=$(printf '%s' "$escaped" | iconv -f UTF-8 -t ASCII//TRANSLIT 2>/dev/null || printf '%s' "$escaped")
+    fi
+    printf 'window.__BBS_DATA__ = %s;\n' "$escaped" > "$dest"
+  fi
+  wc -c < "$dest" | tr -d ' \t'
+}
+
+# ---- main snapshot flow -----------------------------------------
+if [ "$DEV" = "1" ]; then
+  # Dev mode: write to web/public/ — vite serves that directory as raw
+  # static assets (URL `/data.js`) without ESM transformation. Writing to
+  # web/data.js would let vite intercept the request and inject an HMR
+  # `import` statement, which the classic <script src="./data.js"> tag in
+  # index.html cannot execute ("Cannot use import statement outside a
+  # module"). This file is gitignored.
+  mkdir -p "$WEB_DIR/public" || { err "cannot create $WEB_DIR/public"; exit 2; }
+  DATA_JS="$WEB_DIR/public/data.js"
+else
+  mkdir -p "$DIST_DIR" || { err "cannot create $DIST_DIR"; exit 2; }
+  DATA_JS="$DIST_DIR/data.js"
+fi
+TMP="$DATA_JS.tmp.$$"
+trap 'rm -f "$TMP"' EXIT
+
+SNAPSHOT=$(compose_snapshot 2000 2000)
+SIZE=$(_write_escaped_json "$SNAPSHOT" "$TMP")
+
+if [ "${SIZE:-0}" -gt "$MAX_BYTES" ] 2>/dev/null; then
+  # Over limit — retry with tighter caps, mark truncations as forced
+  SNAPSHOT=$(compose_snapshot 1000 100)
+  SNAPSHOT=$(jq '.meta.truncations |= map(. + {forced: true})' <<<"$SNAPSHOT")
+  SIZE=$(_write_escaped_json "$SNAPSHOT" "$TMP")
+  if [ "${SIZE:-0}" -gt "$MAX_BYTES" ] 2>/dev/null; then
+    err "WARNING: data.js is ${SIZE} bytes (over BBS_DASHBOARD_MAX_BYTES=${MAX_BYTES}); writing anyway (forced)"
+  fi
+fi
+
+mv "$TMP" "$DATA_JS"
+trap - EXIT
+
+if [ "$DEV" = "1" ]; then
+  printf 'bbs-dashboard: wrote %s\n' "$DATA_JS"
+else
+  printf 'bbs-dashboard: wrote %s; open file://%s/index.html\n' "$DATA_JS" "$DIST_DIR"
+fi
+
+# ---- dev mode: vite dev server with HMR ------------------------
+if [ "$DEV" = "1" ]; then
+  command -v npm >/dev/null 2>&1 || { err "npm not found; install Node.js and retry"; exit 2; }
+
+  if [ "${SIZE:-0}" -gt 2000000 ]; then
+    err "WARN: web/public/data.js is ${SIZE} bytes (>2MB); first paint may be slow"
+  fi
+
+  if [ ! -d "$WEB_DIR/node_modules" ]; then
+    printf 'bbs-dashboard: installing web/ dependencies (first run)...\n'
+    ( cd "$WEB_DIR" && npm install )
+  fi
+
+  PORT=5173
+  EXISTING=""
+  if command -v lsof >/dev/null 2>&1; then
+    EXISTING=$(lsof -ti ":$PORT" -sTCP:LISTEN 2>/dev/null | head -1 || true)
+  fi
+  if [ -n "$EXISTING" ]; then
+    CMD=$(ps -p "$EXISTING" -o command= 2>/dev/null || true)
+    if printf '%s' "$CMD" | grep -qiE 'vite|node'; then
+      printf 'bbs-dashboard: vite already on :%s (pid %s); reusing\n' "$PORT" "$EXISTING"
+      if [ "$OPEN" = "1" ]; then
+        URL="http://localhost:$PORT"
+        if command -v open >/dev/null 2>&1; then
+          open "$URL" >/dev/null 2>&1 || err "open failed; visit $URL"
+        elif command -v xdg-open >/dev/null 2>&1; then
+          xdg-open "$URL" >/dev/null 2>&1 || err "xdg-open failed; visit $URL"
+        else
+          printf 'visit: %s\n' "$URL"
+        fi
+      fi
+      exit 0
+    fi
+    err "port $PORT bound by pid $EXISTING ($CMD); vite will pick the next free port"
+  fi
+
+  cd "$WEB_DIR"
+  if [ "$OPEN" = "1" ]; then
+    exec npm run dev -- --open
+  else
+    exec npm run dev
+  fi
+fi
+
+# ---- production / file:// open unless --no-open ----------------
+if [ "$OPEN" = "1" ]; then
+  if [ ! -f "$DIST_DIR/index.html" ]; then
+    err "web/dist/ missing; run: bbs-dashboard build"
+    exit 1
+  fi
+  if command -v open >/dev/null 2>&1; then
+    open "$DIST_DIR/index.html" || err "open failed; visit file://$DIST_DIR/index.html"
+  elif command -v xdg-open >/dev/null 2>&1; then
+    xdg-open "$DIST_DIR/index.html" || err "xdg-open failed; visit file://$DIST_DIR/index.html"
+  else
+    printf 'no `open` or `xdg-open`; visit: file://%s/index.html\n' "$DIST_DIR"
+  fi
+fi

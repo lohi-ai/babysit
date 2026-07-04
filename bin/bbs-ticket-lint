@@ -1,0 +1,170 @@
+#!/usr/bin/env bash
+# bbs-ticket-lint — find inline `$TH/`, `$TICKET_HOME/`, and
+# `$BABYSIT_PROJECT_HOME/tickets/` constructions inside ```bash ``` code
+# blocks in skill/workflow markdown. These should go through
+# `bbs-ticket path <kind>` instead.
+#
+# Modes:
+#   --mode discovery  print every hit (file:line:match). Always exits 0.
+#                     Use output to seed .babysit/path-broker-manifest.txt.
+#   --mode enforce    print hits NOT listed in the manifest and NOT marked
+#                     `# lint:allow-direct-path`. Exits 1 if any remain.
+#
+# Scope: .claude/ (skills + workflows + references). Extendable via --path.
+
+set -u
+
+MODE=""
+SCAN_PATH=".claude"
+MANIFEST=".babysit/path-broker-manifest.txt"
+VERBOSE=0
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --mode) MODE="${2:-}"; shift 2 ;;
+    --path) SCAN_PATH="${2:-}"; shift 2 ;;
+    --manifest) MANIFEST="${2:-}"; shift 2 ;;
+    -v|--verbose) VERBOSE=1; shift ;;
+    -h|--help)
+      cat <<EOF
+usage: bbs-ticket-lint --mode discovery|enforce [--path DIR] [--manifest FILE]
+
+  --mode discovery    list every direct-path hit (seed the manifest)
+  --mode enforce      fail if any unapproved direct-path hits remain
+
+Flags a line when, inside a ```bash fenced block:
+  \$TH/<anything>                           (path traversal via local var)
+  \$TICKET_HOME/<anything>
+  \$BABYSIT_PROJECT_HOME/tickets/<anything>
+
+Exceptions:
+  - Line ends with '# lint:allow-direct-path'
+  - Entry 'file:line' appears in the manifest (default: $MANIFEST)
+EOF
+      exit 0 ;;
+    *) echo "bbs-ticket-lint: unknown arg '$1'" >&2; exit 2 ;;
+  esac
+done
+
+case "$MODE" in
+  discovery|enforce) ;;
+  *) echo "bbs-ticket-lint: --mode required (discovery|enforce)" >&2; exit 2 ;;
+esac
+
+if [ ! -e "$SCAN_PATH" ]; then
+  echo "bbs-ticket-lint: scan path '$SCAN_PATH' does not exist" >&2
+  exit 2
+fi
+# Build the find expression once so file/dir scans share a code path.
+_find_md() {
+  if [ -d "$SCAN_PATH" ]; then
+    find "$SCAN_PATH" -type f -name '*.md' -print0
+  elif [ -f "$SCAN_PATH" ]; then
+    printf '%s\0' "$SCAN_PATH"
+  fi
+}
+
+# Collect manifest entries (file:line) for enforce mode. Accept # comments
+# and blank lines in the manifest. Strip trailing whitespace.
+declare -a APPROVED_ENTRIES=()
+if [ "$MODE" = enforce ] && [ -f "$MANIFEST" ]; then
+  while IFS= read -r raw; do
+    line="${raw%%#*}"
+    line="${line#"${line%%[![:space:]]*}"}"
+    line="${line%"${line##*[![:space:]]}"}"
+    [ -n "$line" ] && APPROVED_ENTRIES+=("$line")
+  done < "$MANIFEST"
+fi
+
+_is_approved() {
+  local entry="$1" a
+  for a in "${APPROVED_ENTRIES[@]:-}"; do
+    [ "$a" = "$entry" ] && return 0
+  done
+  return 1
+}
+
+# Walk all .md files under the scan path.
+# (Counters live in the subshell below; the parent-level counts come from
+# _count_hits and the enforce UNAPPROVED_COUNT pass further down.)
+
+while IFS= read -r -d '' file; do
+  # awk extracts lines inside ```bash fences, prints LINENO\tLINE.
+  awk '
+    /^[[:space:]]*```[[:space:]]*bash[[:space:]]*$/ { inblock=1; next }
+    /^[[:space:]]*```[[:space:]]*$/                 { inblock=0; next }
+    inblock { printf "%d\t%s\n", NR, $0 }
+  ' "$file" | \
+    grep -E $'\t.*(\\$TH/|\\$TICKET_HOME/|\\$BABYSIT_PROJECT_HOME/tickets/)' | \
+    while IFS=$'\t' read -r lineno line; do
+      # Skip allow-listed lines.
+      case "$line" in
+        *'# lint:allow-direct-path'*) continue ;;
+      esac
+      entry="${file}:${lineno}"
+      if [ "$MODE" = enforce ] && _is_approved "$entry"; then
+        [ "$VERBOSE" = 1 ] && printf '  ok (approved)  %s\n' "$entry"
+        continue
+      fi
+      printf '%s\t%s\n' "$entry" "$line"
+    done
+done < <(_find_md)
+
+# The inner `while` above runs in a subshell (pipe), so any counters we'd
+# increment there wouldn't be visible here. Recount the totals via a fresh
+# pass over the same awk|grep pipeline.
+
+_count_hits() {
+  local file total=0
+  while IFS= read -r -d '' file; do
+    n="$(awk '
+      /^[[:space:]]*```[[:space:]]*bash[[:space:]]*$/ { inblock=1; next }
+      /^[[:space:]]*```[[:space:]]*$/                 { inblock=0; next }
+      inblock { print $0 }
+    ' "$file" \
+      | grep -E '(\$TH/|\$TICKET_HOME/|\$BABYSIT_PROJECT_HOME/tickets/)' \
+      | grep -vc '# lint:allow-direct-path' \
+    | tr -d '[:space:]')"
+    [ -z "$n" ] && n=0
+    total=$((total + n))
+  done < <(_find_md)
+  printf '%d' "$total"
+}
+
+TOTAL_HITS="$(_count_hits)"
+
+if [ "$MODE" = enforce ]; then
+  # Re-run and count unapproved.
+  UNAPPROVED_COUNT=0
+  while IFS= read -r -d '' file; do
+    while IFS=$'\t' read -r lineno line; do
+      case "$line" in
+        *'# lint:allow-direct-path'*) continue ;;
+      esac
+      entry="${file}:${lineno}"
+      if _is_approved "$entry"; then continue; fi
+      UNAPPROVED_COUNT=$((UNAPPROVED_COUNT + 1))
+    done < <(awk '
+      /^[[:space:]]*```[[:space:]]*bash[[:space:]]*$/ { inblock=1; next }
+      /^[[:space:]]*```[[:space:]]*$/                 { inblock=0; next }
+      inblock { printf "%d\t%s\n", NR, $0 }
+    ' "$file" | grep -E $'\t.*(\\$TH/|\\$TICKET_HOME/|\\$BABYSIT_PROJECT_HOME/tickets/)')
+  done < <(_find_md)
+
+  if [ "$UNAPPROVED_COUNT" -gt 0 ]; then
+    echo "" >&2
+    echo "bbs-ticket-lint: $UNAPPROVED_COUNT unapproved direct-path hit(s) (total=$TOTAL_HITS, manifest=${#APPROVED_ENTRIES[@]})" >&2
+    echo "Fix options:" >&2
+    echo "  1. Replace with \`bbs-ticket path <kind>\`" >&2
+    echo "  2. Add \`# lint:allow-direct-path\` inline comment" >&2
+    echo "  3. Add \`file:line\` to $MANIFEST (with a justification comment)" >&2
+    exit 1
+  fi
+  echo "bbs-ticket-lint: OK — 0 unapproved hits (total=$TOTAL_HITS, approved=${#APPROVED_ENTRIES[@]})"
+  exit 0
+fi
+
+# discovery mode — always exit 0
+echo "" >&2
+echo "bbs-ticket-lint: discovery found $TOTAL_HITS hit(s)" >&2
+exit 0

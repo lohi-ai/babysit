@@ -1,0 +1,441 @@
+[
+  {
+    "name": "B1-broker-init-idempotent",
+    "ticket": "bs-eval-b1",
+    "skip_claude": true,
+    "pre_setup": [
+      [
+        "init"
+      ],
+      [
+        "init"
+      ]
+    ],
+    "assert_paths": [
+      "index.json",
+      "history.jsonl",
+      "handoffs",
+      "verdicts",
+      "evidence",
+      "reviews",
+      "sub-tickets"
+    ],
+    "assert_path_contents": {
+      "index.json": "\"id\":",
+      "history.jsonl": "\"event\": \"ticket_initialized\""
+    }
+  },
+  {
+    "name": "B2-broker-handoff-numbering",
+    "ticket": "bs-eval-b2",
+    "skip_claude": true,
+    "pre_setup": [
+      [
+        "add-handoff",
+        "--skill",
+        "plan-draft",
+        "--status",
+        "PLANNED(S)",
+        "--body",
+        "First handoff body"
+      ],
+      [
+        "add-handoff",
+        "--skill",
+        "implement",
+        "--status",
+        "BUILT(S)",
+        "--body",
+        "Second handoff body"
+      ],
+      [
+        "add-handoff",
+        "--skill",
+        "review-pr",
+        "--status",
+        "DONE",
+        "--body",
+        "Third handoff body"
+      ]
+    ],
+    "assert_paths": [
+      "handoffs/001-plan-draft-planneds.md",
+      "handoffs/002-implement-builts.md",
+      "handoffs/003-review-pr-done.md"
+    ],
+    "assert_path_contents": {
+      "handoffs/001-plan-draft-planneds.md": "First handoff body",
+      "handoffs/002-implement-builts.md": "Second handoff body",
+      "handoffs/003-review-pr-done.md": "Third handoff body"
+    }
+  },
+  {
+    "name": "B3-broker-verdict-and-pointer",
+    "ticket": "bs-eval-b3",
+    "skip_claude": true,
+    "pre_setup": [
+      [
+        "set-pointer",
+        "requirement",
+        "requirement.md"
+      ],
+      [
+        "set-verdict",
+        "--skill",
+        "plan-draft",
+        "--body",
+        "VERDICT: PLANNED(M)\nSUMMARY: OK"
+      ]
+    ],
+    "seed_files": {
+      "requirement.md": "# Requirement\nBody"
+    },
+    "assert_paths": [
+      "verdicts/plan-draft.md",
+      "requirement.md"
+    ],
+    "assert_path_contents": {
+      "verdicts/plan-draft.md": "PLANNED\\(M\\)",
+      "index.json": "\"requirement\": \"requirement.md\""
+    }
+  },
+  {
+    "name": "S2b-plan-draft-against-real-nextjs",
+    "ticket": "bs-eval-pdn",
+    "fixture": {
+      "cache_key": "nextjs-14.2.18-with-vitest",
+      "cmd": [
+        "npx",
+        "--yes",
+        "create-next-app@14.2.18",
+        "$DEST",
+        "--example",
+        "with-vitest",
+        "--use-npm",
+        "--skip-install"
+      ]
+    },
+    "fixture_branch": "feat/bs-eval-pdn_dark-mode",
+    "prompt": "/plan-draft Read the requirement from the ticket and produce a technical plan against the current repo. Classify scope as S, M, or L. Name the detected test framework in the plan.",
+    "pre_setup": [
+      [
+        "set-pointer",
+        "requirement",
+        "requirement.md"
+      ]
+    ],
+    "seed_files": {
+      "requirement.md": "# Requirement: dark mode toggle\n\nAdd a dark mode toggle to the main layout.\n- Persist user preference across sessions (localStorage).\n- Respect prefers-color-scheme on first visit.\n- Apply the theme via a CSS class on <html>.\n- Toggle is a single switch component in the header.\n"
+    },
+    "assert_paths": [
+      "index.json",
+      "verdicts/plan-draft.md"
+    ],
+    "assert_path_contents": {
+      "verdicts/plan-draft.md": "PLANNED\\((S|M|L)\\)|PARTIAL"
+    }
+  },
+  {
+    "name": "S2c-implement-against-real-nextjs",
+    "ticket": "bs-eval-imn",
+    "fixture": {
+      "cache_key": "nextjs-14.2.18-with-vitest",
+      "cmd": [
+        "npx",
+        "--yes",
+        "create-next-app@14.2.18",
+        "$DEST",
+        "--example",
+        "with-vitest",
+        "--use-npm",
+        "--skip-install"
+      ]
+    },
+    "fixture_branch": "feat/bs-eval-imn_rename-button-class",
+    "prompt": "/implement Read plan.md and execute the change. Scope is S \u2014 a single CSS class rename in app/page.tsx. Modify the file and write verdict BUILT(S) when done.",
+    "pre_setup": [
+      [
+        "set-pointer",
+        "plan",
+        "plan.md"
+      ],
+      [
+        "set-pointer",
+        "design",
+        "design.md"
+      ]
+    ],
+    "seed_files": {
+      "design.md": "# Design\n\nRename the CSS class on the main `<main>` element in `app/page.tsx` from `flex` to `flex-col` to match the existing layout convention. Single-file, single-line change.\n",
+      "plan.md": "# Plan\n\nS-scope rename in `app/page.tsx`:\n1. Read `app/page.tsx`.\n2. Find the `<main>` element using class `flex` (the very first one in the file).\n3. Replace `flex` with `flex-col` on that single element only.\n4. Verify no other files need updating.\n5. Commit with message `style: rename main class flex \u2192 flex-col`.\n"
+    },
+    "assert_paths": [
+      "index.json",
+      "verdicts/implement.md"
+    ],
+    "assert_path_contents": {
+      "verdicts/implement.md": "BUILT\\((S|M|L)\\)|PARTIAL"
+    }
+  },
+  {
+    "name": "S2d-review-pr-against-real-nextjs",
+    "ticket": "bs-eval-rpn",
+    "fixture": {
+      "cache_key": "nextjs-14.2.18-with-vitest",
+      "cmd": [
+        "npx",
+        "--yes",
+        "create-next-app@14.2.18",
+        "$DEST",
+        "--example",
+        "with-vitest",
+        "--use-npm",
+        "--skip-install"
+      ]
+    },
+    "fixture_branch": "feat/bs-eval-rpn_add-footer",
+    "setup_commits": [
+      {
+        "message": "feat: add footer component",
+        "files": {
+          "app/footer.tsx": "export default function Footer() {\n  // TODO: i18n\n  return (\n    <footer style={{ padding: 16 }}>\n      <p>Copyright 2026</p>\n    </footer>\n  );\n}\n"
+        }
+      }
+    ],
+    "pre_setup": [
+      [
+        "set-pointer",
+        "base_branch",
+        "main"
+      ]
+    ],
+    "prompt": "/review-pr Review the diff between the current branch and main. There is a single commit adding app/footer.tsx. Produce a verdict (PASS, FIXED, DONE_WITH_CONCERNS, BLOCKED, or NEEDS_CONTEXT) and record it on the ticket via bbs-ticket set-verdict (do NOT write the verdict file yourself with Write \u2014 the broker handles that).",
+    "assert_paths": [
+      "index.json",
+      "verdicts/review.md"
+    ],
+    "assert_path_contents": {
+      "verdicts/review.md": "PASS|FIXED|DONE_WITH_CONCERNS|BLOCKED|NEEDS_CONTEXT|PARTIAL"
+    }
+  },
+  {
+    "name": "S2-plan-draft-detailed-requirement",
+    "ticket": "bs-eval-pd",
+    "prompt": "/plan-draft Read the requirement from the ticket and produce a technical plan. Classify scope as S, M, or L.",
+    "pre_setup": [
+      [
+        "set-pointer",
+        "requirement",
+        "requirement.md"
+      ]
+    ],
+    "seed_files": {
+      "requirement.md": "# Requirement: dark mode toggle\n\nAdd a dark mode toggle to the settings page.\n- Persist user preference across sessions (localStorage).\n- Respect prefers-color-scheme on first visit.\n- Apply the theme to the entire app via a CSS class on <html>.\n- Toggle is a single switch component on the settings page.\n"
+    },
+    "assert_paths": [
+      "index.json",
+      "verdicts/plan-draft.md"
+    ],
+    "assert_path_contents": {
+      "verdicts/plan-draft.md": "PLANNED\\((S|M|L)\\)|PARTIAL"
+    }
+  },
+  {
+    "name": "S3-split-plan-large-requirement",
+    "ticket": "bs-eval-sp",
+    "prompt": "/split-plan The plan touches 9 modules (auth, billing, notifications, search, settings, profile, admin, onboarding, exports). Split it into child tickets per module.",
+    "pre_setup": [
+      [
+        "set-pointer",
+        "plan",
+        "plan.md"
+      ]
+    ],
+    "seed_files": {
+      "plan.md": "# Plan: cross-cutting refactor\n\nThis plan touches 9 modules and should be decomposed:\n\n1. auth \u2014 rotate session token format\n2. billing \u2014 invoice PDF layout\n3. notifications \u2014 switch to websocket\n4. search \u2014 add ranking\n5. settings \u2014 dark mode toggle\n6. profile \u2014 add avatar upload\n7. admin \u2014 RBAC roles\n8. onboarding \u2014 new welcome flow\n9. exports \u2014 CSV schema change\n\nEach module is independent. Scope is L.\n"
+    },
+    "assert_paths": [
+      "index.json",
+      "verdicts/split-plan.md"
+    ],
+    "assert_path_contents": {
+      "verdicts/split-plan.md": "DECOMPOSED\\(\\d+\\)|PARTIAL|SKIPPED"
+    }
+  },
+  {
+    "name": "S4-implement-small-fix",
+    "ticket": "bs-eval-im",
+    "prompt": "/implement The design and plan are on the ticket. Implement a one-line fix: rename the CSS class `btn-primary-large` to `btn-primary-lg` across the codebase. Scope is S. Do not actually modify repo files \u2014 write a handoff describing what you would change and set verdict BUILT(S) or BLOCKED.",
+    "pre_setup": [
+      [
+        "set-pointer",
+        "design",
+        "design.md"
+      ],
+      [
+        "set-pointer",
+        "plan",
+        "plan.md"
+      ]
+    ],
+    "seed_files": {
+      "design.md": "# Design\n\nRename CSS class `btn-primary-large` \u2192 `btn-primary-lg` for consistency with Tailwind sizing convention.\n",
+      "plan.md": "# Plan\n\nS-scope rename:\n1. Grep for `btn-primary-large` across repo.\n2. Replace with `btn-primary-lg`.\n3. Verify no orphans.\n"
+    },
+    "assert_paths": [
+      "index.json",
+      "verdicts/implement.md"
+    ],
+    "assert_path_contents": {
+      "verdicts/implement.md": "BUILT\\((S|M|L)\\)|PARTIAL|BLOCKED"
+    }
+  },
+  {
+    "name": "I1-implement-wiring",
+    "ticket": "bs-eval-i1",
+    "skip_claude": true,
+    "pre_setup": [
+      [
+        "set-pointer",
+        "plan",
+        "plan.md"
+      ],
+      [
+        "set-pointer",
+        "requirement",
+        "requirement.md"
+      ]
+    ],
+    "seed_files": {
+      "requirement.md": "# Requirement\n\nAdd a footer element to the main page.\n",
+      "plan.md": "# Plan\n\nS-scope: Insert `<footer>Built with babysit</footer>` before the closing `</main>` tag in `app/page.tsx`.\n"
+    },
+    "assert_paths": [
+      "index.json",
+      "requirement.md",
+      "plan.md"
+    ],
+    "assert_path_contents": {
+      "requirement.md": "footer",
+      "plan.md": "S-scope"
+    }
+  },
+  {
+    "name": "I2-implement-bbs-nextjs",
+    "ticket": "bs-eval-i2",
+    "fixture": {
+      "cache_key": "nextjs-14.2.18-with-vitest",
+      "cmd": [
+        "npx",
+        "--yes",
+        "create-next-app@14.2.18",
+        "$DEST",
+        "--example",
+        "with-vitest",
+        "--use-npm",
+        "--skip-install"
+      ]
+    },
+    "fixture_branch": "feat/bs-eval-i2_add-footer",
+    "prompt": "/bbs:implement The plan is on the ticket (use bbs-ticket path plan to read it). Implement the S-scope change: insert `<footer>Built with babysit</footer>` before the closing `</main>` tag in `app/page.tsx`. Commit the change. When done, write the verdict to the ticket with: `$BBS_TICKET_BIN set-verdict --skill implement --body \"STATUS: DONE\\nVERDICT: BUILT(S)\\nSUMMARY: footer inserted\"`",
+    "pre_setup": [
+      [
+        "set-pointer",
+        "plan",
+        "plan.md"
+      ],
+      [
+        "set-pointer",
+        "requirement",
+        "requirement.md"
+      ]
+    ],
+    "seed_files": {
+      "requirement.md": "# Requirement\n\nAdd a footer element to the main page.\n",
+      "plan.md": "# Plan\n\nS-scope: Insert `<footer>Built with babysit</footer>` before the closing `</main>` tag in `app/page.tsx`.\n\n## Build Sequence\n1. Read `app/page.tsx`.\n2. Insert footer element before `</main>`.\n3. Commit with message `feat: add footer to main page`.\n"
+    },
+    "assert_paths": [
+      "index.json",
+      "verdicts/implement.md"
+    ],
+    "assert_path_contents": {
+      "verdicts/implement.md": "BUILT\\((S|M|L)\\)|PARTIAL|BLOCKED"
+    }
+  },
+  {
+    "name": "S6-autopilot-quality-workflow",
+    "ticket": "bs-eval-pq",
+    "prompt": "/autopilot builder \u2014 run the builder workflow in verify mode on this ticket. The build is already complete.",
+    "pre_setup": [
+      [
+        "set-pointer",
+        "plan",
+        "plan.md"
+      ],
+      [
+        "add-handoff",
+        "--skill",
+        "implement",
+        "--status",
+        "BUILT(S)",
+        "--body",
+        "Build complete. 1 commit. Tests pass."
+      ],
+      [
+        "set-verdict",
+        "--skill",
+        "implement",
+        "--body",
+        "BUILT(S): 1 commit, tests green"
+      ]
+    ],
+    "seed_files": {
+      "plan.md": "# Plan\n\nS-scope CSS rename, already built.\n"
+    },
+    "assert_paths": [
+      "index.json",
+      "history.jsonl",
+      "verdicts/implement.md"
+    ],
+    "assert_path_contents": {
+      "history.jsonl": "\"event\": \"(handoff|verdict)\""
+    }
+  },
+  {
+    "name": "S8-autopilot-quality-chain-invokes-review-pr",
+    "ticket": "bs-eval-pqc",
+    "prompt": "/autopilot builder \u2014 run the builder workflow in verify mode on this ticket. The build is already complete and pushed; just run the review-pr sub-skill and emit the QA summary.",
+    "pre_setup": [
+      [
+        "set-pointer",
+        "base_branch",
+        "main"
+      ],
+      [
+        "add-handoff",
+        "--skill",
+        "implement",
+        "--status",
+        "DONE",
+        "--body",
+        "SUMMARY: Test stub build handoff for chain validation.\nFILES: tests/ticket-system/run_ticket_eval.py\nAPPROACH: noop\nBLAST_RADIUS: none"
+      ],
+      [
+        "set-verdict",
+        "--skill",
+        "implement",
+        "--body",
+        "STATUS: DONE\nVERDICT: BUILT(S)\nSUMMARY: Stub build for chain test"
+      ]
+    ],
+    "assert_paths": [
+      "index.json",
+      "history.jsonl",
+      "handoffs",
+      "verdicts/implement.md"
+    ],
+    "assert_path_contents": {
+      "history.jsonl": "\"actor\": \"(review-pr|qa|work)\""
+    }
+  }
+]

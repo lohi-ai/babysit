@@ -1,0 +1,906 @@
+#!/usr/bin/env bash
+# bbs-autopilot — state helper for the `autopilot` skill.
+#
+# Subcommands:
+#   checkpoint   Write a checkpoint for a (ticket, workflow, step, status) and
+#                (if babysit is on PATH) post a [WORK] comment on the ticket.
+#   read         Print the latest checkpoint.json for a ticket to stdout.
+#   clear        Remove state for a ticket (used after a workflow completes).
+#   current      Print the active "<workflow> <ticket>" pair, if any.
+#   set-current  Update the active pair. Usage: set-current <workflow> <ticket>
+#   timeline     Append a JSON event to the project timeline.
+#                Usage: timeline --ticket <t> --event <e> [--skill <s>] [--note <n>]
+#   recover      Print the Context Recovery block (CURRENT_TICKET / LAST_EVENT /
+#                LATEST_CHECKPOINT / HEAD_DRIFT / LAST_VERIFICATION) for the
+#                current branch. Intended to be run at every skill/preamble
+#                entry so a compacted session sees the ticket + workflow
+#                position, whether commits landed past the checkpoint, and the
+#                last test result — before doing anything else.
+#   base-branch  Resolve the autopilot base branch. Precedence:
+#                BBS_BASE_BRANCH env → .babysit/git-flow.yaml base_branch
+#                → bbs-config get base_branch → origin/HEAD → main.
+#                Never hard-codes "main" unless every source is empty.
+#   lint-workflow <path>
+#                Authoring-time lint. Validates a workflow file declares the
+#                `needs-state:` frontmatter (otherwise the orchestrator can't
+#                route to it mechanically). Exits 0 clean, 1 with findings.
+#   probe [--ticket <t>]
+#                Print autopilot state as KEY=VALUE lines suitable for `eval`.
+#                Shared by SKILL.md §0.2 and `explain` — no duplicate state
+#                logic. Keys: state_ticket, state_requirement_md, state_plan_md,
+#                state_plan_approved, state_manifest_md, state_origin_type,
+#                state_commits_ahead, state_branch_pushed,
+#                state_repo_configured, state_landing_doc,
+#                plus BRANCH, SLUG, BASE.
+#   explain [--details] [ticket]
+#                Print probed state + recommended workflow. With --details,
+#                include the per-workflow prereq evaluation. Turns
+#                opaque BLOCKs into self-service debug. Ticket defaults to
+#                the current branch's ticket via `bbs-slug env`.
+#
+# State layout (project-scoped, outside the repo so it survives
+# `git clean -fdx` and is shared across worktrees of the same slug):
+#
+#   ~/.babysit/projects/<slug>/
+#   ├── tickets/<ticket>/
+#   │   ├── checkpoint.json       authoritative "where am I"
+#   │   └── history.jsonl         per-ticket audit log
+#   ├── timeline.jsonl            cross-ticket event stream (for recover)
+#   └── current.txt               "<workflow> <ticket>" for the Resume shape
+#
+# SLUG and TICKET come from `bbs-slug` (derived from git remote + branch name).
+# An explicit --ticket overrides the derivation — use this for clear/set-current
+# where the branch may not encode the ticket yet.
+#
+# Env:
+#   BABYSIT_HOME            root (default: $HOME/.babysit)
+#   BABYSIT_SKIP_COMMENT=1  skip posting ticket comments (useful in tests)
+set -uo pipefail
+
+SUB="${1:-}"
+[ -z "$SUB" ] && {
+  echo "usage: bbs-autopilot {checkpoint|read|clear|current|set-current|timeline|recover|base-branch|lint-workflow|probe|explain|check-skill-deps} ..." >&2
+  exit 2
+}
+shift
+
+# Resolve project home via bbs-slug. Both scripts live in the same bin/ dir.
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SLUG_BIN="$SCRIPT_DIR/bbs-slug"
+[ -x "$SLUG_BIN" ] || SLUG_BIN="$(command -v bbs-slug 2>/dev/null || echo "$HOME/.claude/bbs-slug")"
+
+# shellcheck disable=SC1090
+eval "$("$SLUG_BIN" env 2>/dev/null || true)"
+SLUG="${SLUG:-unknown}"
+BRANCH="${BRANCH:-unknown}"
+# BBS_TICKET overrides the branch-derived ticket. This mirrors how bbs-ticket
+# resolves TICKET (see bin/bbs-ticket ~line 124) and is what makes test
+# harnesses / explicit-ticket callers route checkpoints to the right Layout-C
+# dir instead of the branch's default ticket.
+DERIVED_TICKET="${BBS_TICKET:-${TICKET:-}}"
+PROJECT_HOME="${BABYSIT_PROJECT_HOME:-${BABYSIT_HOME:-$HOME/.babysit}/projects/$SLUG}"
+STATE_ROOT="$PROJECT_HOME"
+
+ensure_root() { mkdir -p "$STATE_ROOT/tickets" 2>/dev/null || true; }
+
+iso_now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
+
+# Sanitize a ticket id for use as a directory name. Accepts [a-zA-Z0-9._-] only.
+safe_ticket() {
+  printf '%s' "${1:-}" | tr -cd 'a-zA-Z0-9._-' | head -c 64
+}
+
+# Strip quotes, backslashes, and control chars. Cap at 500 bytes.
+json_safe() {
+  printf '%s' "${1:-}" | tr -d '"\\' | tr -d '[:cntrl:]' | head -c 500
+}
+
+# Resolve a workflow file path across the standard search dirs.
+# Prints the first match. Validates name to prevent path traversal.
+resolve_workflow_path() {
+  local name="${1:-}"
+  [[ "$name" =~ ^[a-z][a-z0-9-]*$ ]] || return 1
+  local REPO_ROOT DIR
+  REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+  for DIR in "$REPO_ROOT/.claude/workflows" \
+             "${CLAUDE_PLUGIN_ROOT:-}/.claude/skills/autopilot/workflows" \
+             "$HOME/.claude/skills/bbs:autopilot/workflows" \
+             "$REPO_ROOT/.claude/skills/autopilot/workflows"; do
+    [ -n "$DIR" ] && [ -f "$DIR/$name.md" ] && { printf '%s' "$DIR/$name.md"; return 0; }
+  done
+  return 1
+}
+
+ticket_dir() {
+  local t; t="$(safe_ticket "$1")"
+  [ -z "$t" ] && return 1
+  printf '%s/tickets/%s' "$STATE_ROOT" "$t"
+}
+
+post_comment() {
+  local ticket="$1" body="$2"
+  [ "${BABYSIT_SKIP_COMMENT:-0}" = "1" ] && return 0
+  command -v babysit >/dev/null 2>&1 || return 0
+  [ -z "$ticket" ] && return 0
+  babysit ticket comment "$ticket" "$body" >/dev/null 2>&1 || true
+}
+
+append_timeline() {
+  # Usage: append_timeline <ticket> <workflow> <step> <status> <note>
+  ensure_root
+  local t="$1" f="$2" s="$3" st="$4" n="$5" ts; ts="$(iso_now)"
+  printf '{"ts":"%s","ticket":"%s","workflow":"%s","step":"%s","status":"%s","branch":"%s","note":"%s","actor":"work"}\n' \
+    "$ts" "$(json_safe "$t")" "$(json_safe "$f")" "$(json_safe "$s")" \
+    "$(json_safe "$st")" "$(json_safe "$BRANCH")" "$(json_safe "$n")" \
+    >> "$STATE_ROOT/timeline.jsonl" 2>/dev/null || true
+}
+
+case "$SUB" in
+  checkpoint)
+    TICKET="" WORKFLOW="" STEP="" STATUS="" NOTE="" DEPTH="" FORCE="" REFRESH=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --ticket)   TICKET="$2"; shift 2 ;;
+        --workflow) WORKFLOW="$2"; shift 2 ;;
+        --step)     STEP="$2"; shift 2 ;;
+        --status)   STATUS="$2"; shift 2 ;;
+        --note)     NOTE="$2"; shift 2 ;;
+        --depth)    DEPTH="$2"; shift 2 ;;
+        --force)    FORCE="1"; shift ;;
+        --refresh)  REFRESH="1"; shift ;;
+        *) shift ;;
+      esac
+    done
+
+    # --refresh: re-stamp the existing checkpoint so its mtime moves past a
+    # commit that landed after the last step boundary. This is what keeps the
+    # clean-handoff audit (bin/hooks/clean-handoff-check "checkpoint predates
+    # the last commit") from firing on every post-step commit. It is NOT a new
+    # iteration: step/status/workflow and all loop-safety counters are
+    # preserved; only updated_at, head_sha, and branch move. Run it after any
+    # commit made past a checkpoint (QA fix, review fix, final commit).
+    if [ "$REFRESH" = "1" ]; then
+      [ -z "$TICKET" ] && TICKET="$DERIVED_TICKET"
+      [ -z "$TICKET" ] && { echo "checkpoint --refresh: ticket id required (and branch doesn't encode one)" >&2; exit 2; }
+      DIR="$(ticket_dir "$TICKET")" || { echo "checkpoint --refresh: invalid ticket" >&2; exit 2; }
+      CP="$DIR/checkpoint.json"
+      [ -f "$CP" ] || { echo "checkpoint --refresh: no checkpoint for $TICKET" >&2; exit 1; }
+      TS="$(iso_now)"
+      # No jq → can't safely rewrite fields; touching the file still advances
+      # mtime past the commit, which is all the staleness audit checks.
+      if ! command -v jq >/dev/null 2>&1; then
+        touch "$CP" 2>/dev/null || true
+        exit 0
+      fi
+      _W="$(jq -r '.workflow // ""' "$CP")"
+      _S="$(jq -r '.step // ""' "$CP")"
+      _ST="$(jq -r '.status // ""' "$CP")"
+      _N="$(jq -r '.note // ""' "$CP")"
+      _DP="$(jq -r '.depth // ""' "$CP")"
+      _SL="$(jq -r '.slug // ""' "$CP")"
+      _IC="$(jq -r '.iteration_count // 1' "$CP")"
+      _CS="$(jq -r '.consecutive_same_step // 1' "$CP")"
+      _FI="$(jq -r '.first_iteration_at // ""' "$CP")"
+      [ -n "$_FI" ] || _FI="$TS"
+      HEAD_SHA="$(json_safe "$(git rev-parse HEAD 2>/dev/null || true)")"
+      B="$(json_safe "$BRANCH")"
+      TMP="$(mktemp "$DIR/.cp.XXXXXX")"
+      printf '{"ticket":"%s","workflow":"%s","step":"%s","status":"%s","note":"%s","branch":"%s","head_sha":"%s","slug":"%s","depth":"%s","updated_at":"%s","iteration_count":%s,"consecutive_same_step":%s,"first_iteration_at":"%s"}\n' \
+        "$(json_safe "$TICKET")" "$(json_safe "$_W")" "$(json_safe "$_S")" "$_ST" "$(json_safe "$_N")" "$B" "$HEAD_SHA" "$(json_safe "$_SL")" "$(json_safe "$_DP")" "$TS" \
+        "$_IC" "$_CS" "$(json_safe "$_FI")" \
+        > "$TMP" && mv "$TMP" "$CP"
+      if ! jq . "$CP" >/dev/null 2>&1; then
+        echo "checkpoint --refresh: post-write validation failed" >&2
+        exit 1
+      fi
+      exit 0
+    fi
+
+    [ -z "$TICKET" ] || [ -z "$WORKFLOW" ] || [ -z "$STEP" ] || [ -z "$STATUS" ] && {
+      echo "checkpoint: --ticket, --workflow, --step, --status are required" >&2
+      exit 2
+    }
+    case "$STATUS" in
+      in_progress|done_step|done|blocked) ;;
+      *) echo "checkpoint: invalid status '$STATUS'" >&2; exit 2 ;;
+    esac
+
+    # Consistency check: if the branch encodes a ticket, it must match the
+    # ticket we're writing state for. Mismatch means either the workflow is on
+    # the wrong branch or the caller passed the wrong --ticket. Either way,
+    # don't silently write; warn on stderr so the caller sees it.
+    if [ -n "$DERIVED_TICKET" ] && [ "$DERIVED_TICKET" != "$(safe_ticket "$TICKET")" ]; then
+      echo "bbs-autopilot: WARNING branch ticket '$DERIVED_TICKET' != --ticket '$TICKET'" >&2
+    fi
+
+    # --- Checkpoint validation guard ---
+    # Escape hatch: BABYSIT_SKIP_CHECKPOINT_VALIDATION=1 bypasses all guards.
+    if [ "${BABYSIT_SKIP_CHECKPOINT_VALIDATION:-0}" != "1" ]; then
+      # Depth check: reject nested autopilot depth > 3.
+      if [ -n "$DEPTH" ]; then
+        case "$DEPTH" in
+          ''|*[!0-9]*) echo "checkpoint: --depth must be a non-negative integer" >&2; exit 2 ;;
+        esac
+        if [ "$DEPTH" -gt 3 ]; then
+          echo "checkpoint: depth $DEPTH exceeds max (3)" >&2
+          exit 1
+        fi
+      fi
+
+      # Step monotonicity: reject step regression within the workflow.
+      # Skip when force=1 (--replan / --force escape hatches go backwards).
+      if [ "${FORCE:-0}" != "1" ]; then
+        WF_PATH="$(resolve_workflow_path "$WORKFLOW" 2>/dev/null || true)"
+        if [ -n "$WF_PATH" ]; then
+          # Extract step names in order from the workflow file.
+          STEPS_LIST="$(grep '^## ' "$WF_PATH" | sed 's/^## //')"
+          if [ -n "$STEPS_LIST" ]; then
+            # Get position of new step.
+            NEW_POS="$(printf '%s\n' "$STEPS_LIST" | grep -n "^${STEP}\$" | head -1 | cut -d: -f1)"
+            # Get position of current step in existing checkpoint.
+            EXISTING_CP="$STATE_ROOT/tickets/$(safe_ticket "$TICKET")/checkpoint.json"
+            if [ -f "$EXISTING_CP" ]; then
+              EXISTING_STEP="$(jq -r '.step // empty' "$EXISTING_CP" 2>/dev/null || true)"
+              if [ -n "$EXISTING_STEP" ] && [ -n "$NEW_POS" ]; then
+                OLD_POS="$(printf '%s\n' "$STEPS_LIST" | grep -n "^${EXISTING_STEP}\$" | head -1 | cut -d: -f1)"
+                if [ -n "$OLD_POS" ] && [ "$NEW_POS" -lt "$OLD_POS" ]; then
+                  echo "checkpoint: step regression: $STEP ($NEW_POS) < $EXISTING_STEP ($OLD_POS)" >&2
+                  exit 1
+                fi
+              fi
+            fi
+          fi
+        fi
+      fi
+    fi
+    # --- End validation guard ---
+
+    ensure_root
+    DIR="$(ticket_dir "$TICKET")" || { echo "checkpoint: invalid ticket" >&2; exit 2; }
+    mkdir -p "$DIR" 2>/dev/null || true
+
+    TS="$(iso_now)"
+    W="$(json_safe "$WORKFLOW")"
+    S="$(json_safe "$STEP")"
+    N="$(json_safe "$NOTE")"
+    B="$(json_safe "$BRANCH")"
+    # HEAD sha pins the exact tree this checkpoint was written from. A resume
+    # cross-checks it against current HEAD: branch can match while commits
+    # landed past the checkpoint (the branch-only guard can't see that drift).
+    HEAD_SHA="$(json_safe "$(git rev-parse HEAD 2>/dev/null || true)")"
+
+    # Pre-write backup for rollback on parse failure.
+    [ -f "$DIR/checkpoint.json" ] && cp "$DIR/checkpoint.json" "$DIR/checkpoint.json.bak" 2>/dev/null || true
+
+    # --- Iteration tracking (loop-safety counters) ---
+    # iteration_count          # of checkpoint writes for this ticket-run; the
+    #                          autopilot main loop trips at 30 to prevent
+    #                          endless self-resume after a sub-skill misbehaves.
+    # consecutive_same_step    # of consecutive writes with the same `step`;
+    #                          trips at 5 (a step is "stuck" — the loop isn't
+    #                          making forward progress).
+    # first_iteration_at       Timestamp of iteration 1; the optional wall-
+    #                          clock guard (BBS_AUTOPILOT_WALL_CLOCK_MAX) is
+    #                          computed against this.
+    # --force resets all three (intentional escape hatch for re-running a
+    # blocked ticket without the prior trip-state).
+    ITERATION_COUNT=1
+    CONSECUTIVE_SAME_STEP=1
+    FIRST_ITERATION_AT="$TS"
+    if [ -f "$DIR/checkpoint.json" ] && [ "${FORCE:-0}" != "1" ] && command -v jq >/dev/null 2>&1; then
+      _PREV_ITER="$(jq -r '.iteration_count // 0' "$DIR/checkpoint.json" 2>/dev/null || echo 0)"
+      _PREV_STEP="$(jq -r '.step // empty' "$DIR/checkpoint.json" 2>/dev/null || true)"
+      _PREV_CONSEC="$(jq -r '.consecutive_same_step // 0' "$DIR/checkpoint.json" 2>/dev/null || echo 0)"
+      _PREV_FIRST="$(jq -r '.first_iteration_at // empty' "$DIR/checkpoint.json" 2>/dev/null || true)"
+      case "$_PREV_ITER" in ''|*[!0-9]*) _PREV_ITER=0 ;; esac
+      case "$_PREV_CONSEC" in ''|*[!0-9]*) _PREV_CONSEC=0 ;; esac
+      ITERATION_COUNT=$((_PREV_ITER + 1))
+      if [ -n "$_PREV_STEP" ] && [ "$_PREV_STEP" = "$(json_safe "$STEP")" ]; then
+        CONSECUTIVE_SAME_STEP=$((_PREV_CONSEC + 1))
+      else
+        CONSECUTIVE_SAME_STEP=1
+      fi
+      [ -n "$_PREV_FIRST" ] && FIRST_ITERATION_AT="$_PREV_FIRST"
+    fi
+
+    # Atomic write of checkpoint.json. Schema includes branch + slug so the
+    # checkpoint is self-describing when read from an unrelated directory.
+    TMP="$(mktemp "$DIR/.cp.XXXXXX")"
+    printf '{"ticket":"%s","workflow":"%s","step":"%s","status":"%s","note":"%s","branch":"%s","head_sha":"%s","slug":"%s","depth":"%s","updated_at":"%s","iteration_count":%d,"consecutive_same_step":%d,"first_iteration_at":"%s"}\n' \
+      "$(json_safe "$TICKET")" "$W" "$S" "$STATUS" "$N" "$B" "$HEAD_SHA" "$(json_safe "$SLUG")" "$(json_safe "$DEPTH")" "$TS" \
+      "$ITERATION_COUNT" "$CONSECUTIVE_SAME_STEP" "$(json_safe "$FIRST_ITERATION_AT")" \
+      > "$TMP" && mv "$TMP" "$DIR/checkpoint.json"
+
+    # Post-write validation: verify JSON parses. Restore from .bak on failure.
+    if command -v jq >/dev/null 2>&1; then
+      if ! jq . "$DIR/checkpoint.json" >/dev/null 2>&1; then
+        [ -f "$DIR/checkpoint.json.bak" ] && mv "$DIR/checkpoint.json.bak" "$DIR/checkpoint.json"
+        echo "checkpoint: post-write validation failed, restored from backup" >&2
+        exit 1
+      fi
+      rm -f "$DIR/checkpoint.json.bak"
+    fi
+
+    # Append to per-ticket history. actor="work" marks this as a chain-
+    # dispatch event (vs "review"/"qa" from their Completion blocks). Keeps
+    # the chain observable in history.jsonl even when a dispatched sub-skill
+    # short-circuits before writing its own actor event. Spaced JSON matches
+    # bbs-ticket's convention so greppers like `"actor": "work"` work uniformly.
+    printf '{"ts": "%s", "ticket": "%s", "workflow": "%s", "step": "%s", "status": "%s", "note": "%s", "branch": "%s", "actor": "work"}\n' \
+      "$TS" "$(json_safe "$TICKET")" "$W" "$S" "$STATUS" "$N" "$B" >> "$DIR/history.jsonl" 2>/dev/null || true
+
+    # Append to cross-ticket project timeline
+    append_timeline "$TICKET" "$WORKFLOW" "$STEP" "$STATUS" "$NOTE"
+
+    # Bump session yaml's last_seen_at so the 120-min stale-session sweep
+    # doesn't GC an actively-checkpointing autopilot run. Atomic mktemp+mv
+    # so the file's mtime is freshened (in-place edit on Linux preserves
+    # mtime — see docs/identity.md § Atomic writes). Skipped when
+    # $BABYSIT_SESSION is unset (non-autopilot caller).
+    if [ -n "${BABYSIT_SESSION:-}" ]; then
+      _SF="${BABYSIT_HOME:-$HOME/.babysit}/sessions/${BABYSIT_SESSION}.yaml"
+      if [ -f "$_SF" ]; then
+        _SD="$(dirname "$_SF")"
+        _STMP="$(mktemp "$_SD/.session.XXXXXX" 2>/dev/null)" || _STMP=""
+        if [ -n "$_STMP" ]; then
+          awk -v ts="$TS" '
+            /^last_seen_at:/ { print "last_seen_at: " ts; next }
+            { print }
+          ' "$_SF" > "$_STMP" 2>/dev/null && mv "$_STMP" "$_SF" 2>/dev/null \
+            || rm -f "$_STMP" 2>/dev/null
+        fi
+      fi
+    fi
+
+    # Best-effort ticket comment
+    case "$STATUS" in
+      in_progress) BODY="[WORK] $W:$S — started" ;;
+      done_step)   BODY="[WORK] $W:$S — done${N:+ — }$N" ;;
+      done)        BODY="[WORK] $W complete${N:+ — }$N" ;;
+      blocked)     BODY="[WORK] $W:$S — BLOCKED${N:+ — }$N" ;;
+    esac
+    post_comment "$TICKET" "$BODY"
+    ;;
+
+  read)
+    TICKET="${1:-$DERIVED_TICKET}"
+    [ -z "$TICKET" ] && { echo "read: ticket id required (and branch doesn't encode one)" >&2; exit 2; }
+    DIR="$(ticket_dir "$TICKET")" || exit 2
+    CP="$DIR/checkpoint.json"
+    [ -f "$CP" ] || exit 0
+    # Validate JSON parses before outputting.
+    if command -v jq >/dev/null 2>&1 && ! jq . "$CP" >/dev/null 2>&1; then
+      echo "read: $CP is malformed JSON" >&2
+      exit 1
+    fi
+    cat "$CP"
+    ;;
+
+  clear)
+    TICKET="${1:-}"
+    [ -z "$TICKET" ] && { echo "clear: ticket id required" >&2; exit 2; }
+    DIR="$(ticket_dir "$TICKET")" || exit 2
+    [ -d "$DIR" ] && rm -rf "$DIR"
+    CUR="$STATE_ROOT/current.txt"
+    if [ -f "$CUR" ] && grep -q " $TICKET$" "$CUR" 2>/dev/null; then
+      rm -f "$CUR"
+    fi
+    ;;
+
+  current)
+    [ -f "$STATE_ROOT/current.txt" ] && cat "$STATE_ROOT/current.txt" || exit 0
+    ;;
+
+  set-current)
+    W="${1:-}"; T="${2:-}"
+    [ -z "$W" ] || [ -z "$T" ] && { echo "set-current: workflow and ticket required" >&2; exit 2; }
+    ensure_root
+    printf '%s %s\n' "$(json_safe "$W")" "$(json_safe "$T")" > "$STATE_ROOT/current.txt"
+    ;;
+
+  timeline)
+    TICKET="" WORKFLOW="" STEP="" STATUS="event" NOTE=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --ticket)   TICKET="$2"; shift 2 ;;
+        --workflow) WORKFLOW="$2"; shift 2 ;;
+        --step)     STEP="$2"; shift 2 ;;
+        --status)   STATUS="$2"; shift 2 ;;
+        --event)    STATUS="$2"; shift 2 ;;  # alias
+        --note)     NOTE="$2"; shift 2 ;;
+        *) shift ;;
+      esac
+    done
+    [ -z "$TICKET" ] && TICKET="$DERIVED_TICKET"
+    append_timeline "$TICKET" "$WORKFLOW" "$STEP" "$STATUS" "$NOTE"
+    ;;
+
+  recover)
+    # Context Recovery block — single source of truth for "where am I" after
+    # compaction or session restart. Designed to be grepped by humans and
+    # parsed by agents. Prints nothing and exits 0 if there's no active state.
+    echo "--- BABYSIT CONTEXT RECOVERY ---"
+    echo "SLUG: $SLUG"
+    echo "BRANCH: $BRANCH"
+    if [ -n "$DERIVED_TICKET" ]; then
+      echo "CURRENT_TICKET: $DERIVED_TICKET (derived from branch)"
+      CP="$STATE_ROOT/tickets/$DERIVED_TICKET/checkpoint.json"
+      if [ -f "$CP" ]; then
+        echo "LATEST_CHECKPOINT: $CP"
+        cat "$CP"
+        # HEAD-drift hint — branch can match while commits landed past the
+        # checkpoint. A cold agent reads this before resuming a step.
+        if command -v jq >/dev/null 2>&1; then
+          CP_SHA="$(jq -r '.head_sha // empty' "$CP" 2>/dev/null || true)"
+          CUR_SHA="$(git rev-parse HEAD 2>/dev/null || true)"
+          if [ -n "$CP_SHA" ] && [ -n "$CUR_SHA" ]; then
+            if [ "$CP_SHA" = "$CUR_SHA" ]; then
+              echo "HEAD_DRIFT: none (HEAD == checkpoint sha)"
+            else
+              echo "HEAD_DRIFT: YES — HEAD=$CUR_SHA != checkpoint=$CP_SHA; commits landed since this checkpoint, re-probe before resuming"
+            fi
+          fi
+        fi
+      else
+        echo "LATEST_CHECKPOINT: none (no prior state for this ticket)"
+      fi
+      # Last verification result — lets a cold agent skip a full re-run to
+      # learn test state (the "verification gap"). Bounded, typed read.
+      TICKET_BIN="$SCRIPT_DIR/bbs-ticket"
+      [ -x "$TICKET_BIN" ] || TICKET_BIN="$(command -v bbs-ticket 2>/dev/null || echo "$HOME/.claude/bbs-ticket")"
+      if [ -x "$TICKET_BIN" ]; then
+        EV_STATUS="$(BBS_TICKET="$DERIVED_TICKET" "$TICKET_BIN" evidence-status --kind verification 2>/dev/null || echo none)"
+        if [ "$EV_STATUS" = "valid" ] && command -v jq >/dev/null 2>&1; then
+          EV_PATH="$STATE_ROOT/tickets/$DERIVED_TICKET/evidence/verification/result.json"
+          EV_RESULT="$(jq -r '.result // empty' "$EV_PATH" 2>/dev/null || true)"
+          echo "LAST_VERIFICATION: ${EV_RESULT:-unknown} (typed evidence — $EV_PATH)"
+        else
+          echo "LAST_VERIFICATION: $EV_STATUS (no PASS/FAIL on record — re-run to establish)"
+        fi
+      fi
+    else
+      echo "CURRENT_TICKET: (branch does not encode a ticket)"
+    fi
+    if [ -f "$STATE_ROOT/current.txt" ]; then
+      echo "ACTIVE_PAIR: $(cat "$STATE_ROOT/current.txt")"
+    fi
+    if [ -f "$STATE_ROOT/timeline.jsonl" ]; then
+      echo "RECENT_EVENTS:"
+      tail -5 "$STATE_ROOT/timeline.jsonl"
+    fi
+    echo "--- END RECOVERY ---"
+    ;;
+
+  base-branch)
+    # Precedence: BBS_BASE_BRANCH env → repo git-flow → config → origin/HEAD → main.
+    # Never hard-code "main" mid-stack — only as the final fallback when
+    # every other source is empty. Prints nothing and exits 0 if we can
+    # resolve; caller treats empty as "fallback to main".
+    if [ -n "${BBS_BASE_BRANCH:-}" ]; then
+      printf '%s\n' "$BBS_BASE_BRANCH"
+      exit 0
+    fi
+    TOP="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+    if [ -n "$TOP" ] && [ -f "$TOP/.babysit/git-flow.yaml" ]; then
+      GF_BASE="$(awk '
+        /^[[:space:]]*#/ { next }
+        /^base_branch:[[:space:]]*/ {
+          sub(/^base_branch:[[:space:]]*/, "")
+          gsub(/^["'\'']|["'\'']$/, "")
+          print
+          exit
+        }
+      ' "$TOP/.babysit/git-flow.yaml" 2>/dev/null || true)"
+      if [ -z "$GF_BASE" ]; then
+        GF_BASE="$(awk '
+          /^[[:space:]]*#/ { next }
+          /^branches:[[:space:]]*$/ { in_branches=1; next }
+          /^[A-Za-z_]/ && !/^[[:space:]]/ { in_branches=0 }
+          in_branches && /^[[:space:]]+develop:[[:space:]]*/ {
+            sub(/^[[:space:]]+develop:[[:space:]]*/, "")
+            gsub(/^["'\'']|["'\'']$/, "")
+            print
+            exit
+          }
+        ' "$TOP/.babysit/git-flow.yaml" 2>/dev/null || true)"
+      fi
+      if [ -n "$GF_BASE" ]; then
+        printf '%s\n' "$GF_BASE"
+        exit 0
+      fi
+    fi
+    CONFIG_BIN="$SCRIPT_DIR/bbs-config"
+    [ -x "$CONFIG_BIN" ] || CONFIG_BIN="$(command -v bbs-config 2>/dev/null || echo "$HOME/.claude/bbs-config")"
+    CFG=""
+    [ -x "$CONFIG_BIN" ] && CFG="$("$CONFIG_BIN" get base_branch 2>/dev/null || true)"
+    if [ -n "$CFG" ]; then
+      printf '%s\n' "$CFG"
+      exit 0
+    fi
+    # Fall back to the repo's origin/HEAD. --verify first: on an unresolvable
+    # ref, rev-parse echoes the literal arg to stdout, which would leak the
+    # bogus base "HEAD" to callers (commits_ahead would then always be 0).
+    HEAD=""
+    if git rev-parse --verify -q origin/HEAD >/dev/null 2>&1; then
+      HEAD="$(git rev-parse --abbrev-ref origin/HEAD 2>/dev/null | sed 's|^origin/||')"
+    fi
+    if [ -n "$HEAD" ]; then
+      printf '%s\n' "$HEAD"
+      exit 0
+    fi
+    printf '%s\n' "main"
+    ;;
+
+  lint-workflow)
+    # Authoring-time lint for workflows the autopilot dispatches. Requires a
+    # `needs-state:` frontmatter block — otherwise routing can't be
+    # mechanical and the orchestrator would fall back to prose matching.
+    WF_PATH="${1:-}"
+    [ -z "$WF_PATH" ] && { echo "lint-workflow: path required" >&2; exit 2; }
+    [ ! -f "$WF_PATH" ] && { echo "lint-workflow: $WF_PATH: not a file" >&2; exit 2; }
+    ERRORS=0
+    # Extract frontmatter (between the first two lines of just ---).
+    FM="$(awk 'BEGIN{n=0} /^---[[:space:]]*$/{n++; if(n==2) exit; next} n==1 {print}' "$WF_PATH")"
+    if [ -z "$FM" ]; then
+      echo "$WF_PATH: missing YAML frontmatter" >&2
+      ERRORS=$((ERRORS+1))
+    fi
+    # needs-state: key must be present (as "needs-state:" opening a mapping;
+    # inline comment after the key is fine).
+    if ! printf '%s\n' "$FM" | grep -qE '^needs-state:([[:space:]]|$|#)'; then
+      echo "$WF_PATH: missing 'needs-state:' frontmatter — every dispatch target must declare its prerequisites" >&2
+      ERRORS=$((ERRORS+1))
+    fi
+    # Every `## <step>` heading should carry a `> produces: <path>` directive
+    # (Verify-post reads this). Warn, don't fail, on missing — the runner will
+    # skip Verify-post for that step instead of blocking.
+    awk '
+      /^## /{ step=$0; sub(/^## /,"",step); have_produces[step]=0; order[++i]=step; next }
+      /^> produces:/ && step { have_produces[step]=1 }
+      END {
+        for (k=1; k<=i; k++) {
+          s = order[k]
+          if (!have_produces[s]) printf "WARN %s: step \"%s\" has no `> produces:` directive — Verify-post will be skipped\n", FILENAME, s > "/dev/stderr"
+        }
+      }
+    ' "$WF_PATH"
+    exit "$ERRORS"
+    ;;
+
+  probe)
+    # Print autopilot state as KEY=VALUE lines, `eval`-safe. Shared surface
+    # between SKILL.md §0.2 and `explain` — no duplicate state logic. All
+    # values come from bbs-ticket / bbs-slug / git. Never prints LLM output.
+    PROBE_TICKET=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --ticket) PROBE_TICKET="$2"; shift 2 ;;
+        *) shift ;;
+      esac
+    done
+    [ -z "$PROBE_TICKET" ] && PROBE_TICKET="$DERIVED_TICKET"
+
+    TICKET_BIN="$SCRIPT_DIR/bbs-ticket"
+    [ -x "$TICKET_BIN" ] || TICKET_BIN="$(command -v bbs-ticket 2>/dev/null || echo "$HOME/.claude/bbs-ticket")"
+
+    state_ticket="$PROBE_TICKET"
+    state_requirement_md=0
+    state_plan_md=0
+    state_plan_approved=0
+    state_manifest_md=0
+    state_origin_type=""
+    state_commits_ahead=0
+    state_branch_pushed=0
+
+    if [ -n "$state_ticket" ] && [ -x "$TICKET_BIN" ]; then
+      BBS_TICKET="$state_ticket" "$TICKET_BIN" init >/dev/null 2>&1 || true
+      REQ="$(BBS_TICKET="$state_ticket" "$TICKET_BIN" path requirement --read 2>/dev/null || true)"
+      [ -n "$REQ" ] && [ -s "$REQ" ] && state_requirement_md=1
+      PLAN="$(BBS_TICKET="$state_ticket" "$TICKET_BIN" path plan --read 2>/dev/null || true)"
+      [ -n "$PLAN" ] && [ -s "$PLAN" ] && state_plan_md=1
+      MANIFEST="$(BBS_TICKET="$state_ticket" "$TICKET_BIN" path manifest --read 2>/dev/null || true)"
+      [ -n "$MANIFEST" ] && [ -s "$MANIFEST" ] && state_manifest_md=1
+      state_origin_type="$(BBS_TICKET="$state_ticket" "$TICKET_BIN" get origin.type 2>/dev/null || true)"
+      PLAN_VERDICT="$(BBS_TICKET="$state_ticket" "$TICKET_BIN" verdict-status --skill plan-draft 2>/dev/null || echo none)"
+      case "$PLAN_VERDICT" in
+        DONE|DONE_WITH_CONCERNS|PLANNED*) state_plan_approved=1 ;;
+      esac
+    fi
+
+    BASE="$("$0" base-branch 2>/dev/null || echo main)"
+    state_commits_ahead="$(git rev-list --count "origin/$BASE..HEAD" 2>/dev/null || echo 0)"
+    git rev-parse --verify "origin/$BRANCH" >/dev/null 2>&1 && state_branch_pushed=1
+
+    # Repo-readiness signals (git-toplevel relative). Consumed by the SKILL.md
+    # Phase-1 bootstrap gate: a repo with no `.babysit/` config or no agent
+    # landing doc isn't ready for an unattended code-writing workflow. These
+    # describe the repo, not the ticket, so they hold even for an empty ticket.
+    state_repo_configured=0
+    state_landing_doc=0
+    TOP="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+    if [ -n "$TOP" ]; then
+      [ -f "$TOP/.babysit/git-flow.yaml" ] && state_repo_configured=1
+      { [ -f "$TOP/CLAUDE.md" ] || [ -f "$TOP/AGENTS.md" ]; } && state_landing_doc=1
+    fi
+
+    printf 'state_ticket=%s\n'          "$state_ticket"
+    printf 'state_requirement_md=%s\n'  "$state_requirement_md"
+    printf 'state_plan_md=%s\n'         "$state_plan_md"
+    printf 'state_plan_approved=%s\n'   "$state_plan_approved"
+    printf 'state_manifest_md=%s\n'     "$state_manifest_md"
+    printf 'state_origin_type=%s\n'     "$state_origin_type"
+    printf 'state_commits_ahead=%s\n'   "$state_commits_ahead"
+    printf 'state_branch_pushed=%s\n'   "$state_branch_pushed"
+    printf 'state_repo_configured=%s\n' "$state_repo_configured"
+    printf 'state_landing_doc=%s\n'     "$state_landing_doc"
+    printf 'BRANCH=%s\n'                "$BRANCH"
+    printf 'SLUG=%s\n'                  "$SLUG"
+    printf 'BASE=%s\n'                  "$BASE"
+    ;;
+
+  explain)
+    # Print probed state + best workflow. Reuses `probe` so there
+    # is exactly one source of truth for state reading.
+    EXPLAIN_TICKET=""
+    EXPLAIN_DETAILS=0
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --details) EXPLAIN_DETAILS=1; shift ;;
+        *) EXPLAIN_TICKET="$1"; shift ;;
+      esac
+    done
+    [ -z "$EXPLAIN_TICKET" ] && EXPLAIN_TICKET="$DERIVED_TICKET"
+
+    # Run probe and parse KEY=value lines into an allowlisted set of vars.
+    # Do NOT eval — branch names can contain `$(...)` per git-check-ref-format,
+    # which would execute during `bbs-autopilot explain`.
+    PROBE_OUT="$("$0" probe ${EXPLAIN_TICKET:+--ticket "$EXPLAIN_TICKET"})"
+    state_ticket=""; state_requirement_md=0; state_plan_md=0
+    state_plan_approved=0; state_manifest_md=0; state_origin_type=""
+    state_commits_ahead=0; state_branch_pushed=0
+    state_repo_configured=0; state_landing_doc=0
+    BRANCH=""; SLUG=""; BASE=""
+    while IFS='=' read -r _k _v; do
+      case "$_k" in
+        state_ticket)         state_ticket="$_v" ;;
+        state_requirement_md) state_requirement_md="$_v" ;;
+        state_plan_md)        state_plan_md="$_v" ;;
+        state_plan_approved)  state_plan_approved="$_v" ;;
+        state_manifest_md)    state_manifest_md="$_v" ;;
+        state_origin_type)    state_origin_type="$_v" ;;
+        state_commits_ahead)  state_commits_ahead="$_v" ;;
+        state_branch_pushed)  state_branch_pushed="$_v" ;;
+        state_repo_configured) state_repo_configured="$_v" ;;
+        state_landing_doc)    state_landing_doc="$_v" ;;
+        BRANCH)               BRANCH="$_v" ;;
+        SLUG)                 SLUG="$_v" ;;
+        BASE)                 BASE="$_v" ;;
+      esac
+    done <<EOF
+$PROBE_OUT
+EOF
+
+    echo "=== autopilot state ==="
+    echo "ticket:          ${state_ticket:-<none — branch does not encode one>}"
+    echo "branch:          $BRANCH"
+    echo "slug:            $SLUG"
+    echo "base_branch:     $BASE"
+    echo
+    echo "requirement_md:  $state_requirement_md"
+    echo "plan_md:         $state_plan_md"
+    echo "plan_approved:   $state_plan_approved  (from bbs-ticket verdict-status --skill plan-draft)"
+    echo "manifest_md:     $state_manifest_md  (plan-draft DECOMPOSED writes manifest.md)"
+    echo "origin_type:     ${state_origin_type:-<unset>}  (from index.json origin.type)"
+    echo "commits_ahead:   $state_commits_ahead  (vs origin/$BASE)"
+    echo "branch_pushed:   $state_branch_pushed"
+    echo "repo_configured: $state_repo_configured  (.babysit/git-flow.yaml present — Phase-1 readiness)"
+    echo "landing_doc:     $state_landing_doc  (CLAUDE.md or AGENTS.md present — Phase-1 readiness)"
+    echo
+
+    # The pack runs five archetype workflows. State signals only ever route to
+    # `builder` (the production-work archetype, which selects its own mode from
+    # the same signals); prototyper/sweeper/grower/maintainer are intent-driven
+    # and invoked by name. So state-based auto-routing is builder-or-nothing.
+    best_workflow=""
+    best_reason=""
+    if [ "$state_origin_type" = "sub_ticket" ]; then
+      best_workflow="builder"
+      best_reason="ticket origin is sub_ticket → builder (child mode)"
+    elif [ "$state_manifest_md" = "1" ]; then
+      best_workflow="builder"
+      best_reason="manifest.md exists → builder (orchestrate mode)"
+    elif [ -n "$state_ticket" ] && [ "$state_plan_md" = "1" ]; then
+      best_workflow="builder"
+      best_reason="ticket has plan.md → builder (implement mode)"
+    elif [ "$state_requirement_md" = "1" ] && [ "$state_plan_md" = "0" ]; then
+      best_workflow="builder"
+      best_reason="requirement.md exists, plan.md absent → builder (build mode)"
+    elif [ "$state_commits_ahead" -ge 1 ] 2>/dev/null; then
+      best_workflow="builder"
+      best_reason="branch has commits ahead of origin/$BASE → builder (verify mode)"
+    elif [ "$state_branch_pushed" = "1" ] && [ "$BRANCH" != "$BASE" ]; then
+      best_workflow="builder"
+      best_reason="current non-base branch exists on origin → builder (verify mode)"
+    fi
+
+    echo "=== recommended workflow ==="
+    if [ -n "$best_workflow" ]; then
+      echo "$best_workflow — $best_reason"
+    else
+      echo "NEEDS_CONTEXT — no ticket, requirement, plan, manifest, or branch work to route."
+      echo "  For intent-driven work, name the archetype: prototyper | sweeper | grower | maintainer."
+    fi
+    echo
+
+    if [ "$EXPLAIN_DETAILS" != "1" ]; then
+      echo "details: run 'bbs-autopilot explain --details' for the workflow prereq matrix"
+    else
+    # Discover workflows. Same precedence as resolve_workflow_path().
+    REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+    WF_DIRS=""
+    [ -n "$REPO_ROOT" ] && [ -d "$REPO_ROOT/.claude/workflows" ] && WF_DIRS="$REPO_ROOT/.claude/workflows"
+    [ -n "${CLAUDE_PLUGIN_ROOT:-}" ] && [ -d "$CLAUDE_PLUGIN_ROOT/.claude/skills/autopilot/workflows" ] && WF_DIRS="$WF_DIRS $CLAUDE_PLUGIN_ROOT/.claude/skills/autopilot/workflows"
+    [ -d "$HOME/.claude/skills/bbs:autopilot/workflows" ] && WF_DIRS="$WF_DIRS $HOME/.claude/skills/bbs:autopilot/workflows"
+    [ -n "$REPO_ROOT" ] && [ -d "$REPO_ROOT/.claude/skills/autopilot/workflows" ] && WF_DIRS="$WF_DIRS $REPO_ROOT/.claude/skills/autopilot/workflows"
+
+    echo "=== workflow prereq evaluation ==="
+    printf '%-14s %-8s %-8s %-8s %-11s %-10s %-12s %-14s  %s\n' \
+      "workflow" "ticket" "req_md" "plan_md" "plan_approv" "manifest" "origin_type" "commits/pushed" "verdict"
+    printf '%-14s %-8s %-8s %-8s %-11s %-10s %-12s %-14s  %s\n' \
+      "--------" "------" "------" "-------" "-----------" "--------" "-----------" "--------------" "-------"
+
+    seen=""
+    for DIR in $WF_DIRS; do
+      for WF in "$DIR"/*.md; do
+        [ -f "$WF" ] || continue
+        NAME="$(basename "$WF" .md)"
+        # First-match wins across dirs (same precedence as workflow resolution).
+        case " $seen " in *" $NAME "*) continue ;; esac
+        seen="$seen $NAME"
+
+        # Extract needs-state block. Awk reads frontmatter (between first two
+        # `---` lines), finds `needs-state:`, then collects indented
+        # `  key: value` lines until dedent.
+        NS_BLOCK="$(awk '
+          BEGIN{fm=0; in_ns=0}
+          /^---[[:space:]]*$/ { fm++; if (fm==2) exit; next }
+          fm==1 {
+            if ($0 ~ /^needs-state:/) { in_ns=1; next }
+            if (in_ns) {
+              if ($0 ~ /^[[:space:]]+[A-Za-z_]/) {
+                # strip comments, trim
+                line=$0
+                sub(/#.*$/, "", line)
+                sub(/^[[:space:]]+/, "", line)
+                sub(/[[:space:]]+$/, "", line)
+                if (line != "") print line
+              } else if ($0 ~ /^[A-Za-z]/) {
+                in_ns=0
+              }
+            }
+          }
+        ' "$WF")"
+
+        if [ -z "$NS_BLOCK" ]; then
+          printf '%-12s %s\n' "$NAME" "(no needs-state: declared — will not match)"
+          continue
+        fi
+
+        # Evaluate each key. Build per-cell result strings.
+        cell_ticket="—"
+        cell_req="—"
+        cell_plan="—"
+        cell_approv="—"
+        cell_manifest="—"
+        cell_origin="—"
+        cell_commits="—"
+        cell_pushed=""
+        overall="MATCH"
+
+        # eval_mark prints the cell; FAIL accumulation happens in the caller
+        # (current shell) so `overall` isn't lost to subshell scope.
+        eval_mark() {
+          local probed="$1" rule="$2"
+          case "$rule" in
+            required) [ "$probed" = "1" ] && echo "PASS" || echo "FAIL" ;;
+            absent)   [ "$probed" = "0" ] && echo "PASS" || echo "FAIL" ;;
+            optional) echo "PASS(opt)" ;;
+            present)  echo "PASS(any)" ;;
+            1+)       [ "$probed" -ge 1 ] 2>/dev/null && echo "PASS" || echo "FAIL" ;;
+            *)        echo "FAIL" ; echo "warn: unknown needs-state rule '$rule'" >&2 ;;
+          esac
+        }
+
+        # eval_literal compares a string-valued state field to a literal rule
+        # (e.g. origin_type: sub_ticket). Case-sensitive exact match.
+        eval_literal() {
+          local probed="$1" rule="$2"
+          [ "$probed" = "$rule" ] && echo "PASS" || echo "FAIL"
+        }
+
+        # Read line-by-line with a here-string into a loop that runs in the
+        # current shell (bash process-substitution style) so `overall` updates
+        # persist. POSIX-compat: use a while-read driven by a pipe-less <<EOF.
+        while IFS= read -r KV; do
+          [ -z "$KV" ] && continue
+          KEY="${KV%%:*}"; VAL="${KV#*:}"
+          VAL="$(printf '%s' "$VAL" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+          case "$KEY" in
+            ticket)          probed="$([ -n "$state_ticket" ] && echo 1 || echo 0)"; mark="$(eval_mark "$probed" "$VAL")"; cell_ticket="$mark" ;;
+            requirement_md)  mark="$(eval_mark "$state_requirement_md" "$VAL")"; cell_req="$mark" ;;
+            plan_md)         mark="$(eval_mark "$state_plan_md" "$VAL")"; cell_plan="$mark" ;;
+            plan_approved)   mark="$(eval_mark "$state_plan_approved" "$VAL")"; cell_approv="$mark" ;;
+            manifest_md)     mark="$(eval_mark "$state_manifest_md" "$VAL")"; cell_manifest="$mark" ;;
+            origin_type)     mark="$(eval_literal "$state_origin_type" "$VAL")"; cell_origin="$mark" ;;
+            commits_ahead)   mark="$(eval_mark "$state_commits_ahead" "$VAL")"; cell_commits="$mark" ;;
+            branch_pushed)   mark="$(eval_mark "$state_branch_pushed" "$VAL")"; cell_pushed="$mark" ;;
+            *)               mark="" ;;
+          esac
+          [ "$mark" = "FAIL" ] && overall="NO MATCH"
+        done <<EOF
+$NS_BLOCK
+EOF
+
+        if [ -n "$cell_pushed" ]; then
+          cp_cell="$cell_commits/$cell_pushed"
+        else
+          cp_cell="$cell_commits"
+        fi
+        printf '%-14s %-8s %-8s %-8s %-11s %-10s %-12s %-14s  %s\n' \
+          "$NAME" "$cell_ticket" "$cell_req" "$cell_plan" "$cell_approv" "$cell_manifest" "$cell_origin" "$cp_cell" "$overall"
+      done
+    done
+    fi
+    ;;
+
+  check-skill-deps)
+    # Validate skill dependencies declared in SKILL.md frontmatter `needs:` field.
+    # Usage: bbs-autopilot check-skill-deps <path-to-SKILL.md>
+    SKILL_MD="${1:-}"
+    [ -z "$SKILL_MD" ] && { echo "check-skill-deps: SKILL.md path required" >&2; exit 2; }
+    [ ! -f "$SKILL_MD" ] && { echo "check-skill-deps: $SKILL_MD not found" >&2; exit 2; }
+    FAILURES=""
+    # Extract needs: line from frontmatter.
+    NEEDS_LINE="$(sed -n '/^---$/,/^---$/p' "$SKILL_MD" | grep '^needs:' || true)"
+    [ -z "$NEEDS_LINE" ] && exit 0  # No deps declared = all pass.
+    # Parse bracket-delimited list: needs: [dep1, dep2, ...]
+    DEPS_STR="$(printf '%s' "$NEEDS_LINE" | sed 's/^needs:[[:space:]]*//' | tr -d '[]')"
+    [ -z "$DEPS_STR" ] && exit 0
+    # Split by comma and validate each dep.
+    IFS=',' read -ra DEPS <<< "$DEPS_STR"
+    for DEP in "${DEPS[@]}"; do
+      DEP="$(printf '%s' "$DEP" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+      [ -z "$DEP" ] && continue
+      TYPE="${DEP%%:*}"
+      VALUE="${DEP#*:}"
+      case "$TYPE" in
+        binary)
+          if ! command -v "$VALUE" >/dev/null 2>&1; then
+            FAILURES="$FAILURES $DEP"
+            echo "missing dep: $DEP (binary '$VALUE' not on PATH)" >&2
+          fi
+          ;;
+        env)
+          if [ -z "${!VALUE:-}" ]; then
+            FAILURES="$FAILURES $DEP"
+            echo "missing dep: $DEP (env '$VALUE' not set)" >&2
+          fi
+          ;;
+        connected)
+          # Placeholder — future service health checks.
+          echo "warn: dep type 'connected' not yet implemented, skipping $DEP" >&2
+          ;;
+        *)
+          echo "warn: unknown dep type '$TYPE' for '$DEP', skipping" >&2
+          ;;
+      esac
+    done
+    [ -n "$FAILURES" ] && exit 1
+    exit 0
+    ;;
+
+  *)
+    echo "unknown subcommand: $SUB" >&2
+    exit 2
+    ;;
+esac

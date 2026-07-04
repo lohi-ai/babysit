@@ -1,0 +1,369 @@
+#!/usr/bin/env bash
+# bbs-qa-config — read named-environment QA config from project files.
+#
+# Sources (highest precedence first):
+#   1. <repo>/.babysit/qa.local.yaml   (gitignored — dev secrets ok)
+#   2. <repo>/.babysit/qa.yaml         (committed)
+#
+# Subcommands:
+#   probe  --env <name> [--repo <name>]
+#           Emit eval-friendly KEY=VALUE for the resolved env. Values are
+#           shell-escaped via single-quote wrapping. Exit 0 on hit, 1 on miss.
+#   list    Print one env name per line, sorted, deduplicated. Exit 0.
+#   default-env
+#           Print the project's default_env (if set), else nothing. Exit 0.
+#   check   Validate every config file readable from the current dir; print
+#           one diagnostic line per problem on stderr. Exit 0 = clean.
+#   leak-check <file>
+#           Pre-commit guard: scan <file> for inline credential literals.
+#           Exit 0 = clean, 1 = leak found (prints offending line on stderr).
+#
+# Simple schema (.babysit/qa.yaml):
+#   version: 1
+#   url: http://localhost:5173
+#   start: npm run dev              # optional; folded into QA_ENV_GUIDELINE
+#   check: npm test                 # optional; folded into QA_ENV_GUIDELINE
+#   flows: login validation, empty state, mobile layout
+#
+# Named-env schema (.babysit/qa.yaml):
+#   version: 1
+#   default_env: local
+#   environments:
+#     - name: local
+#       url: http://localhost:5173
+#       runtime: chromium             # optional free-text hint
+#       guideline: |                  # optional free-text
+#         Skip the marketing pages.
+#       credentials:                  # optional
+#         username_env: QA_USER       # env-var NAME, never the secret
+#         password_env: QA_PASS
+#
+# Repos may use either the simple local shape or environments[].
+
+set -euo pipefail
+
+SUB="${1:-help}"
+[ $# -gt 0 ] && shift || true
+
+# ─── locate the right files ───────────────────────────────────────────
+
+# Repo toplevel — for .babysit/qa.yaml lookup. Empty when run outside a git
+# repo.
+_repo_toplevel() {
+  git rev-parse --show-toplevel 2>/dev/null || true
+}
+
+# ─── awk YAML helpers ─────────────────────────────────────────────────
+
+# Print named-scalar entries from `qa.environments[]` (or top-level
+# `environments[]` when reading .babysit/qa.yaml). Output is one line per
+# field per env: `<env-name>|<field>|<value>`. Fields covered: url, runtime,
+# guideline (single-line only — multi-line block scalars are rejected by
+# `check`), credentials.username_env, credentials.password_env.
+#
+# The parser is intentionally narrow: schema v1 has fixed shape, so we don't
+# need a general YAML parser. An optional `qa:` parent header is accepted.
+_yaml_environments() {
+  local file="$1"
+  awk '
+    BEGIN { in_qa=0; in_envs=0; in_creds=0; ind=-1 }
+    /^[[:space:]]*#/ { next }
+    /^qa:[[:space:]]*$/ { in_qa=1; next }
+    /^[a-zA-Z]/ && !/^[[:space:]]/ { in_qa=0; in_envs=0; in_creds=0 }
+
+    # environments: at top-level or under qa:
+    /^environments:[[:space:]]*$/ ||
+    (in_qa && /^[[:space:]]+environments:[[:space:]]*$/) {
+      in_envs=1; in_creds=0; name=""
+      next
+    }
+
+    # New env entry: "- name: <value>" — its indent sets ind.
+    in_envs && /^[[:space:]]*-[[:space:]]+name:[[:space:]]*/ {
+      if (name != "") flush()
+      match($0, /^[[:space:]]*/)
+      ind = RLENGTH
+      sub(/^[[:space:]]*-[[:space:]]+name:[[:space:]]*/, "")
+      gsub(/^["'\'']|["'\'']$/, "")
+      name = $0
+      url=""; runtime=""; guideline=""; user_env=""; pass_env=""
+      in_creds=0
+      next
+    }
+
+    # End of envs block: any line at indent <= ind that is not a continuation.
+    in_envs && name != "" && /^[a-zA-Z]/ && !/^[[:space:]]/ {
+      flush(); in_envs=0; in_creds=0; next
+    }
+
+    # Inside an env entry — collect known fields.
+    in_envs && name != "" {
+      line=$0
+      if (match(line, /^[[:space:]]+url:[[:space:]]*/)) {
+        sub(/^[[:space:]]+url:[[:space:]]*/, "", line)
+        gsub(/^["'\'']|["'\'']$/, "", line); url=line; in_creds=0; next
+      }
+      if (match(line, /^[[:space:]]+runtime:[[:space:]]*/)) {
+        sub(/^[[:space:]]+runtime:[[:space:]]*/, "", line)
+        gsub(/^["'\'']|["'\'']$/, "", line); runtime=line; in_creds=0; next
+      }
+      if (match(line, /^[[:space:]]+guideline:[[:space:]]*/)) {
+        sub(/^[[:space:]]+guideline:[[:space:]]*/, "", line)
+        gsub(/^["'\'']|["'\'']$/, "", line); guideline=line; in_creds=0; next
+      }
+      if (match(line, /^[[:space:]]+credentials:[[:space:]]*$/)) {
+        in_creds=1; next
+      }
+      if (in_creds && match(line, /^[[:space:]]+username_env:[[:space:]]*/)) {
+        sub(/^[[:space:]]+username_env:[[:space:]]*/, "", line)
+        gsub(/^["'\'']|["'\'']$/, "", line); user_env=line; next
+      }
+      if (in_creds && match(line, /^[[:space:]]+password_env:[[:space:]]*/)) {
+        sub(/^[[:space:]]+password_env:[[:space:]]*/, "", line)
+        gsub(/^["'\'']|["'\'']$/, "", line); pass_env=line; next
+      }
+    }
+
+    END { if (name != "") flush() }
+
+    function flush() {
+      if (url != "")       printf "%s|url|%s\n",          name, url
+      if (runtime != "")   printf "%s|runtime|%s\n",      name, runtime
+      if (guideline != "") printf "%s|guideline|%s\n",    name, guideline
+      if (user_env != "")  printf "%s|username_env|%s\n", name, user_env
+      if (pass_env != "")  printf "%s|password_env|%s\n", name, pass_env
+    }
+  ' "$file" 2>/dev/null || true
+}
+
+# Simple standalone .babysit/qa.yaml shape. Exposes a single env named "local"
+# so `/bbs:qa` and autopilot have one small happy path:
+#   url: http://localhost:5173
+#   start: npm run dev
+#   check: npm test
+#   flows: login validation, empty state, mobile layout
+_yaml_simple_local() {
+  local file="$1"
+  awk '
+    BEGIN { url=""; runtime=""; guideline=""; start=""; check=""; flows=""; in_envs=0; in_qa=0 }
+    /^[[:space:]]*#/ { next }
+    /^qa:[[:space:]]*$/ { in_qa=1; next }
+    /^[a-zA-Z]/ && !/^[[:space:]]/ { in_qa=0 }
+    /^environments:[[:space:]]*$/ || (in_qa && /^[[:space:]]+environments:[[:space:]]*$/) { in_envs=1 }
+    in_envs { next }
+
+    /^url:[[:space:]]*/ {
+      line=$0; sub(/^url:[[:space:]]*/, "", line); gsub(/^["'\'']|["'\'']$/, "", line); url=line; next
+    }
+    /^runtime:[[:space:]]*/ {
+      line=$0; sub(/^runtime:[[:space:]]*/, "", line); gsub(/^["'\'']|["'\'']$/, "", line); runtime=line; next
+    }
+    /^guideline:[[:space:]]*/ {
+      line=$0; sub(/^guideline:[[:space:]]*/, "", line); gsub(/^["'\'']|["'\'']$/, "", line); guideline=line; next
+    }
+    /^start:[[:space:]]*/ {
+      line=$0; sub(/^start:[[:space:]]*/, "", line); gsub(/^["'\'']|["'\'']$/, "", line); start=line; next
+    }
+    /^check:[[:space:]]*/ {
+      line=$0; sub(/^check:[[:space:]]*/, "", line); gsub(/^["'\'']|["'\'']$/, "", line); check=line; next
+    }
+    /^flows:[[:space:]]*/ {
+      line=$0; sub(/^flows:[[:space:]]*/, "", line); gsub(/^["'\'']|["'\'']$/, "", line); flows=line; next
+    }
+    END {
+      if (url == "") exit
+      if (start != "") guideline = append_note(guideline, "Start: " start)
+      if (check != "") guideline = append_note(guideline, "Check: " check)
+      if (flows != "") guideline = append_note(guideline, "Flows: " flows)
+      printf "local|url|%s\n", url
+      if (runtime != "") printf "local|runtime|%s\n", runtime
+      if (guideline != "") printf "local|guideline|%s\n", guideline
+    }
+    function append_note(base, note) {
+      if (base == "") return note
+      return base "; " note
+    }
+  ' "$file" 2>/dev/null || true
+}
+
+# Top-level scalar (or under qa: block). Matches `default_env:` at column 0
+# OR `<indent>default_env:` when the previous non-indented line was `qa:`.
+_yaml_default_env() {
+  local file="$1"
+  awk '
+    /^[[:space:]]*#/ { next }
+    /^qa:[[:space:]]*$/ { in_qa=1; next }
+    /^[a-zA-Z]/ && !/^[[:space:]]/ { in_qa=0 }
+    /^default_env:[[:space:]]*/ ||
+    (in_qa && /^[[:space:]]+default_env:[[:space:]]*/) {
+      sub(/^[[:space:]]*default_env:[[:space:]]*/, "")
+      gsub(/^["'\'']|["'\'']$/, "")
+      print
+      exit
+    }
+  ' "$file" 2>/dev/null || true
+}
+
+# Single-quote a value for safe `eval`.
+_shquote() {
+  printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"
+}
+
+# ─── source aggregation ───────────────────────────────────────────────
+
+# Print every `<env-name>|<field>|<value>|<source>` row from every applicable
+# config file, in *lowest-to-highest* precedence order. Caller dedupes by
+# taking the LAST row per (env, field) pair.
+_collect_rows() {
+  local repo
+  repo="$(_repo_toplevel)"
+
+  # Order: qa.yaml → qa.local.yaml. Higher entries override lower ones for
+  # the same (env, field).
+  if [ -n "$repo" ] && [ -f "$repo/.babysit/qa.yaml" ]; then
+    _yaml_environments "$repo/.babysit/qa.yaml" | sed "s|\$|\|qa.yaml|"
+    _yaml_simple_local "$repo/.babysit/qa.yaml" | sed "s|\$|\|qa.yaml(simple)|"
+  fi
+  if [ -n "$repo" ] && [ -f "$repo/.babysit/qa.local.yaml" ]; then
+    _yaml_environments "$repo/.babysit/qa.local.yaml" | sed "s|\$|\|qa.local.yaml|"
+    _yaml_simple_local "$repo/.babysit/qa.local.yaml" | sed "s|\$|\|qa.local.yaml(simple)|"
+  fi
+}
+
+_collect_default_env() {
+  local repo val
+  repo="$(_repo_toplevel)"
+  # Highest precedence wins — read in reverse and print the first hit.
+  for f in "$repo/.babysit/qa.local.yaml" "$repo/.babysit/qa.yaml"; do
+    [ -n "$f" ] && [ -f "$f" ] || continue
+    val="$(_yaml_default_env "$f")"
+    if [ -n "$val" ]; then printf '%s\n' "$val"; return 0; fi
+    if _yaml_simple_local "$f" | grep -q '^local|url|'; then
+      printf '%s\n' local
+      return 0
+    fi
+  done
+}
+
+# ─── subcommands ──────────────────────────────────────────────────────
+
+cmd_list() {
+  _collect_rows | awk -F'|' '{ print $1 }' | sort -u
+}
+
+cmd_default_env() {
+  local val
+  val="$(_collect_default_env)"
+  [ -n "$val" ] && printf '%s\n' "$val"
+}
+
+cmd_probe() {
+  local env_name=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --env) env_name="${2:-}"; shift 2 ;;
+      --repo) shift 2 ;;  # reserved; not used yet
+      *) shift ;;
+    esac
+  done
+
+  if [ -z "$env_name" ]; then
+    echo "bbs-qa-config probe: --env <name> required" >&2
+    return 2
+  fi
+
+  # Resolve fields with last-write-wins precedence.
+  local rows url runtime guideline user_env pass_env source
+  rows="$(_collect_rows)"
+  url="$(    printf '%s\n' "$rows" | awk -F'|' -v e="$env_name" '$1==e && $2=="url"          { v=$3; s=$4 } END { print v }' )"
+  runtime="$(printf '%s\n' "$rows" | awk -F'|' -v e="$env_name" '$1==e && $2=="runtime"      { v=$3 } END { print v }' )"
+  guideline="$(printf '%s\n' "$rows" | awk -F'|' -v e="$env_name" '$1==e && $2=="guideline"  { v=$3 } END { print v }' )"
+  user_env="$(printf '%s\n' "$rows" | awk -F'|' -v e="$env_name" '$1==e && $2=="username_env"{ v=$3 } END { print v }' )"
+  pass_env="$(printf '%s\n' "$rows" | awk -F'|' -v e="$env_name" '$1==e && $2=="password_env"{ v=$3 } END { print v }' )"
+  source="$(  printf '%s\n' "$rows" | awk -F'|' -v e="$env_name" '$1==e && $2=="url"         { v=$4 } END { print v }' )"
+
+  if [ -z "$url" ]; then
+    echo "bbs-qa-config probe: env '$env_name' not found" >&2
+    return 1
+  fi
+
+  printf 'QA_ENV_NAME=%s\n'      "$(_shquote "$env_name")"
+  printf 'QA_ENV_URL=%s\n'       "$(_shquote "$url")"
+  printf 'QA_ENV_RUNTIME=%s\n'   "$(_shquote "$runtime")"
+  printf 'QA_ENV_GUIDELINE=%s\n' "$(_shquote "$guideline")"
+  printf 'QA_ENV_USERNAME_ENV=%s\n' "$(_shquote "$user_env")"
+  printf 'QA_ENV_PASSWORD_ENV=%s\n' "$(_shquote "$pass_env")"
+  printf 'QA_ENV_SOURCE=%s\n'    "$(_shquote "$source")"
+}
+
+# Validate every config file readable from CWD. Prints diagnostics on stderr.
+cmd_check() {
+  local repo errs=0
+  repo="$(_repo_toplevel)"
+  for f in "$repo/.babysit/qa.yaml" "$repo/.babysit/qa.local.yaml"; do
+    [ -n "$f" ] && [ -f "$f" ] || continue
+    # Schema sanity: every env must have a non-empty url. Run leak-check too.
+    while IFS='|' read -r ename efield evalue; do
+      [ -z "$ename" ] && continue
+      :
+    done < <(_yaml_environments "$f")
+    # Surface envs declared without a url.
+    local seen_urls envs_seen
+    envs_seen="$({ _yaml_environments "$f"; _yaml_simple_local "$f"; } | awk -F'|' '{ print $1 }' | sort -u)"
+    seen_urls="$({ _yaml_environments "$f"; _yaml_simple_local "$f"; } | awk -F'|' '$2=="url" { print $1 }' | sort -u)"
+    while IFS= read -r e; do
+      [ -z "$e" ] && continue
+      if ! printf '%s\n' "$seen_urls" | grep -qxF "$e"; then
+        echo "bbs-qa-config check: $f: env '$e' missing url" >&2
+        errs=$((errs+1))
+      fi
+    done <<< "$envs_seen"
+    cmd_leak_check "$f" || errs=$((errs+1))
+  done
+  return $([ "$errs" -gt 0 ] && echo 1 || echo 0)
+}
+
+# Pre-commit-grade check: refuse inline credential literals. The committed
+# qa.yaml must reference env-var names; secrets live in env vars or in the
+# gitignored qa.local.yaml.
+cmd_leak_check() {
+  local file="${1:-}"
+  if [ -z "$file" ] || [ ! -f "$file" ]; then
+    echo "bbs-qa-config leak-check: file required" >&2
+    return 2
+  fi
+  # qa.local.yaml is gitignored — operators may put real secrets there.
+  case "$file" in *qa.local.yaml) return 0 ;; esac
+
+  local hits
+  hits="$(grep -nE '^[[:space:]]*(password|token|secret|api_key)[[:space:]]*:' "$file" 2>/dev/null || true)"
+  if [ -n "$hits" ]; then
+    {
+      echo "bbs-qa-config leak-check: $file contains inline credential literals:"
+      printf '%s\n' "$hits"
+      echo "Use credentials.{username_env,password_env} (env-var names) or move secrets to .babysit/qa.local.yaml (gitignored)."
+    } >&2
+    return 1
+  fi
+  return 0
+}
+
+# ─── dispatch ─────────────────────────────────────────────────────────
+
+case "$SUB" in
+  probe)        cmd_probe "$@" ;;
+  list)         cmd_list ;;
+  default-env)  cmd_default_env ;;
+  check)        cmd_check ;;
+  leak-check)   cmd_leak_check "$@" ;;
+  help|*)
+    cat <<'EOF'
+Usage:
+  bbs-qa-config probe --env <name> [--repo <name>]
+  bbs-qa-config list
+  bbs-qa-config default-env
+  bbs-qa-config check
+  bbs-qa-config leak-check <file>
+EOF
+    ;;
+esac

@@ -1,0 +1,4 @@
+# Minimal config for goal -> autopilot -> QA.
+base_branch: main
+branch_prefix: feat
+push: true

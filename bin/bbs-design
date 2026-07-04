@@ -1,0 +1,448 @@
+#!/usr/bin/env bash
+# bbs-design — design intelligence broker.
+#
+# Subcommands:
+#   tokens [--field <path>] [--design <file>]
+#       Read DESIGN.md YAML frontmatter as JSON. With --field, emit the leaf
+#       value (e.g. `--field colors.primary`). Merges repo-root MASTER with
+#       ticket-scoped override (`tickets/<ticket>/design.md`) when both exist:
+#       deep-merge, ticket overrides MASTER per-leaf.
+#
+#   suggest --product <type> [--data <dir>]
+#       Emit a JSON block joining products.csv + ui-reasoning.csv +
+#       colors.csv + typography.csv for the given Product Type. Anti-slop
+#       filter is applied per the design-ui anti-patterns list.
+#
+#   components [--root <dir>] [--ext <pattern>]
+#       Walk a frontend root and list component-shaped files. Returns JSONL
+#       rows {name, path, kind}.
+#
+#   ux-check --category <cat> [--data <dir>]
+#       Emit ux-guidelines.csv rows for the given category as JSONL.
+#
+# Dependencies: bash, awk, jq, find. No yq, no python.
+
+set -euo pipefail
+
+# ─── Resolve data dir ─────────────────────────────────────────
+_default_data_dir() {
+  # Prefer plugin install path; fall back to repo-relative dev path.
+  local self="${BASH_SOURCE[0]}"
+  while [ -L "$self" ]; do self="$(readlink "$self")"; done
+  local bin_dir; bin_dir="$(cd "$(dirname "$self")" && pwd)"
+  local repo_root; repo_root="$(dirname "$bin_dir")"
+  local data="$repo_root/.claude/skills/design-ui/data"
+  if [ -d "$data" ]; then
+    printf '%s' "$data"
+    return
+  fi
+  # Plugin install: ~/.claude/plugins/.../babysit/.claude/skills/design-ui/data
+  local plug
+  for plug in \
+    "$HOME/.claude/plugins/marketplaces/babysit/.claude/skills/design-ui/data" \
+    "$HOME/.claude/skills/bbs:design-ui/data" \
+    "$HOME/.claude/skills/design-ui/data"; do
+    [ -d "$plug" ] && printf '%s' "$plug" && return
+  done
+  printf '%s' "$data"  # last resort — caller will see the missing-file error
+}
+
+_die()  { echo "bbs-design: $*" >&2; exit 2; }
+_need() { command -v "$1" >/dev/null 2>&1 || _die "$1 not found in PATH"; }
+
+# Convert CSV (with quoted-comma fields, RFC-4180 doubled-quote escaping) to
+# JSONL keyed by header row.
+_csv_to_jsonl() {
+  awk '
+    function parse_row(line, arr,    i, c, q, n, field, len) {
+      delete arr
+      n = 0; field = ""; q = 0; len = length(line)
+      for (i = 1; i <= len; i++) {
+        c = substr(line, i, 1)
+        if (c == "\"") {
+          if (q && substr(line, i + 1, 1) == "\"") { field = field "\""; i++; continue }
+          q = !q
+        } else if (c == "," && !q) {
+          arr[++n] = field; field = ""
+        } else {
+          field = field c
+        }
+      }
+      arr[++n] = field
+      return n
+    }
+    function jesc(v) {
+      gsub(/\\/, "\\\\", v); gsub(/"/, "\\\"", v)
+      gsub(/\r/, "", v); gsub(/\n/, "\\n", v); gsub(/\t/, "\\t", v)
+      return v
+    }
+    NR == 1 { hn = parse_row($0, hdr); next }
+    {
+      n = parse_row($0, row)
+      out = "{"
+      for (i = 1; i <= n; i++) {
+        if (i > 1) out = out ","
+        out = out "\"" jesc(hdr[i]) "\":\"" jesc(row[i]) "\""
+      }
+      out = out "}"
+      print out
+    }
+  ' "$1"
+}
+
+# ─── tokens ───────────────────────────────────────────────────
+#
+# Parse the limited YAML frontmatter shape we control:
+#   - top-level mappings: schema, project, product_type, tokens
+#   - nested mappings (2-3 levels deep)
+#   - scalar values (string, int, hex, bool)
+#   - inline mappings: { family: "...", url: "..." }
+#   - inline arrays:   [12, 14, 16]
+# Emits JSON via awk → jq pretty-print.
+_yaml_frontmatter_to_json() {
+  awk '
+    BEGIN {
+      in_fm = 0
+      out = ""
+      indent_stack[0] = -1
+      depth = 0
+      first[0] = 1
+    }
+    function trim(s) { sub(/^ +/, "", s); sub(/ +$/, "", s); return s }
+    function strip_quotes(s) {
+      if (s ~ /^".*"$/ || s ~ /^'\''.*'\''$/) return substr(s, 2, length(s) - 2)
+      return s
+    }
+    function quote_scalar(v,    n) {
+      v = trim(v)
+      if (v == "" || v == "null" || v == "~") return "null"
+      if (v == "true" || v == "false") return v
+      # Inline JSON-shaped value — pass through.
+      if (v ~ /^\{.*\}$/ || v ~ /^\[.*\]$/) return _yamlish_inline(v)
+      # Number?
+      if (v ~ /^-?[0-9]+$/) return v
+      if (v ~ /^-?[0-9]+\.[0-9]+$/) return v
+      v = strip_quotes(v)
+      # Escape backslashes and double-quotes for JSON.
+      gsub(/\\/, "\\\\", v)
+      gsub(/"/, "\\\"", v)
+      return "\"" v "\""
+    }
+    # Convert an inline YAML/JSON-ish value like {family: "X", url: "Y"} or
+    # [12, 14, 16] to strict JSON. Schema-limited: keys are bare words, values
+    # are strings/numbers/bools.
+    function _yamlish_inline(s,   r, n, i, parts, kv, k, vv) {
+      if (s ~ /^\[.*\]$/) {
+        s = substr(s, 2, length(s) - 2)
+        n = split(s, parts, ",")
+        r = "["
+        for (i = 1; i <= n; i++) {
+          if (i > 1) r = r ", "
+          r = r quote_scalar(parts[i])
+        }
+        return r "]"
+      }
+      if (s ~ /^\{.*\}$/) {
+        s = substr(s, 2, length(s) - 2)
+        n = split(s, parts, ",")
+        r = "{"
+        for (i = 1; i <= n; i++) {
+          if (i > 1) r = r ", "
+          if (split(parts[i], kv, ":") < 2) continue
+          k = trim(kv[1])
+          vv = kv[2]
+          # Re-join in case the value contained a colon (e.g., URL).
+          for (j = 3; j <= length(kv); j++) vv = vv ":" kv[j]
+          gsub(/^"|"$/, "", k); gsub(/^'\''|'\''$/, "", k)
+          r = r "\"" k "\": " quote_scalar(vv)
+        }
+        return r "}"
+      }
+      return quote_scalar(s)
+    }
+    function close_to(target_indent,    j) {
+      while (depth > 0 && indent_stack[depth] >= target_indent) {
+        out = out "}"
+        depth--
+      }
+    }
+    /^---[ \t]*$/ {
+      if (!in_fm) { in_fm = 1; out = "{"; first[0] = 1; next }
+      else { in_fm = 0; exit }
+    }
+    !in_fm { next }
+    /^[ \t]*#/ { next }
+    /^[ \t]*$/ { next }
+    {
+      line = $0
+      # Compute indent (spaces only — we never emit tabs).
+      match(line, /^ */)
+      ind = RLENGTH
+      content = substr(line, ind + 1)
+
+      # key: value or key:
+      if (match(content, /^[A-Za-z_][A-Za-z0-9_]*[ \t]*:/)) {
+        key = substr(content, 1, RLENGTH - 1)
+        sub(/[ \t]+$/, "", key)
+        rest = substr(content, RLENGTH + 1)
+        sub(/^[ \t]*/, "", rest)
+
+        # Close deeper/equal scopes. Each level we close emits a `}`.
+        while (depth > 0 && indent_stack[depth] >= ind) {
+          out = out "}"
+          depth--
+        }
+        # Comma if not the first key in the current map.
+        if (!first[depth]) out = out ", "
+        first[depth] = 0
+
+        out = out "\"" key "\": "
+
+        if (rest == "" ) {
+          # Open a new nested object.
+          out = out "{"
+          depth++
+          indent_stack[depth] = ind
+          first[depth] = 1
+        } else {
+          out = out quote_scalar(rest)
+        }
+      }
+    }
+    END {
+      while (depth > 0) { out = out "}"; depth-- }
+      out = out "}"
+      print out
+    }
+  ' "$1"
+}
+
+# Deep-merge two JSON objects via jq. Right wins per leaf.
+# $-params bind by value: plain params are filters re-evaluated in the
+# current input context, so `a` inside with_entries would run `.[0]`
+# against each entry and fail.
+_jq_deep_merge='
+  def deep_merge($a; $b):
+    if ($a|type) == "object" and ($b|type) == "object" then
+      ($a + $b) | with_entries(
+        .value as $v
+        | .key as $k
+        | .value = (if ($a[$k]|type) == "object" and ($v|type) == "object"
+                    then deep_merge($a[$k]; $v) else $v end)
+      )
+    else $b end;
+  deep_merge(.[0]; .[1])
+'
+
+_resolve_design_paths() {
+  # Echoes "MASTER\nOVERRIDE" (either may be empty).
+  local master="" override=""
+  if [ -n "${1:-}" ]; then
+    master="$1"
+  else
+    [ -f "DESIGN.md" ] && master="DESIGN.md"
+  fi
+  if command -v bbs-ticket >/dev/null 2>&1; then
+    local ticket_design
+    ticket_design="$(bbs-ticket get pointers.design 2>/dev/null || true)"
+    if [ -n "$ticket_design" ] && [ -f "$ticket_design" ]; then
+      override="$ticket_design"
+    else
+      local ticket_path
+      ticket_path="$(bbs-ticket path design --read 2>/dev/null || true)"
+      [ -n "$ticket_path" ] && [ -f "$ticket_path" ] && override="$ticket_path"
+    fi
+  fi
+  printf '%s\n%s\n' "$master" "$override"
+}
+
+_cmd_tokens() {
+  local field="" design_arg=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --field)   field="$2"; shift 2 ;;
+      --design)  design_arg="$2"; shift 2 ;;
+      *)         _die "tokens: unknown arg $1" ;;
+    esac
+  done
+  _need jq
+
+  local paths master override
+  paths="$(_resolve_design_paths "$design_arg")"
+  master="$(printf '%s' "$paths" | sed -n '1p')"
+  override="$(printf '%s' "$paths" | sed -n '2p')"
+
+  if [ -z "$master" ] && [ -z "$override" ]; then
+    _die "tokens: no DESIGN.md found (repo root or ticket-scoped)"
+  fi
+
+  local m_json='{}' o_json='{}'
+  if [ -n "$master" ];   then m_json="$(_yaml_frontmatter_to_json "$master")";   fi
+  if [ -n "$override" ]; then o_json="$(_yaml_frontmatter_to_json "$override")"; fi
+
+  # If frontmatter was empty, both are '{}' — caller gets an empty object,
+  # which is the documented prose-only fallback signal.
+  local merged
+  merged="$(jq -n --argjson a "$m_json" --argjson b "$o_json" "[\$a, \$b] | $_jq_deep_merge")"
+
+  if [ -n "$field" ]; then
+    # Convert dotted path → jq path expression.
+    local path_jq
+    path_jq=".$(printf '%s' "$field" | sed 's/\./"]\["/g')"
+    path_jq=".[\"${field//./\"][\"}\"]"
+    printf '%s' "$merged" | jq -r "$path_jq"
+  else
+    printf '%s' "$merged" | jq
+  fi
+}
+
+# ─── suggest ──────────────────────────────────────────────────
+#
+# Join products.csv + ui-reasoning.csv (on No) + colors.csv (on No) +
+# typography.csv (on Product Type keyword match — the typography table is
+# keyed by mood, not product type, so we approximate via Best For column).
+#
+# Anti-slop filter: drop rows whose Anti_Patterns column matches the slop
+# list at the head of this script.
+_ANTI_SLOP='purple|violet|gradient|three-column|3-column|chromatic|glassmorphism.*everywhere|bubbly|bouncy'
+
+_cmd_suggest() {
+  local product="" data_dir
+  data_dir="$(_default_data_dir)"
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --product) product="$2"; shift 2 ;;
+      --data)    data_dir="$2"; shift 2 ;;
+      *) _die "suggest: unknown arg $1" ;;
+    esac
+  done
+  [ -n "$product" ] || _die "suggest: --product <type> required"
+  _need jq
+  [ -d "$data_dir" ] || _die "suggest: data dir not found: $data_dir"
+
+  local pf="$data_dir/products.csv"
+  local rf="$data_dir/ui-reasoning.csv"
+  local cf="$data_dir/colors.csv"
+  for f in "$pf" "$rf" "$cf"; do
+    [ -f "$f" ] || _die "suggest: missing $f"
+  done
+
+  local product_row reasoning_row colors_row pno
+  product_row="$(_csv_to_jsonl "$pf" | jq -c --arg w "$product" '
+    select((.["Product Type"] // "") | ascii_downcase == ($w | ascii_downcase))
+  ' | head -1)"
+
+  if [ -z "$product_row" ]; then
+    printf '{"error":"product not found: %s"}\n' "$product"
+    return 0
+  fi
+
+  pno="$(printf '%s' "$product_row" | jq -r '.No')"
+
+  reasoning_row="$(_csv_to_jsonl "$rf" | jq -c --arg n "$pno" --arg anti "$_ANTI_SLOP" '
+    select(.No == $n)
+    | if (.Anti_Patterns // "" | ascii_downcase | test($anti)) then
+        {reasoning_filtered: true, anti_pattern: .Anti_Patterns}
+      else . end
+  ' | head -1)"
+
+  colors_row="$(_csv_to_jsonl "$cf" | jq -c --arg n "$pno" 'select(.No == $n)' | head -1)"
+
+  jq -n \
+    --argjson product   "$product_row" \
+    --argjson reasoning "${reasoning_row:-null}" \
+    --argjson colors    "${colors_row:-null}" \
+    '{
+      product_no:   $product.No,
+      product_type: $product["Product Type"],
+      product:      $product,
+      reasoning:    $reasoning,
+      colors:       $colors
+    }'
+}
+
+# ─── components ───────────────────────────────────────────────
+_cmd_components() {
+  local root="" ext_pattern=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --root) root="$2"; shift 2 ;;
+      --ext)  ext_pattern="$2"; shift 2 ;;
+      *) _die "components: unknown arg $1" ;;
+    esac
+  done
+
+  if [ -z "$root" ]; then
+    # Convention: src/components, app/components, components/
+    for cand in components src/components app/components packages/ui/src; do
+      [ -d "$cand" ] && root="$cand" && break
+    done
+  fi
+
+  if [ -z "$root" ] || [ ! -d "$root" ]; then
+    # Empty inventory — documented expected output for greenfield repos.
+    return 0
+  fi
+
+  local exts='.tsx,.jsx,.vue,.svelte'
+  [ -n "$ext_pattern" ] && exts="$ext_pattern"
+  local find_args=( "$root" -type f )
+  local -a include
+  IFS=',' read -ra include <<< "$exts"
+  local i first=1
+  for i in "${include[@]}"; do
+    if [ "$first" = 1 ]; then
+      find_args+=( '(' -name "*$i" )
+      first=0
+    else
+      find_args+=( -o -name "*$i" )
+    fi
+  done
+  find_args+=( ')' )
+
+  find "${find_args[@]}" 2>/dev/null | while IFS= read -r path; do
+    base="$(basename "$path")"
+    name="${base%.*}"
+    # Skip lowercase-leading files (likely utilities, not components by convention).
+    case "$name" in
+      [A-Z]*) ;;
+      *) continue ;;
+    esac
+    kind="${path##*.}"
+    printf '{"name":"%s","path":"%s","kind":"%s"}\n' "$name" "$path" "$kind"
+  done
+}
+
+# ─── ux-check ─────────────────────────────────────────────────
+_cmd_ux_check() {
+  local category="" data_dir
+  data_dir="$(_default_data_dir)"
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --category) category="$2"; shift 2 ;;
+      --data)     data_dir="$2"; shift 2 ;;
+      *) _die "ux-check: unknown arg $1" ;;
+    esac
+  done
+  [ -n "$category" ] || _die "ux-check: --category <name> required"
+  local f="$data_dir/ux-guidelines.csv"
+  [ -f "$f" ] || _die "ux-check: missing $f"
+
+  _csv_to_jsonl "$f" | jq -c --arg w "$category" '
+    select((.Category // "") | ascii_downcase == ($w | ascii_downcase))
+  '
+}
+
+# ─── dispatch ─────────────────────────────────────────────────
+[ $# -ge 1 ] || _die "usage: bbs-design <tokens|suggest|components|ux-check> [args]"
+cmd="$1"; shift
+case "$cmd" in
+  tokens)     _cmd_tokens "$@" ;;
+  suggest)    _cmd_suggest "$@" ;;
+  components) _cmd_components "$@" ;;
+  ux-check)   _cmd_ux_check "$@" ;;
+  -h|--help)
+    sed -n '2,/^set -euo/p' "${BASH_SOURCE[0]}" | sed 's|^# \?||' | head -25
+    ;;
+  *) _die "unknown subcommand: $cmd" ;;
+esac

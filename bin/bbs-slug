@@ -1,0 +1,122 @@
+#!/usr/bin/env bash
+# bbs-slug — output project slug, sanitized branch, and derived ticket id.
+#
+# Usage:
+#   eval "$(bbs-slug)"       → sets SLUG, BRANCH, TICKET (and BASE_BRANCH if known)
+#   bbs-slug                 → prints KEY=VALUE lines for eval
+#   bbs-slug home            → prints and creates ~/.babysit/projects/<slug>/
+#   bbs-slug ticket-home     → prints ~/.babysit/projects/<slug>/tickets/<ticket>/ (no mkdir if TICKET empty)
+#
+# Ticket derivation: branch name matching ^(feat|fix|chore|bug|refactor|hotfix)/<ticket>_*
+# sets TICKET to the <ticket> segment. Any other branch leaves TICKET empty —
+# callers should treat empty TICKET as "no ticket in scope" and either prompt
+# or fall back to the explicit arg. This is the consistency anchor: ticket
+# is always re-derived from the branch, never from conversation memory.
+#
+# Security: output is sanitized to [a-zA-Z0-9._-] only, preventing
+# shell injection when consumed via source or eval.
+set -euo pipefail
+
+SUB="${1:-env}"
+
+CACHE_DIR="$HOME/.babysit/slug-cache"
+PROJECT_DIR="$(pwd)"
+# Encode absolute path as cache key: /Users/j/foo → _Users_j_foo
+CACHE_KEY=$(printf '%s' "$PROJECT_DIR" | tr '/' '_')
+CACHE_FILE="${CACHE_DIR}/${CACHE_KEY}"
+
+# 1. Try cached slug first (guarantees consistency across sessions)
+if [[ -f "$CACHE_FILE" ]]; then
+  SLUG=$(cat "$CACHE_FILE" 2>/dev/null || true)
+fi
+
+# 2. If no cache, compute from git remote (separated from pipeline to avoid
+#    pipefail swallowing the error and producing an empty slug)
+if [[ -z "${SLUG:-}" ]]; then
+  REMOTE_URL=$(git remote get-url origin 2>/dev/null) || REMOTE_URL=""
+  if [[ -n "$REMOTE_URL" ]]; then
+    RAW_SLUG=$(printf '%s' "$REMOTE_URL" | sed 's|.*[:/]\([^/]*/[^/]*\)\.git$|\1|;s|.*[:/]\([^/]*/[^/]*\)$|\1|' | tr '/' '-')
+    SLUG=$(printf '%s' "$RAW_SLUG" | tr -cd 'a-zA-Z0-9._-')
+  fi
+fi
+
+# 3. Fallback to basename only when there's truly no git remote configured
+SLUG="${SLUG:-$(basename "$PWD" | tr -cd 'a-zA-Z0-9._-')}"
+
+# 4. Cache the slug for future sessions (atomic write, fail silently).
+if [[ -n "$SLUG" ]]; then
+  mkdir -p "$CACHE_DIR" 2>/dev/null || true
+  CACHE_TMP=$(mktemp "$CACHE_DIR/.slug-XXXXXX" 2>/dev/null) || CACHE_TMP=""
+  if [[ -n "$CACHE_TMP" ]]; then
+    printf '%s' "$SLUG" > "$CACHE_TMP" && mv "$CACHE_TMP" "$CACHE_FILE" 2>/dev/null || rm -f "$CACHE_TMP" 2>/dev/null
+  fi
+fi
+RAW_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null) || RAW_BRANCH=""
+# Branch names may legitimately contain / (e.g. feat/bs-ab123_slug). Keep slashes
+# so downstream TICKET parsing works; sanitize only dangerous chars.
+BRANCH=$(printf '%s' "${RAW_BRANCH:-}" | tr -cd 'a-zA-Z0-9._/-')
+BRANCH="${BRANCH:-unknown}"
+
+# Derive TICKET from branch. Supported shapes:
+#   feat/<ticket>_<slug>        (canonical, set by implement workflow)
+#   fix/<ticket>_<slug>
+#   chore/<ticket>_<slug>
+#   bug/<ticket>_<slug>
+#   refactor/<ticket>_<slug>
+#   hotfix/<ticket>_<slug>
+# Anything else leaves TICKET empty — the caller must either accept no-ticket
+# scope or error out. bs-xxxxx is the babysit-office id shape; keep the
+# regex permissive so other orchestrators (linear LIN-123 etc.) also match.
+TICKET=""
+if [[ "$BRANCH" =~ ^(feat|fix|chore|bug|refactor|hotfix)/([A-Za-z0-9-]+)_ ]]; then
+  TICKET="${BASH_REMATCH[2]}"
+fi
+# BABYSIT_TICKET (canonical) and BBS_TICKET (legacy alias) override the
+# branch-derived ticket. Env-first identity is the contract documented in
+# docs/identity.md; this is the single chokepoint that flips every skill
+# preamble to env-first behavior — preambles call `eval $(bbs-slug env)`.
+# If both are set and disagree, abort with an explicit fix message so the
+# calling preamble fails loudly rather than silently picking one.
+if [[ -n "${BABYSIT_TICKET:-}" && -n "${BBS_TICKET:-}" \
+      && "$BABYSIT_TICKET" != "$BBS_TICKET" ]]; then
+  echo "bbs-slug: BABYSIT_TICKET=$BABYSIT_TICKET conflicts with BBS_TICKET=$BBS_TICKET; unset one to proceed." >&2
+  exit 1
+fi
+TICKET="${BABYSIT_TICKET:-${BBS_TICKET:-$TICKET}}"
+
+PROJECT_HOME="${BABYSIT_PROJECT_HOME:-$HOME/.babysit/projects/$SLUG}"
+
+case "$SUB" in
+  env|"")
+    echo "SLUG=$SLUG"
+    echo "BRANCH=$BRANCH"
+    echo "TICKET=$TICKET"
+    echo "BABYSIT_PROJECT_HOME=$PROJECT_HOME"
+    ;;
+  home)
+    mkdir -p "$PROJECT_HOME" 2>/dev/null || true
+    printf '%s\n' "$PROJECT_HOME"
+    ;;
+  ticket-home)
+    if [ -z "$TICKET" ]; then
+      echo "bbs-slug: no ticket in branch '$BRANCH'" >&2
+      exit 1
+    fi
+    TH="$PROJECT_HOME/tickets/$TICKET"
+    mkdir -p "$TH" 2>/dev/null || true
+    printf '%s\n' "$TH"
+    ;;
+  slug)
+    printf '%s\n' "$SLUG"
+    ;;
+  branch)
+    printf '%s\n' "$BRANCH"
+    ;;
+  ticket)
+    printf '%s\n' "$TICKET"
+    ;;
+  *)
+    echo "usage: bbs-slug [env|home|ticket-home|slug|branch|ticket]" >&2
+    exit 2
+    ;;
+esac

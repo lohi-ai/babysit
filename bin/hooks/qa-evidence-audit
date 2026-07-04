@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+# PostToolUse(Bash) qa-evidence auditor.
+#
+# Fires after a `bbs-ticket set-verdict --skill qa` writes verdicts/qa.md — the
+# one moment the persisted qa verdict is guaranteed to exist (the qa Skill hook
+# can't check it: set-verdict runs as a separate Bash call *after* the skill
+# returns). Re-checks the verdict against the coverage rubric it claims: a
+# PASS/FIXED must show freshness=A, no C/D dimension, and evidence naming a real
+# end-to-end run; a non-PASS status must name a blocker.
+#
+# Audit-only — PostToolUse cannot block the write that already happened. It
+# logs to skill-usage.jsonl (babysit's feedback channel) and warns via
+# systemMessage so the model fixes the verdict before the push/PR gate denies
+# it. The hard stop lives in pre-tool-gate, which reads the same qa-evidence.
+#
+# Input:  hook JSON on stdin (.tool_input.command).
+# Output: optional systemMessage JSON; always exit 0.
+set -uo pipefail
+
+command -v jq >/dev/null 2>&1 || exit 0
+
+INPUT="$(cat)"
+CMD="$(printf '%s' "$INPUT" | jq -r '.tool_input.command // empty' 2>/dev/null)"
+[ -n "$CMD" ] || exit 0
+
+# Only audit the qa verdict write — fast no-op on every other Bash command.
+printf '%s' "$CMD" | grep -qE 'set-verdict' || exit 0
+printf '%s' "$CMD" | grep -qE -- '--skill[[:space:]=]+qa([[:space:]]|$)' || exit 0
+
+# Resolve bbs-ticket the way the preamble / other hooks do.
+_resolve() {
+  local shim="$HOME/.claude/$1" repo="$HOME/.claude/skills/babysit/bin/$1"
+  if [ -x "$shim" ]; then echo "$shim"
+  elif [ -x "$repo" ]; then echo "$repo"
+  elif command -v "$1" >/dev/null 2>&1; then echo "$1"
+  else echo ""; fi
+}
+TB="$(_resolve bbs-ticket)"
+[ -n "$TB" ] || exit 0
+"$TB" resolve >/dev/null 2>&1 || exit 0
+STATE="$("$TB" qa-evidence 2>/dev/null || echo none)"
+
+TS="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+LOG="$HOME/.babysit/analytics/skill-usage.jsonl"
+mkdir -p "$(dirname "$LOG")" 2>/dev/null || true
+printf '{"ts":"%s","event":"qa-evidence-audit","state":"%s"}\n' "$TS" "$STATE" >> "$LOG" 2>/dev/null || true
+
+case "$STATE" in
+  ok|none) : ;;
+  contradiction:*)
+    printf '{"systemMessage":"qa-evidence: qa verdict claims PASS but its own rubric disproves it (%s) — a PASS requires freshness=A and no C/D dimension. Re-run the e2e pass on the final code, or downgrade to FAIL / DONE_WITH_CONCERNS with the reason."}\n' "${STATE#contradiction:}"
+    ;;
+  thin:*)
+    printf '{"systemMessage":"qa-evidence: qa PASS verdict has %s — the EVIDENCE line must name a real end-to-end run (browser or API journey + observed result + screenshot path under evidence/qa/), not code reads or a bare status. Add it or downgrade the verdict."}\n' "${STATE#thin:}"
+    ;;
+  unexplained)
+    printf '{"systemMessage":"qa-evidence: qa verdict is not a clean PASS but names no blocker. If the app could not be tested or a case was skipped, the verdict must say why — set DONE_WITH_CONCERNS (or BLOCKED) with the named blocker in SUMMARY/EVIDENCE."}\n'
+    ;;
+esac
+exit 0

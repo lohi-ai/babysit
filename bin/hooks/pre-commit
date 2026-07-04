@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+# Pre-commit hook: lint workflow files before they land.
+#
+# Finds staged .md files under .claude/skills/autopilot/workflows/ and
+# .claude/workflows/, then runs `bbs-autopilot lint-workflow` on each
+# using the staged content (from the index), not the working tree.
+# Exits non-zero if any file fails, blocking the commit.
+set -uo pipefail
+
+# Resolve bbs-autopilot (same logic as preamble).
+_bbs_resolve() {
+  local shim="$HOME/.claude/$1" repo="$HOME/.claude/skills/babysit/bin/$1"
+  if [ -x "$shim" ]; then echo "$shim"
+  elif [ -x "$repo" ]; then echo "$repo"
+  else echo "$1"; fi
+}
+BBS_AUTOPILOT_BIN=$(_bbs_resolve bbs-autopilot)
+# Collect staged workflow .md files.
+STAGED=$(git diff --cached --name-only --diff-filter=ACM -- \
+  '.claude/skills/autopilot/workflows/*.md' \
+  '.claude/workflows/*.md') || exit 1
+
+ERRORS=0
+if [ -n "$STAGED" ]; then
+  while IFS= read -r WF; do
+    [ -z "$WF" ] && continue
+    # Lint the staged version from the index, not the working tree.
+    TMP=$(mktemp /tmp/bbs-lint-XXXXXXXX.md)
+    git show ":$WF" > "$TMP" 2>/dev/null || { rm -f "$TMP"; ERRORS=$((ERRORS + 1)); continue; }
+    "$BBS_AUTOPILOT_BIN" lint-workflow "$TMP" || ERRORS=$((ERRORS + 1))
+    rm -f "$TMP"
+  done <<< "$STAGED"
+fi
+
+# Credential-leak guard: refuse staged qa.yaml files that
+# contain inline `password:` / `token:` / `secret:` / `api_key:` literals.
+# Real secrets belong in env vars (referenced via *_env field names) or in
+# the gitignored .babysit/qa.local.yaml.
+QA_STAGED=$(git diff --cached --name-only --diff-filter=ACM -- \
+  '.babysit/qa.yaml' \
+  '.babysit/qa.local.yaml') || true
+
+if [ -n "$QA_STAGED" ]; then
+  while IFS= read -r QF; do
+    [ -z "$QF" ] && continue
+    HITS=$(git show ":$QF" 2>/dev/null | grep -nE '^[[:space:]]+(password|token|secret|api_key)[[:space:]]*:' || true)
+    if [ -n "$HITS" ]; then
+      {
+        echo "pre-commit: $QF contains inline credential literals (offending lines):"
+        printf '%s\n' "$HITS"
+        echo "Use credentials.{username_env,password_env} (env-var names) or move secrets to .babysit/qa.local.yaml (gitignored)."
+      } >&2
+      ERRORS=$((ERRORS + 1))
+    fi
+  done <<< "$QA_STAGED"
+fi
+
+if [ "$ERRORS" -gt 0 ]; then
+  echo "" >&2
+  echo "pre-commit: $ERRORS lint error(s) — fix before committing." >&2
+  exit 1
+fi

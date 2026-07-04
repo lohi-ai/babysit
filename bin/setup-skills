@@ -1,0 +1,319 @@
+#!/usr/bin/env bash
+# Babysit companion-bin setup.
+#
+# Skills are managed by Claude Code's plugin system (see .claude-plugin/
+# plugin.json and .claude-plugin/marketplace.json). Register skills with:
+#   /plugin marketplace add <path-to-this-repo>
+#   /plugin install bbs@babysit
+# This script only installs the `bbs-*` CLI bins into ~/.claude/,
+# which the plugin system does not manage.
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+PROJECT_SKILLS="$PROJECT_DIR/.claude/skills"
+
+GLOBAL_CLAUDE="$HOME/.claude"
+GLOBAL_SKILLS="$GLOBAL_CLAUDE/skills"
+CODEX_SKILLS="$HOME/.codex/skills"
+
+# ─── Colors ───────────────────────────────────────────────────
+RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[0;33m'; BLUE='\033[0;34m'; CYAN='\033[0;36m'; NC='\033[0m'
+info()  { echo -e "${BLUE}→${NC} $*"; }
+ok()    { echo -e "${GREEN}✓${NC} $*"; }
+warn()  { echo -e "${YELLOW}!${NC} $*"; }
+fail()  { echo -e "${RED}✗${NC} $*" >&2; exit 1; }
+
+# ─── Parse flags ──────────────────────────────────────────────
+DRY_RUN=0
+UNINSTALL=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --dry-run)    DRY_RUN=1; shift ;;
+    --full)       FULL=1; shift ;;
+    --uninstall)  UNINSTALL=1; shift ;;
+    --help|-h)
+      echo "Usage: setup-skills [--dry-run] [--full] [--uninstall]"
+      echo ""
+      echo "Install Babysit CLI bins into ~/.claude/."
+      echo "Skills are installed separately via Claude Code's plugin system:"
+      echo "  /plugin marketplace add <path-to-this-repo>"
+      echo "  /plugin install bbs@babysit"
+      echo ""
+      echo "  --dry-run    Show what would be done without making changes"
+      echo "  --full       Run all steps + doctor + print plugin commands"
+      echo "  --uninstall  Remove all installed bin symlinks"
+      exit 0
+      ;;
+    *) warn "Unknown option: $1"; shift ;;
+  esac
+done
+
+run() {
+  if [ "$DRY_RUN" -eq 1 ]; then
+    echo "  [dry-run] $*"
+  else
+    "$@"
+  fi
+}
+
+# ─── Uninstall ────────────────────────────────────────────────
+if [ "$UNINSTALL" -eq 1 ]; then
+  info "Uninstalling Babysit bins..."
+
+  # Legacy cleanup: remove skill symlinks created by pre-plugin versions of
+  # this script (e.g. ~/.claude/skills/bbs:implement -> repo). Safe to remove
+  # because skills are now managed by the plugin system.
+  if [ -d "$GLOBAL_SKILLS" ]; then
+    for LINK in "$GLOBAL_SKILLS"/bbs:*; do
+      [ -L "$LINK" ] || continue
+      run rm "$LINK"
+      ok "Removed legacy symlink $(basename "$LINK")"
+    done
+  fi
+
+  # Remove shared env-resolve script (deprecated, may still exist from old installs)
+  if [ -L "$GLOBAL_CLAUDE/env-resolve" ]; then
+    run rm "$GLOBAL_CLAUDE/env-resolve"
+    ok "Removed env-resolve (deprecated)"
+  fi
+
+  # Remove bbs shim from ~/.local/bin/
+  if [ -f "$HOME/.local/bin/bbs" ]; then
+    run rm "$HOME/.local/bin/bbs"
+    ok "Removed bbs shim from ~/.local/bin/"
+  fi
+  # Legacy: remove old babysit shim name
+  if [ -f "$HOME/.local/bin/babysit" ]; then
+    run rm "$HOME/.local/bin/babysit"
+    ok "Removed babysit shim (legacy) from ~/.local/bin/"
+  fi
+
+  # Remove bbs-* bins (include legacy names from pre-rename installs: bbs-formula, bbs-pipeline, babysit)
+  for BIN in bbs babysit bbs-config bbs-dashboard bbs-db bbs-design bbs-env bbs-learnings-log bbs-learnings-search bbs-autopilot bbs-pipeline bbs-formula bbs-run bbs-slug bbs-telemetry-log bbs-ticket bbs-qa-config bbs-secrets bbs-update-check bbs-upgrade bbs-codex-competitive; do
+    if [ -L "$GLOBAL_CLAUDE/$BIN" ]; then
+      run rm "$GLOBAL_CLAUDE/$BIN"
+      ok "Removed $BIN"
+    fi
+  done
+
+  # Remove pre-commit hook if we own it (symlink to our hooks/pre-commit)
+  _HOOK="$PROJECT_DIR/.git/hooks/pre-commit"
+  _HOOK_SRC="$SCRIPT_DIR/hooks/pre-commit"
+  if [ -L "$_HOOK" ]; then
+    cur="$(readlink "$_HOOK")"
+    if [ "$cur" = "$_HOOK_SRC" ]; then
+      run rm "$_HOOK"
+      ok "Removed pre-commit hook (symlink)"
+    fi
+  elif [ -f "$_HOOK" ] && grep -q 'Babysit workflow lint' "$_HOOK" 2>/dev/null; then
+    # Remove appended babysit fragment from a non-symlink hook.
+    _ESCAPED=$(printf '%s\n' "$_HOOK_SRC" | sed 's/[&/\]/\\&/g')
+    run sed -i.bak '/^# ── Babysit workflow lint/,/^fi$/d' "$_HOOK"
+    run rm -f "$_HOOK.bak"
+    ok "Removed babysit workflow lint fragment from pre-commit hook"
+  fi
+
+  # Remove legacy Codex skill symlinks from pre-plugin installs. These make
+  # Codex advertise duplicate / stale bbs skills in every session.
+  if [ -d "$CODEX_SKILLS" ]; then
+    for LINK in "$CODEX_SKILLS"/bbs:*; do
+      [ -L "$LINK" ] || continue
+      cur="$(readlink "$LINK")"
+      case "$cur" in
+        "$GLOBAL_SKILLS"/babysit/.claude/skills/*|"$PROJECT_SKILLS"/*)
+          run rm "$LINK"
+          ok "Removed legacy Codex symlink $(basename "$LINK")"
+          ;;
+      esac
+    done
+  fi
+
+  echo -e "\n${GREEN}Uninstall complete.${NC}"
+  echo "Skills installed via the plugin system: run '/plugin uninstall bbs' in Claude Code."
+  exit 0
+fi
+
+# ─── Step 1: Validate project structure ───────────────────────
+info "Validating project structure..."
+
+[ -d "$PROJECT_SKILLS" ] || fail ".claude/skills/ not found — run from project root"
+[ -f "$PROJECT_DIR/.claude-plugin/plugin.json" ] || warn ".claude-plugin/plugin.json missing — plugin install won't work"
+
+SKILL_COUNT="$(find "$PROJECT_SKILLS" -mindepth 1 -maxdepth 1 -type d ! -name references ! -name shared ! -name '.*' | wc -l | tr -d ' ')"
+ok "Found $SKILL_COUNT skills in project (managed by plugin system — see plugin.json)"
+
+# Ensure global claude directory exists (we only need it for bins now)
+mkdir -p "$GLOBAL_CLAUDE"
+
+# ─── Step 1b: Clean up legacy skill symlinks from pre-plugin installs ──
+if [ -d "$GLOBAL_SKILLS" ]; then
+  LEGACY=0
+  for LINK in "$GLOBAL_SKILLS"/bbs:*; do
+    [ -L "$LINK" ] || continue
+    run rm "$LINK"
+    LEGACY=$((LEGACY + 1))
+  done
+  if [ "$LEGACY" -gt 0 ]; then
+    warn "Removed $LEGACY legacy skill symlink(s) — plugin system owns skill registration now"
+  fi
+fi
+
+if [ -d "$CODEX_SKILLS" ]; then
+  CODEX_LEGACY=0
+  for LINK in "$CODEX_SKILLS"/bbs:*; do
+    [ -L "$LINK" ] || continue
+    cur="$(readlink "$LINK")"
+    case "$cur" in
+      "$GLOBAL_SKILLS"/babysit/.claude/skills/*|"$PROJECT_SKILLS"/*)
+        run rm "$LINK"
+        CODEX_LEGACY=$((CODEX_LEGACY + 1))
+        ;;
+    esac
+  done
+  if [ "$CODEX_LEGACY" -gt 0 ]; then
+    warn "Removed $CODEX_LEGACY legacy Codex skill symlink(s) — plugin system owns skill registration now"
+  fi
+fi
+
+# ─── Step 2: Symlink babysit CLI + bbs-* bins ───────────────
+info "Installing babysit bins..."
+
+INSTALLED_BINS=()
+
+link_bin() {
+  local name="$1"
+  local src="$SCRIPT_DIR/$name"
+  local dst="$GLOBAL_CLAUDE/$name"
+
+  if [ ! -f "$src" ]; then
+    warn "$name not found in bin/"
+    return
+  fi
+
+  if [ -L "$dst" ]; then
+    local cur; cur="$(readlink "$dst")"
+    if [ "$cur" = "$src" ]; then
+      ok "$name up-to-date"
+      INSTALLED_BINS+=("$name")
+      return
+    fi
+    run ln -sf "$src" "$dst"
+    warn "$name re-pointed (was → $cur)"
+    INSTALLED_BINS+=("$name")
+    return
+  fi
+
+  if [ -e "$dst" ]; then
+    warn "$name exists and is not a symlink — skipping (remove manually to replace)"
+    return
+  fi
+
+  run ln -s "$src" "$dst"
+  ok "$name → ~/.claude/$name"
+  INSTALLED_BINS+=("$name")
+}
+
+for BIN in bbs-config bbs-dashboard bbs-db bbs-design bbs-env bbs-learnings-log bbs-learnings-search bbs-autopilot bbs-slug bbs-telemetry-log bbs-ticket bbs-qa-config bbs-secrets bbs-update-check bbs-upgrade bbs-codex-competitive; do
+  link_bin "$BIN"
+done
+
+# ─── Step 3: Validate skill integrity ────────────────────────
+info "Validating skills..."
+
+ERRORS=0
+
+# Every skill must have a SKILL.md
+for SKILL_DIR in "$PROJECT_SKILLS"/*/; do
+  [ -d "$SKILL_DIR" ] || continue
+  SKILL_NAME="$(basename "$SKILL_DIR")"
+  [ "$SKILL_NAME" = "references" ] && continue
+  [ "$SKILL_NAME" = "shared" ] && continue
+  [[ "$SKILL_NAME" == .* ]] && continue
+
+  if [ ! -f "$SKILL_DIR/SKILL.md" ]; then
+    warn "$SKILL_NAME: missing SKILL.md"
+    ERRORS=$((ERRORS + 1))
+  fi
+done
+
+# Check shared reference files (implement reads these via ../references/...)
+for REF in preamble.md auto-decision-framework.md handoff-contracts.md; do
+  if [ -f "$PROJECT_SKILLS/references/$REF" ]; then
+    : # ok
+  else
+    warn "references/$REF missing"
+    ERRORS=$((ERRORS + 1))
+  fi
+done
+
+if [ "$ERRORS" -eq 0 ]; then
+  ok "All skills valid"
+else
+  warn "$ERRORS validation issue(s) found"
+fi
+
+# ─── Step 4: Install pre-commit hook ────────────────────────────
+info "Installing pre-commit hook..."
+HOOK_SRC="$SCRIPT_DIR/hooks/pre-commit"
+HOOK_DST="$PROJECT_DIR/.git/hooks/pre-commit"
+
+if [ ! -f "$HOOK_SRC" ]; then
+  warn "bin/hooks/pre-commit not found — skipping hook install"
+elif [ ! -d "$PROJECT_DIR/.git/hooks" ]; then
+  warn ".git/hooks/ not found — skipping hook install"
+elif [ -L "$HOOK_DST" ]; then
+  cur="$(readlink "$HOOK_DST")"
+  if [ "$cur" = "$HOOK_SRC" ]; then
+    ok "pre-commit hook up-to-date"
+  else
+    run ln -sf "$HOOK_SRC" "$HOOK_DST"
+    warn "pre-commit hook re-pointed (was → $cur)"
+  fi
+elif [ -f "$HOOK_DST" ]; then
+  # Existing non-symlink hook — append our invocation if not already present.
+  if grep -q 'Babysit workflow lint' "$HOOK_DST" 2>/dev/null; then
+    ok "pre-commit hook already invokes babysit lint"
+  else
+    # Write append block via tee to avoid quoting issues with paths
+    # containing single quotes or other shell metacharacters.
+    {
+      echo ""
+      echo "# ── Babysit workflow lint ────────────────────────────"
+      echo "if [ -f \"$(printf '%s' "$HOOK_SRC" | sed 's/"/\\"/g')\" ]; then"
+      echo "  '$(printf '%s' "$HOOK_SRC" | sed "s/'/'\\\\''/g")' || exit 1"
+      echo "fi"
+    } >> "$HOOK_DST"
+    ok "pre-commit hook appended (babysit workflow lint)"
+  fi
+else
+  run ln -s "$HOOK_SRC" "$HOOK_DST"
+  ok "pre-commit hook → .git/hooks/pre-commit"
+fi
+
+# ── Post-install (--full) ──────────────────────────────────────
+if [ "${FULL:-0}" = "1" ]; then
+  echo ""
+  echo -e "${CYAN}Post-install: Claude Code plugin commands${NC}"
+  echo "Run these in the Claude Code REPL to register skills:"
+  echo ""
+  echo "  /plugin marketplace add $PROJECT_DIR"
+  echo "  /plugin install bbs@babysit"
+fi
+
+# ─── Summary ──────────────────────────────────────────────────
+echo ""
+echo -e "${GREEN}Babysit bins installed.${NC}"
+echo ""
+echo "Skills:      $SKILL_COUNT in .claude/skills/ — register in Claude Code:"
+echo "               /plugin marketplace add $PROJECT_DIR"
+echo "               /plugin install bbs@babysit"
+if [ "${#INSTALLED_BINS[@]}" -gt 0 ]; then
+  BIN_LIST="$(IFS=,; echo "${INSTALLED_BINS[*]}")"
+  echo "Bins:        ~/.claude/{$BIN_LIST}"
+else
+  echo "Bins:        none linked"
+fi
+echo "References:  .claude/skills/references/"
+echo ""
+echo "To uninstall: bin/setup-skills --uninstall"
