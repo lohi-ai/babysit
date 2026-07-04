@@ -55,7 +55,9 @@ Exercise the application like a user and leave reproducible evidence.
    Fix matrix gaps before executing; save the reviewed matrix to
    `bbs-ticket path evidence --skill qa --name test-matrix.md --write`.
 5. Execute the flows end-to-end with a real client. For web UI that means
-   the `browse` engine (agent-browser — see `../browse/SKILL.md` § Engine):
+   the `browse` engine: Read `../browse/SKILL.md` § Engine before the first
+   browser command — its session-name export and setup are mandatory, not
+   optional reference. Then (agent-browser):
    open, snapshot, click/type through the actual user journey; capture
    snapshots, console errors, and failed requests. For non-UI targets the
    equivalent is a real call sequence — curl against the running API, a CLI
