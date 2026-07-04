@@ -20,7 +20,8 @@ Consumer routing (Mechanical — auto-decide, no audit entry):
 
 | Consumer | Mode | Rules |
 |----------|------|-------|
-| Machine — checkpoint, telemetry, handoffs, structured artifacts | **Full** | Drop articles too. Maximum terseness. |
+| Machine — checkpoint, telemetry, status lines | **Full** | Drop articles too. Maximum terseness. |
+| Downstream model — handoffs, plan.md, requirement.md | **Dense** | Complete sentences. Keep the why, constraints, and gotchas — these files are the next step's only memory; never cut information for brevity. |
 | Human — terminal, AskUserQuestion, NEEDS_CONTEXT | **Lite** | Keep articles + full sentences. Professional but tight. |
 | Security/destructive/ambiguous | **Normal** | Full prose. Resume terse after. |
 

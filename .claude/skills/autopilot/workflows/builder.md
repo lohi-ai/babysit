@@ -39,7 +39,8 @@ If none match and there is no ticket/requirement, stop with `NEEDS_CONTEXT`.
    `NEEDS_CONTEXT` recommending `/bbs:setup-project` instead of guessing
    branch/QA policy. `state_landing_doc=0` (no CLAUDE.md or AGENTS.md)
    is a warning to note in the handoff, not a stop.
-2. **build mode only:** run `plan-draft`; for user-facing work it routes
+2. **build mode only (skip when autopilot init already seeded `plan.md`):**
+   run `plan-draft`; for user-facing work it routes
    through `design-ui`, so the plan carries the UI spec and a reviewable
    prototype. Write/update `plan.md` unless the task is XS. Do not stop for
    prototype or plan review — the human reviews everything once, at the final

@@ -7,11 +7,14 @@ description: Draft a technical plan before implementation. Use when the user ask
 
 Make a short plan that a strong model can execute. Avoid ceremony.
 
-**Correct-enough bar.** A plan is done when three things are exact: the goal,
-the scope boundary (what's out), and the verification commands. Everything
-else may be approximate — `implement` corrects details in-flight, and the
-strict `review-pr`/`qa` gates catch what slips through. One drafting pass;
-don't iterate on wording or re-survey.
+**One pass, full depth.** Draft once — don't loop polishing wording or
+re-survey — but think at full depth on that pass: the plan is the only
+context `implement` inherits, and downstream gates catch bugs, not weak
+architecture. Three things must be exact: the goal, the scope boundary
+(what's out), and the verification commands. Details may be approximate —
+`implement` corrects them in-flight — but record the *why* behind each
+choice and any gotcha found while surveying; that context is cheap now and
+unrecoverable later.
 
 ## Flow
 
@@ -21,9 +24,10 @@ don't iterate on wording or re-survey.
    (`bbs-design components`) and design tokens (`bbs-design tokens`), and find
    the nearest existing screen/flow that solves a similar problem. For backend
    work, find the established pattern for routes, data access, and errors.
-   When the work adds or reshapes a user-facing surface, run `design-ui`
-   (or read an existing `pointers.design`) before finalizing the plan — its
-   spec and prototype are plan inputs. A plan for frontend work without a
+   When the work adds or reshapes a user-facing surface, read the existing
+   design spec from `pointers.design` if present; otherwise invoke the
+   `design-ui` skill via the Skill tool (skill: `design-ui`) before finalizing
+   the plan — its spec and prototype are plan inputs. A plan for frontend work without a
    reviewable prototype gives the human their first look only after
    `implement`, when the change cost is highest.
 3. Classify scope as XS, S, M, or L (rubric:

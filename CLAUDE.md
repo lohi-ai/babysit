@@ -166,21 +166,21 @@ guidance here.
 
 ## `autopilot` is the entry point for multi-step work
 
-`autopilot` is the skill that makes the rest of babysit usable unattended. Core units plan, implement, review, and QA; domain skills stay directly invocable. `autopilot` composes only the units needed into checkpointed chains that survive context death. Claude Code's `/goal` owns the outer retry loop.
+`autopilot` is the skill that makes the rest of babysit usable unattended. Core units plan, implement, review, and QA; domain skills stay directly invocable. `autopilot` is a **goal proxy**: init owns durable state (ticket, branch, requirement, plan), then Claude Code's `/goal` owns the work loop — inside it the model works free-form with full context, the workflow file is a mode router + gate list rather than a script, and the persisted `review-pr`/`qa` verdicts are the terminal condition.
 
 When to reach for it (and how to think about it when editing it):
 
 - **The composition problem it solves is context, not control flow.** Chaining `plan-draft` → `implement` ad-hoc can lose the plan and handoff state if the session crashes or gets compacted. `autopilot` runs the workflow in one session, and checkpoints all state to disk (`checkpoint.json`, `plan.md`, `requirement.md`, `handoffs/`) after each step. A fresh session after a crash re-reads the workflow + checkpoint and picks up at the next step — no conversation memory required.
 - **Prefer `/bbs:autopilot <workflow> <ticket>` over hand-chaining skills** whenever the work is >1 heavy skill, or when the user's ask could be "build this whole thing." Inline free-text (`/bbs:autopilot <one-line requirement>`) routes to the `builder` workflow, which creates the ticket, seeds `requirement.md`, and picks its own mode (child / orchestrate / implement / build / verify) from ticket state.
 - **Workflows are markdown, not code.** `.claude/skills/autopilot/workflows/*.md` (builtins) and `.claude/workflows/*.md` (per-project). Steps are `## <step-id>` headings with optional `> needs:` / `> produces:` directives. Workflow frontmatter declares `needs-state:` prerequisites so autopilot's Assign phase can route deterministically. Adding a new workflow is a file, not a refactor. See [authoring.md](.claude/skills/autopilot/references/authoring.md).
-- **When editing autopilot or its workflows**, never trust conversation memory across iterations — re-read the workflow file, re-read the checkpoint, re-derive `$TICKET` from the branch. That's the whole contract. Anything that makes a step depend on in-context state is a regression.
+- **When editing autopilot or its workflows**, disk state must always be *sufficient*: on cold start or resume, re-read the workflow file and checkpoint, re-derive `$TICKET` from the branch. That's the crash-survival contract — anything that makes resume *require* in-context state is a regression. But sufficiency is not amnesia: within a continuous session the model keeps using what it already learned; a rule that forces a healthy session to behave like a cold one caps run quality at the worst case.
 
 ### Human checkpoints shape where workflows stop
 
 Workflows are split along the four points where a human actually adds value:
 
 1. **Requirement accepted** → `requirement.md` on the ticket. Autopilot drafts it in Flow steps 1–2 and stops at `--stop-after=requirement` if requested; requirement drafting is part of autopilot, not a separate skill.
-2. **Plan accepted** → `plan.md` on the ticket. Owner: `builder` build mode via `plan-draft`; stops at `--stop-after=plan` if requested.
+2. **Plan accepted** → `plan.md` on the ticket. Owner: autopilot init via `plan-draft` (builder build mode covers the case init didn't seed it); stops at `--stop-after=plan` if requested.
 3. **QA ready** → branch implemented, reviewed, checked with `qa` or a named fallback. Owner: `builder` (implement / build / child / verify modes) — the default end-to-end stop.
 4. **PR ready** → human reviews the QA handoff and invokes `create-pr`. Autopilot does not create PRs.
 

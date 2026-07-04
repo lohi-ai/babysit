@@ -154,14 +154,16 @@ based on who consumes the output. No human approval needed; no Taste log entry.
 
 | Mode | Consumer | Rules |
 |------|----------|-------|
-| **Full** | Machine — checkpoint.json, telemetry JSONL, handoff files, structured artifacts | Drop articles, fragments OK, short synonyms. Pattern: `[thing] [action] [reason]`. No preamble. |
+| **Full** | Machine — checkpoint.json, telemetry JSONL, status lines | Drop articles, fragments OK, short synonyms. Pattern: `[thing] [action] [reason]`. No preamble. |
+| **Dense** | Downstream model — handoff files, plan.md, requirement.md | Complete sentences, information-dense. Keep the why, constraints, and gotchas — a later step with no conversation memory rebuilds context from these files. Cut filler, never information. |
 | **Lite** | Human — NEEDS_CONTEXT blocks, final gate, AskUserQuestion, terminal output | No filler/hedging, keep articles + full sentences. Professional but tight. |
 | **Normal** | Auto-clarity override | Full prose for: security warnings, destructive ops, multi-step sequences where fragment order risks misread, user confused or repeating question. Resume terse after. |
 
 ### How to apply
 
 At every output boundary, classify the consumer:
-- Writing to a file that another skill or tool reads → **Full**
+- Writing structured state a tool parses (checkpoint, telemetry) → **Full**
+- Writing a file a later model session reads (handoff, plan, requirement) → **Dense**
 - Rendering text a human will read inline → **Lite**
 - Security/destructive/ambiguous → **Normal** (auto-clarity)
 

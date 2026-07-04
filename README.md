@@ -14,7 +14,7 @@ English | [Tiếng Việt](README.vi.md)
 
 ## Why it works
 
-- **It finishes.** `/bbs:autopilot` checkpoints to disk between heavy steps so a fresh session resumes where the last one stopped. Wrap with [`/goal`](#walk-away-mode-recommended) (Claude Code's session-scoped Stop hook) to keep the loop turning across step boundaries — walk-away runs actually walk away.
+- **It finishes.** `/bbs:autopilot` is a **goal proxy**: init seeds durable state — ticket, requirement, plan, checkpoint — then hands the work to [`/goal`](#3-run-it), Claude Code's session-scoped Stop hook that blocks the session from stopping until the QA and review verdicts are persisted. Inside the loop the model works free-form with full context, the way it would for a direct ask; checkpoints on disk let a fresh session resume where the last one stopped.
 - **It doesn't hang.** Every decision routes through the [Auto-Decision Framework](.claude/skills/references/auto-decision-framework.md). Claude decides and logs; if a human is genuinely required, it writes a `NEEDS_CONTEXT` block to the ticket instead of waiting on a pop-up.
 - **It verifies itself.** QA is part of the default autopilot loop. PASS requires a locally running target or a named blocker, plus non-happy-path cases. No "it compiles, shipping it."
 - **It's auditable.** JSONL telemetry to `~/.babysit/analytics/` plus `[WORK]` checkpoint comments. Read the tape after the fact — the primary feedback channel when no one is watching live.
@@ -120,19 +120,22 @@ In `worktree` mode, QA lands a ticket on the shared surface with `bbs-ticket mer
 /bbs:autopilot "add a settings page with dark mode toggle"
 ```
 
-Autopilot creates the ticket, drafts the requirement and plan, writes the code, reviews it, runs QA, and pushes a branch. Walk away; open the PR yourself after review.
+Autopilot inits the ticket — requirement, plan, branch — then prints a one-line `/goal` handoff. Paste that line and walk away: the goal session writes the code, reviews it, runs QA, and pushes the branch. Open the PR yourself after review.
 
-#### Walk-away mode (recommended)
+#### Why `/goal` owns the work
 
-Wrap the invocation with `/goal` so Claude Code keeps turning until autopilot prints a terminal status — even across heavy step boundaries that would otherwise stop a single session:
+`/goal <condition>` (built-in, Claude Code 2.1.139+) arms a session-scoped Stop hook: the model works free-form with full context — no step ceremony — and the hook blocks stopping until the condition holds. Autopilot's printed handoff already encodes the babysit gates and the escape clause:
 
 ```
-/goal "STATUS: DONE or STATUS: BLOCKED appears" /bbs:autopilot "add a settings page with dark mode toggle"
+/goal bs-ab123 is done: qa verdict PASS/FIXED persisted via bbs-ticket set-verdict,
+review-pr verdict persisted, branch pushed, handoff note written — or a
+NEEDS_CONTEXT / BLOCKED status block printed verbatim.
+Work it: /bbs:autopilot builder bs-ab123
 ```
 
-`/goal` is a built-in slash command (Claude Code 2.1.139+). It owns the run-level loop; autopilot owns routing and per-step verification. Same condition shape works for every input form — `/goal "STATUS: DONE or STATUS: BLOCKED appears" /bbs:autopilot bs-ab123` resumes an existing ticket end-to-end. To bail mid-run: `/goal clear`, `Ctrl-C`, or touch `~/.babysit/projects/<slug>/tickets/<ticket>/STOP`.
+The escape clause means the loop terminates on escalation instead of grinding against a missing input. To bail mid-run: `/goal clear`, `Ctrl-C`, or touch `~/.babysit/projects/<slug>/tickets/<ticket>/STOP`.
 
-Without `/goal`, autopilot still finishes — you just nudge it past the occasional step boundary by hand.
+Without `/goal`, re-invoking `/bbs:autopilot bs-ab123` still resumes from the checkpoint — you just nudge it past session boundaries by hand.
 
 ## How to use it
 
