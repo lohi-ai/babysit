@@ -14,7 +14,7 @@
 
 ## Vì sao nó chạy được
 
-- **Nó chạy tới cùng.** `/bbs:autopilot` checkpoint xuống disk giữa các bước nặng, nên một session mới mở lên là nối tiếp đúng chỗ con cũ dừng. Bọc thêm [`/goal`](#chế-độ-đi-vắng-khuyến-nghị) (Stop hook theo session của Claude Code) để giữ vòng lặp quay đều qua ranh giới các bước — lần chạy "đi chơi" thì đi chơi thật.
+- **Nó chạy tới cùng.** `/bbs:autopilot` là một **goal proxy**: phần init gieo state bền — ticket, requirement, plan, checkpoint — rồi giao phần việc cho [`/goal`](#3-chạy), cái Stop hook theo session của Claude Code chặn không cho session dừng chừng nào verdict QA và review chưa được ghi lại. Trong vòng lặp, model làm việc thoải mái với đầy đủ context, y như khi bạn hỏi thẳng nó; checkpoint trên disk giúp một session mới nối tiếp đúng chỗ con cũ dừng.
 - **Nó không treo.** Mọi quyết định đều đi qua [Auto-Decision Framework](.claude/skills/references/auto-decision-framework.md). Claude quyết rồi ghi log; nếu thật sự cần người, nó viết một block `NEEDS_CONTEXT` vào ticket chứ không ngồi đợi một cái pop-up.
 - **Nó tự kiểm.** QA nằm sẵn trong vòng lặp mặc định của autopilot. Muốn PASS thì phải có target chạy được ở local hoặc một blocker gọi tên rõ ràng, kèm thêm mấy ca không-suôn-sẻ. Không có cái kiểu "compile được là ship".
 - **Nó soi lại được.** Telemetry dạng JSONL đổ vào `~/.babysit/analytics/`, cộng với mấy comment checkpoint `[WORK]`. Xem lại băng sau cũng được — đây là kênh feedback chính khi chẳng ai ngồi coi trực tiếp.
@@ -120,19 +120,22 @@ Wizard viết ra config `.babysit/` nhỏ nhất mà vẫn đủ xài: `git-flow
 /bbs:autopilot "add a settings page with dark mode toggle"
 ```
 
-Autopilot tạo ticket, soạn requirement và plan, viết code, review, chạy QA, rồi push một branch. Đi chơi; review xong thì tự mở PR.
+Autopilot init ticket — requirement, plan, branch — rồi in ra một dòng `/goal` bàn giao. Dán dòng đó vào rồi đi chơi: session goal sẽ viết code, review, chạy QA, và push branch. Review xong thì tự mở PR.
 
-#### Chế độ đi vắng (khuyến nghị)
+#### Vì sao `/goal` nắm phần việc
 
-Bọc lời gọi bằng `/goal` để Claude Code cứ quay cho tới khi autopilot in ra một status kết thúc — kể cả qua những ranh giới bước nặng vốn sẽ chặn đứng một session đơn:
+`/goal <condition>` (có sẵn, Claude Code 2.1.139+) gắn một Stop hook theo session: model làm việc thoải mái với đầy đủ context — không nghi thức từng bước — và cái hook chặn không cho dừng chừng nào điều kiện chưa thỏa. Dòng bàn giao autopilot in ra đã gói sẵn các cổng gác của babysit lẫn điều khoản thoát:
 
 ```
-/goal "STATUS: DONE or STATUS: BLOCKED appears" /bbs:autopilot "add a settings page with dark mode toggle"
+/goal bs-ab123 is done: qa verdict PASS/FIXED persisted via bbs-ticket set-verdict,
+review-pr verdict persisted, branch pushed, handoff note written — or a
+NEEDS_CONTEXT / BLOCKED status block printed verbatim.
+Work it: /bbs:autopilot builder bs-ab123
 ```
 
-`/goal` là một slash command có sẵn (Claude Code 2.1.139+). Nó nắm vòng lặp cấp-run; autopilot nắm việc routing và kiểm từng bước. Cùng một dạng điều kiện chạy được cho mọi kiểu input — `/goal "STATUS: DONE or STATUS: BLOCKED appears" /bbs:autopilot bs-ab123` chạy tiếp một ticket có sẵn từ đầu tới cuối. Muốn thoát giữa chừng: `/goal clear`, `Ctrl-C`, hoặc touch `~/.babysit/projects/<slug>/tickets/<ticket>/STOP`.
+Điều khoản thoát là chỗ chịu lực: vòng lặp kết thúc khi cần leo thang, thay vì nghiến răng cày mãi vào một input còn thiếu. Muốn thoát giữa chừng: `/goal clear`, `Ctrl-C`, hoặc touch `~/.babysit/projects/<slug>/tickets/<ticket>/STOP`.
 
-Không có `/goal`, autopilot vẫn xong — chỉ là đôi lúc bạn phải tự tay đẩy nó qua ranh giới bước.
+Không có `/goal`, gọi lại `/bbs:autopilot bs-ab123` vẫn nối tiếp từ checkpoint — chỉ là bạn phải tự tay đẩy nó qua ranh giới giữa các session.
 
 ## Cách dùng
 
