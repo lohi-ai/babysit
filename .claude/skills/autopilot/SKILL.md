@@ -70,6 +70,11 @@ When already inside the loop (`/goal` re-entry, orchestrator,
 
 ## Step Skills
 
+"Run `<skill>`" here and in workflow steps means a real Skill-tool invocation
+(Skill tool, skill: `<name>`), never doing its job inline — the invocation is
+what loads the skill's rules (e.g. `plan-draft` routing user-facing work
+through `design-ui`) and fires the session/telemetry hooks.
+
 - Planning uses `plan-draft`.
 - Coding uses `implement`.
 - Static landing review uses `review-pr`.
