@@ -10,10 +10,11 @@ Root cause first, fix second.
 ## Flow
 
 1. Reproduce or collect the failing evidence: command output, logs, UI state, stack trace, or diff.
-2. Identify what changed and why it broke now.
+2. Identify what changed and why it broke now — or, if nothing changed, what condition newly exposes the bug (input, timing, environment).
 3. Name the root cause in one sentence before editing.
-4. Apply the smallest fix that addresses that cause.
-5. Re-run the reproducer and one nearby regression check.
+4. Confirm the cause: show the failure appears/disappears when it is toggled (revert the suspect change, remove the trigger input, or reproduce it in isolation).
+5. Apply the smallest fix that addresses that cause.
+6. Re-run the reproducer and one nearby regression check.
 
 ## Guardrails
 
@@ -27,6 +28,7 @@ Root cause first, fix second.
 ```text
 STATUS: DONE | DONE_WITH_CONCERNS | NEEDS_CONTEXT | BLOCKED
 ROOT_CAUSE: <one sentence>
+EVIDENCE: <what confirmed the cause>
 FIX: <what changed, or "none">
 VERIFICATION: <commands/checks run>
 ```
