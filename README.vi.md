@@ -234,18 +234,6 @@ rm -f ~/.claude/babysit ~/.claude/bbs-*
 | Skill hiện ra mà thiếu tiền tố `bbs:` | Bản cài cũ — chạy `./bin/setup-skills`, rồi `/plugin install ~/.claude/skills/babysit` |
 | `env resolve` trả về rỗng | Kiểm xem đúng file `.env.base` có nằm dưới `config/<app>/` không |
 
-## Roadmap
-
-Vòng lặp autopilot lõi (plan → implement → verify → handoff) đã chạy được và lời hứa "nó chạy tới cùng" vẫn giữ. Các phase phía trước:
-
-| Phase | Mục tiêu |
-|-------|----------|
-| 1 | **Chứng minh bộ archetype** — phủ eval đầu-tới-cuối cho mọi workflow archetype, co scope lại cho vừa |
-| 2 | **Babysitter ship-hay-đóng-băng** — *đã chốt: Freeze (2026-07-02), gỡ (2026-07-03)*; điều phối là cron / `/loop` + `bbs-ticket session` |
-| 3 | **Khép vòng feedback** — pass analytics-review, triage các lần chạy BLOCKED, spike tách nhỏ bin |
-
-Phân tích gap đầy đủ, đồ thị phụ thuộc, và bảng chia ticket theo phase: [`docs/roadmap.md`](docs/roadmap.md).
-
 ## Giấy phép
 
 MIT.

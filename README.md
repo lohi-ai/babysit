@@ -234,18 +234,6 @@ rm -f ~/.claude/babysit ~/.claude/bbs-*
 | Skills show without `bbs:` prefix | Legacy install — run `./bin/setup-skills`, then `/plugin install ~/.claude/skills/babysit` |
 | `env resolve` returns empty | Check the right `.env.base` exists under `config/<app>/` |
 
-## Roadmap
-
-The core autopilot loop (plan → implement → verify → handoff) is functional and the "it finishes" guarantee holds. The phases ahead:
-
-| Phase | Goal |
-|-------|------|
-| 1 | **Prove the archetype pack** — end-to-end eval coverage for every archetype workflow, scope-contraction resize |
-| 2 | **Babysitter ship-or-freeze** — *resolved: Freeze (2026-07-02), removed (2026-07-03)*; orchestration is cron / `/loop` + `bbs-ticket session` |
-| 3 | **Close the feedback loop** — analytics-review pass, BLOCKED-run triage, bin decomposition spike |
-
-Full gap analysis, dependency graph, and phased ticket breakdown: [`docs/roadmap.md`](docs/roadmap.md).
-
 ## License
 
 MIT.
