@@ -11,6 +11,9 @@ url: http://localhost:5173
 start: npm run dev
 check: npm test
 flows: login validation, empty state, error state, mobile layout
+credentials:            # optional — omit if the app needs no login
+  username_env: QA_USER
+  password_env: QA_PASS
 ```
 
 That is enough for the default path:
@@ -27,19 +30,27 @@ That is enough for the default path:
 | `start` | Command a future agent should use to run the app locally. |
 | `check` | Narrow useful check before or after browser QA. |
 | `flows` | Critical cases, including at least one non-happy-path case. |
+| `credentials` | Standard login env-var **names** — `QA_USER` / `QA_PASS` — whose values live in `.babysit/.env`. Never the secrets. |
 
 QA must not return `PASS` if it only tests a happy path, or if it never proves
 a local target is running and does not name a local-run blocker.
 
 ## Secrets
 
-Do not put secrets in `qa.yaml`. Use env vars or `.babysit/.env`, which should
-be gitignored:
+Do not put secrets in `qa.yaml` — it names env vars, never their values. The
+committed `credentials:` block above points at two **standard** login env vars,
+`QA_USER` (account) and `QA_PASS` (password). Put the real values in the
+gitignored `.babysit/.env`:
 
 ```bash
+# .babysit/.env  (gitignored)
 QA_USER=alice@example.com
 QA_PASS='...'
 ```
+
+`/bbs:qa` loads them at runtime with `eval "$(bbs-secrets load)"` and resolves
+the names via `bbs-qa-config probe`. Shell-exported vars win over the file, so
+CI can inject `QA_USER` / `QA_PASS` without touching `.babysit/.env`.
 
 ## Advanced Named Envs
 

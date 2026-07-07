@@ -30,7 +30,8 @@ learning speed, not durability.
 
 - A visual/UI question ("does this screen look right?") is `design-ui`'s job,
   not a spike. Do not answer it here: invoke the `design-ui` skill via the
-  Skill tool (skill: `design-ui`), passing the user's original request as args,
+  Skill tool (skill: `design-ui`, or `bbs:design-ui` as listed under the
+  plugin), passing the user's original request as args,
   then stop this flow.
 - This is throwaway by default. Skip tests, error handling, and abstractions
   unless they are the thing being validated.

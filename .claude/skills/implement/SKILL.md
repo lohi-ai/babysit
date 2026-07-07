@@ -37,7 +37,8 @@ Build the smallest correct change. Let the model do the detailed reasoning; this
   component is a plan decision (the `## Reuse` section), not an ad-hoc call.
 - New user-facing surface with no design spec or prototype (`pointers.design`
   empty, nothing in conversation)? Invoke the `design-ui` skill via the Skill
-  tool (skill: `design-ui`) first — it produces the spec and a reviewable
+  tool (skill: `design-ui`, or `bbs:design-ui` as listed under the plugin)
+  first — it produces the spec and a reviewable
   prototype — then build to it. Do not improvise a
   layout the human sees for the first time after implementation.
 - API surfaces follow best practice by default, even when the plan is silent:

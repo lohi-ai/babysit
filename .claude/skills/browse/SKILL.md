@@ -37,6 +37,17 @@ When the check is done, `agent-browser close` your session. A crashed run leaves
 
 Sessions are isolated browsers, so login state doesn't carry across Claude Code windows by itself. To share one "profile", add `--restore bbs-profile` to `open` (and `close`): every session loads/saves the same cookies+localStorage bundle under `~/.agent-browser/sessions/`, so a login done in one window is there for the next. Don't point concurrent sessions at one `--profile` dir instead — Chromium locks the user-data-dir per instance.
 
+**Credentials for a sign-in never live in this skill or the transcript.** When a check needs to log in, take them from the project's standard QA env — `bbs-secrets load` exports the gitignored `.babysit/.env` into the shell, and `.babysit/qa.yaml` names which vars hold them (standard: `QA_USER` / `QA_PASS`):
+
+```bash
+eval "$(bbs-secrets load)"                              # exports .babysit/.env
+eval "$(bbs-qa-config probe --env "$(bbs-qa-config default-env)" 2>/dev/null)"
+agent-browser type @e<n> "$(printenv "${QA_ENV_USERNAME_ENV:-QA_USER}")"
+agent-browser type @e<n> "$(printenv "${QA_ENV_PASSWORD_ENV:-QA_PASS}")"
+```
+
+If a flow needs a login and the value resolves empty, it's missing from `.babysit/.env` — report `BLOCKED` naming that file; never hardcode or guess a credential.
+
 **Default: headed + cloakbrowser stealth.** Run agent-browser through [`cloakbrowser`](https://github.com/CloakHQ/cloakbrowser)'s patched Chromium in a visible window — survives Cloudflare Turnstile / FingerprintJS / DataDome, and a watching human sees the flow. agent-browser spawns the binary itself (it can't attach over CDP), so set these once per shell before any `agent-browser` call:
 
 ```bash

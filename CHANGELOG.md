@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.51.2 — 2026-07-06
+
+### Added
+
+- **Standard QA credentials** — optional `credentials:` block in the qa.yaml
+  simple shape naming the standard login env vars (`QA_USER` / `QA_PASS`), whose
+  values live in the gitignored `.babysit/.env`. `bbs-qa-config probe` surfaces
+  them as `QA_ENV_{USERNAME,PASSWORD}_ENV`; the `qa` and `browse` skills resolve
+  login creds via `bbs-secrets load` and `BLOCK` (naming `.babysit/.env`) when a
+  required credential resolves empty; `setup-project` seeds placeholders with
+  `bbs-secrets seed`. Covered by `test_qa_config_loader.sh`.
+
 ## 1.51.0 — 2026-07-04
 
 ### Removed

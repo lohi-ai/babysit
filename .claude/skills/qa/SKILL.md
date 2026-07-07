@@ -21,9 +21,23 @@ Exercise the application like a user and leave reproducible evidence.
      `FIXED` spots seed the security and regression cases
    Missing docs are not a gate — fall back to conversation context. Then take
    the change surface from the diff (`BASE=$(bbs-autopilot base-branch)`;
-   `git diff $(git merge-base origin/"$BASE" HEAD)`), and note the target URL
-   and available credentials/config. `NEEDS_CONTEXT` only when neither docs
-   nor conversation can name a single intended behavior to verify.
+   `git diff $(git merge-base origin/"$BASE" HEAD)`). Resolve the target URL and
+   login credentials from `.babysit/qa.yaml` — load the project's secrets, then
+   probe the env (default `local`):
+
+   ```bash
+   eval "$(bbs-secrets load)"                         # exports .babysit/.env values
+   ENV=$(bbs-qa-config default-env); ENV=${ENV:-local}
+   eval "$(bbs-qa-config probe --env "$ENV" 2>/dev/null)"  # QA_ENV_URL, QA_ENV_{USERNAME,PASSWORD}_ENV, …
+   QA_USER=$(printenv "${QA_ENV_USERNAME_ENV:-}" 2>/dev/null || true)  # standard: QA_USER / QA_PASS
+   QA_PASS=$(printenv "${QA_ENV_PASSWORD_ENV:-}" 2>/dev/null || true)
+   ```
+
+   Use `$QA_ENV_URL` as the target and `$QA_USER`/`$QA_PASS` to sign in. If the
+   flow needs a login and the credential name resolves empty, the value is
+   missing from `.babysit/.env` — record that as the local-run blocker rather
+   than testing signed-out. `NEEDS_CONTEXT` only when neither docs nor
+   conversation can name a single intended behavior to verify.
 2. Boot or probe the local project target first. Hosted URLs are allowed only when local run is impossible and the reason is recorded.
    **Worktree detection — before booting or probing anything.** The ticket
    under test lives in a worktree when cwd is under `.babysit/worktrees/` or
@@ -43,13 +57,24 @@ Exercise the application like a user and leave reproducible evidence.
    first; they gate, they don't prove.
 4. Build a focused flow matrix from the acceptance criteria — not just the
    diff — covering happy path, validation, empty/error states, failure/retry
-   behavior, and responsive behavior (see § Case design). Write it down
-   before touching the app, each case anchored to its source ("criterion 2",
-   "BLAST_RADIUS: settings", "review-pr finding 1"), then self-review the
-   matrix against step 1's context:
+   behavior, and responsive behavior (see § Case design). The requirement is
+   a starting point, not ground truth — the user has unknown unknowns, so
+   derive the change's reach independently: for each changed file/function
+   in the diff, find its callers and the flows that share its state or
+   routes, and give each an adjacent-regression case. Don't rely on the
+   implement handoff's BLAST_RADIUS alone — it is the producer's own claim.
+   Write the matrix down before touching the app, each case anchored to its
+   source ("criterion 2", "BLAST_RADIUS: settings", "review-pr finding 1",
+   "derived: shares session state"), then self-review the matrix against
+   step 1's context:
    - every acceptance criterion has ≥1 case; every BLAST_RADIUS entry has a
      regression case; every unresolved review finding has a probe;
    - each touched flow has at least one non-happy-path case;
+   - behavior the code walk surfaced that the requirement never mentions (a
+     mode, a permission level, an intersecting flow) gets a case as a
+     *derived criterion*, and the requirement gap is named in the verdict's
+     `SUMMARY` — unknown unknowns become recorded knowns, never silent
+     omissions;
    - a criterion the matrix can't cover is named as a gap now (it becomes a
      finding or an `N/A: <reason>`), never silently dropped.
    Fix matrix gaps before executing; save the reviewed matrix to
@@ -62,7 +87,9 @@ Exercise the application like a user and leave reproducible evidence.
    snapshots, console errors, and failed requests. For non-UI targets the
    equivalent is a real call sequence — curl against the running API, a CLI
    invocation, or the repo's own e2e suite. Never "test" a flow by reading
-   code or by unit tests alone.
+   code or by unit tests alone. While in the app, spend a few minutes
+   off-script around the changed surface — some unknowns only show up live;
+   anything found feeds back into the matrix as a derived case.
 6. Fix regressions owned by the current branch, then rerun the affected flow and checks.
 7. Finish with one full end-to-end pass of the primary user journey on the
    final code state. The last test executed is the one the verdict stands

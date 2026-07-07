@@ -51,15 +51,26 @@ url: http://localhost:5173
 start: npm run dev
 check: npm test
 flows: login validation, empty state, error state, mobile layout
+credentials:            # include only if the app needs a login
+  username_env: QA_USER
+  password_env: QA_PASS
 ```
 
 Capture the minimum future agents need:
 
 - local start command and expected port/URL
 - health check or page that proves the app booted
-- seed/demo credentials via env-var names only
+- login credentials via the **standard** env-var names `QA_USER` / `QA_PASS`
+  (names only in `qa.yaml`; values seeded into `.babysit/.env`)
 - 3-5 critical flows, including validation/error/empty-state cases
 - commands for the narrowest useful test or lint check
+
+When the app has a login, seed the credential placeholders into the gitignored
+`.babysit/.env` (idempotent — never overwrites existing values):
+
+```bash
+bbs-secrets seed --repo-root "$(git rev-parse --show-toplevel)" QA_USER QA_PASS
+```
 
 ## Landing Doc Section
 

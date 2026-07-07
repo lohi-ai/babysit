@@ -91,6 +91,23 @@ else
   ok "probe never emits credential values, only env-var names"
 fi
 
+# ─── probe — simple shape carries standard credentials ────────────────
+case_header "probe — simple shape credentials"
+T="$(mk_repo)"
+cat > "$T/.babysit/qa.yaml" <<'YAML'
+version: 1
+url: http://localhost:5173
+start: npm run dev
+flows: login, empty state
+credentials:
+  username_env: QA_USER
+  password_env: QA_PASS
+YAML
+out="$(run_in "$T" probe --env local)"
+echo "$out" | grep -q "^QA_ENV_URL='http://localhost:5173'$" && ok "simple probe resolves url" || fail "simple-url" "$out"
+echo "$out" | grep -q "^QA_ENV_USERNAME_ENV='QA_USER'$"      && ok "simple probe surfaces username_env" || fail "simple-username-env" "$out"
+echo "$out" | grep -q "^QA_ENV_PASSWORD_ENV='QA_PASS'$"      && ok "simple probe surfaces password_env" || fail "simple-password-env" "$out"
+
 # ─── probe — env not found ────────────────────────────────────────────
 case_header "probe — missing env"
 if run_in "$T" probe --env nope >/dev/null 2>&1; then

@@ -18,7 +18,14 @@ unrecoverable later.
 
 ## Flow
 
-1. Read the requirement and the code paths likely to change.
+1. Read the requirement and the code paths likely to change. The requirement
+   is a starting point, not ground truth — the user has unknown unknowns.
+   While reading the code, derive what the requirement doesn't say: flows
+   that share state or routes with the change, existing behavior it would
+   alter, and the implied cases (permissions, empty/error states, concurrent
+   edits, existing-data migration) the user likely never considered. Carry
+   each derived requirement into the plan explicitly — into `## Scope`
+   (in or out, marked *derived*) or `## Risks` — never resolve one silently.
 2. Survey what already exists before proposing anything new. For UI/frontend
    work this is mandatory in an enterprise codebase: list existing components
    (`bbs-design components`) and design tokens (`bbs-design tokens`), and find
@@ -26,7 +33,8 @@ unrecoverable later.
    work, find the established pattern for routes, data access, and errors.
    When the work adds or reshapes a user-facing surface, read the existing
    design spec from `pointers.design` if present; otherwise invoke the
-   `design-ui` skill via the Skill tool (skill: `design-ui`) before finalizing
+   `design-ui` skill via the Skill tool (skill: `design-ui`, or
+   `bbs:design-ui` as listed under the plugin) before finalizing
    the plan — its spec and prototype are plan inputs. A plan for frontend work without a
    reviewable prototype gives the human their first look only after
    `implement`, when the change cost is highest.

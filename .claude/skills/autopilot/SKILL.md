@@ -73,7 +73,9 @@ When already inside the loop (`/goal` re-entry, orchestrator,
 "Run `<skill>`" here and in workflow steps means a real Skill-tool invocation
 (Skill tool, skill: `<name>`), never doing its job inline — the invocation is
 what loads the skill's rules (e.g. `plan-draft` routing user-facing work
-through `design-ui`) and fires the session/telemetry hooks.
+through `design-ui`) and fires the session/telemetry hooks. Use the name as
+it appears in your available-skills list: `bbs:<name>` when installed as the
+bbs plugin, bare `<name>` inside the babysit repo itself.
 
 - Planning uses `plan-draft`.
 - Coding uses `implement`.

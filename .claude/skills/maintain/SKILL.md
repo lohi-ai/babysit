@@ -33,7 +33,8 @@ smallest hardening fix.
 - When a finding is a symptom without a clear cause (intermittent failure,
   unexplained regression, a timeout you can't yet trace to a mechanism), get
   root cause before hardening — don't fix blind. Invoke the `investigate`
-  skill via the Skill tool (skill: `investigate`), passing the symptom and the
+  skill via the Skill tool (skill: `investigate`, or `bbs:investigate` as
+  listed under the plugin), passing the symptom and the
   audit evidence as args, then apply the smallest fix once the cause is known.
 - Never weaken a control to make something pass (no disabling auth, no
   `--force`, no silencing a scanner). Surface the tradeoff instead.
