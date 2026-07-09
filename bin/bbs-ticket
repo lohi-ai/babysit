@@ -1629,6 +1629,7 @@ EOF
           /^[[:space:]]*#/ { next }
           $0 ~ "^" key ":[[:space:]]*" {
             sub("^" key ":[[:space:]]*", "")
+            sub(/[[:space:]]+#.*$/, "")
             gsub(/^["'\'']|["'\'']$/, "")
             print
             exit

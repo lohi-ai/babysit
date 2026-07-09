@@ -1,5 +1,35 @@
 # Changelog
 
+## 1.52.1 — 2026-07-08
+
+### Changed
+
+- **Skill/reference condensation** — `autopilot` SKILL + `builder` workflow and
+  the shared references (`archetypes`, `auto-decision-framework`, `git-flow`,
+  `handoff-contracts`, `preamble`, `ticket-layout`, `ticket-size-rubric`)
+  rewritten much shorter (net ≈ −850 lines) with the same contracts: gates,
+  statuses, and file schemas are unchanged; prose and examples trimmed.
+- New over-strict pattern #5 in `CLAUDE.md` (git-flow protocol belongs to
+  workflows, not skills); `qa` operates on the current checkout as-is.
+
+### Added
+
+- **finding-unknowns reference** (`references/finding-unknowns.md`) — deriving
+  unstated requirements from code and git history; wired into `plan-draft`,
+  `investigate`, and `qa`. Companion blog posts under `blogs/`.
+
+### Fixed
+
+- **Inline `# comments` in YAML values** — `bbs-ticket` (git-flow `mode:`),
+  `bbs-autopilot` (`base_branch:` / `branches.develop:`), and all
+  `bbs-qa-config` scalar parsers (including the `credentials:` block, whose
+  documented template carries an inline comment) now strip trailing comments
+  before validating values. Covered by `test_bbs_ticket_git_flow_mode.sh` and
+  `test_qa_config_loader.sh`.
+- **qa/browse credential fallback drift** — `qa`'s snippet now falls back to
+  the standard `QA_USER` / `QA_PASS` names like `browse`, instead of clobbering
+  the values `bbs-secrets load` just exported.
+
 ## 1.51.2 — 2026-07-06
 
 ### Added

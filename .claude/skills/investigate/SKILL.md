@@ -2,29 +2,19 @@
 name: investigate
 description: Debug a failure before fixing it. Use when the user asks why something is broken, wants root cause analysis, or reports an error, regression, flaky test, crash, or unexpected behavior.
 ---
-
 # investigate
-
-Root cause first, fix second.
-
-## Flow
-
-1. Reproduce or collect the failing evidence: command output, logs, UI state, stack trace, or diff.
-2. Identify what changed and why it broke now — or, if nothing changed, what condition newly exposes the bug (input, timing, environment).
-3. Name the root cause in one sentence before editing.
-4. Confirm the cause: show the failure appears/disappears when it is toggled (revert the suspect change, remove the trigger input, or reproduce it in isolation).
-5. Apply the smallest fix that addresses that cause.
-6. Re-run the reproducer and one nearby regression check.
-
-## Guardrails
-
-- Do not guess silently. If there are competing theories, list them and test the cheapest one.
-- Do not paper over symptoms with broad retries, catches, sleeps, or guards unless the root cause demands it.
-- Preserve unrelated user changes.
-- If the failure depends on external state you cannot access, stop with the exact missing evidence.
-
+Root cause first, fix second: reproduce or collect the failing evidence,
+name the root cause in one sentence before editing, confirm it by toggling
+(revert the suspect change, remove the trigger input, or isolate it), apply
+the smallest fix, then re-run the reproducer plus one nearby regression
+check. Check the pothole map first — the git-archaeology recipe in
+`../references/finding-unknowns.md`: a prior fix commit in the failing area
+often names this same root cause. Competing theories: list them, test the
+cheapest — never guess silently. No symptom-papering (broad retries,
+catches, sleeps, guards) unless the root cause demands it. Preserve
+unrelated user changes. If the failure depends on external state you cannot
+access, stop with the exact missing evidence.
 ## Output
-
 ```text
 STATUS: DONE | DONE_WITH_CONCERNS | NEEDS_CONTEXT | BLOCKED
 ROOT_CAUSE: <one sentence>

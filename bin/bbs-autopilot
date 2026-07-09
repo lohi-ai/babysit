@@ -486,6 +486,7 @@ case "$SUB" in
         /^[[:space:]]*#/ { next }
         /^base_branch:[[:space:]]*/ {
           sub(/^base_branch:[[:space:]]*/, "")
+          sub(/[[:space:]]+#.*$/, "")
           gsub(/^["'\'']|["'\'']$/, "")
           print
           exit
@@ -498,6 +499,7 @@ case "$SUB" in
           /^[A-Za-z_]/ && !/^[[:space:]]/ { in_branches=0 }
           in_branches && /^[[:space:]]+develop:[[:space:]]*/ {
             sub(/^[[:space:]]+develop:[[:space:]]*/, "")
+            sub(/[[:space:]]+#.*$/, "")
             gsub(/^["'\'']|["'\'']$/, "")
             print
             exit

@@ -5,17 +5,12 @@ description: Iterate on a shipped product to improve product-market fit — meas
 needs-state:
   requirement_md: optional
 ---
-
 # grower
-
 The Grower archetype (see `../references/archetypes.md`). Use to move a metric on
 a product that already ships. Measure before you build; scaffold only one
 reversible experiment per run.
-
 ## run
-
 > produces: verdict:grower + qa:checked
-
 1. Read product positioning, the target surface, and any available funnel or
    analytics context. Name the metric and activation moment.
 2. Run the matching growth skill: `growth-experiment` to rank experiments,
@@ -31,15 +26,12 @@ reversible experiment per run.
    what shipped behind which flag. When a signal warrants, name the forward
    lifecycle edge after `create-pr`: load, cost, or reliability pressure seen
    while measuring → `maintainer`.
-
 **Stop conditions**
 
 - `NEEDS_CONTEXT`: no metric/target can be determined, or analytics needed to
   rank are unavailable and cannot be inferred.
 - `BLOCKED`: a scaffolded variant fails verification and cannot be fixed locally.
-
 **Final status**
-
 ```text
 STATUS: DONE | DONE_WITH_CONCERNS | NEEDS_CONTEXT | BLOCKED
 VERDICT: RANKED | SCAFFOLDED

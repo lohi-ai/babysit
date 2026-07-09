@@ -102,6 +102,27 @@ T="$(mktemp -d)"
 ) && ok "trunk-mode-no-cut" || fail "trunk-mode-no-cut"
 rm -rf "$T"
 
+# ── inline-comment-on-mode ────────────────────────────────────────────
+# An inline `# ...` comment on the mode line must be stripped before the
+# value is validated (otherwise mode resolves to garbage → exit 2).
+T="$(mktemp -d)"
+(
+  export PATH="$SCRIPT_DIR/bin:$PATH"
+  export HOME="$T/home"; mkdir -p "$HOME"
+  export AGENT_ROLE=mayor
+  build_repo "$T"
+  cd "$T/repo"
+  set_git_flow "mode: trunk   # trunk | branch | worktree — see references/git-flow.md"
+
+  out="$("$BBS_TICKET_BIN" ensure --slug-hint feat-ic --type feat 2>"$T/err")" || {
+    echo "ensure failed (inline comment not stripped?): $(cat "$T/err")"; exit 1; }
+  printf '%s\n' "$out" | grep -q '^WORKTREE=' \
+    && { echo "unexpected WORKTREE= — mode: trunk not honored with inline comment; out: $out"; exit 1; }
+  [ "$(git branch --show-current)" = "main" ] \
+    || { echo "inline-comment mode cut a branch: $(git branch --show-current)"; exit 1; }
+) && ok "inline-comment-on-mode" || fail "inline-comment-on-mode"
+rm -rf "$T"
+
 # ── mode-flag-overrides-config ────────────────────────────────────────
 T="$(mktemp -d)"
 (

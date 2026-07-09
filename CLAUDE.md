@@ -106,7 +106,7 @@ Skills and workflows enforce different layers of rules:
   from `pointers.<key>` when present, fall back to conversation context when
   not, and only emit `NEEDS_CONTEXT` when neither source has the input.
 
-The four most common over-strict patterns to avoid in skills (loosen if you
+The five most common over-strict patterns to avoid in skills (loosen if you
 find them — workflows already cover the strict path):
 1. **Doc-existence gates** — `pointers.{requirement,plan,design}` missing → don't
    exit 1; read from conversation context, fall back to disk-glob, only
@@ -119,6 +119,11 @@ find them — workflows already cover the strict path):
 4. **Git-dirty refusal** — pushed/dirty/clean is the workflow's concern (it
    wraps release gates with the appropriate policy). A skill that does
    read-only or contained work shouldn't refuse a dirty tree.
+5. **Git-flow protocol in the skill** — worktree landing (`merge-base`/`switch`),
+   git-flow `mode:` branching, base-checkout policy belong to autopilot's
+   workflows. A skill invoked directly (e.g. via `/goal`) operates on the
+   current checkout as-is and verifies the surface it tests actually serves
+   the change, instead of enforcing how it got there.
 
 Rule of thumb: when adding a gate to a skill, ask "does the workflow that
 calls this skill already enforce this?" If yes, the skill check is dead

@@ -108,6 +108,25 @@ echo "$out" | grep -q "^QA_ENV_URL='http://localhost:5173'$" && ok "simple probe
 echo "$out" | grep -q "^QA_ENV_USERNAME_ENV='QA_USER'$"      && ok "simple probe surfaces username_env" || fail "simple-username-env" "$out"
 echo "$out" | grep -q "^QA_ENV_PASSWORD_ENV='QA_PASS'$"      && ok "simple probe surfaces password_env" || fail "simple-password-env" "$out"
 
+# ─── probe — inline comments must not break parsing ───────────────────
+# The documented templates put a `# comment` on the credentials: line; the
+# parser must strip trailing inline comments before matching keys/values.
+case_header "probe — inline comments"
+T="$(mk_repo)"
+cat > "$T/.babysit/qa.yaml" <<'YAML'
+version: 1
+url: http://localhost:5173      # dev server
+start: npm run dev
+flows: login, empty state
+credentials:            # optional — omit if the app needs no login
+  username_env: QA_USER   # standard
+  password_env: QA_PASS
+YAML
+out="$(run_in "$T" probe --env local)"
+echo "$out" | grep -q "^QA_ENV_URL='http://localhost:5173'$" && ok "inline comment stripped from url" || fail "comment-url" "$out"
+echo "$out" | grep -q "^QA_ENV_USERNAME_ENV='QA_USER'$"      && ok "inline comment on credentials: still parses block" || fail "comment-username-env" "$out"
+echo "$out" | grep -q "^QA_ENV_PASSWORD_ENV='QA_PASS'$"      && ok "inline comment stripped from username_env value" || fail "comment-password-env" "$out"
+
 # ─── probe — env not found ────────────────────────────────────────────
 case_header "probe — missing env"
 if run_in "$T" probe --env nope >/dev/null 2>&1; then

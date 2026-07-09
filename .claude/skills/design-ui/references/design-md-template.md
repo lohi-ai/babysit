@@ -1,11 +1,8 @@
 # DESIGN.md template — `babysit-design/v1`
-
 DESIGN.md lives at the repo root. `bbs-design tokens` reads the YAML
 frontmatter; skills and humans read the prose. Reference implementation:
 kiem-lai's DESIGN.md.
-
 ## Frontmatter (machine-read)
-
 ```yaml
 ---
 schema: babysit-design/v1
@@ -29,13 +26,10 @@ tokens:
     duration_ms: { micro: 200, short: 300, medium: 400 }
 ---
 ```
-
 Every value must trace to the live styles (globals.css, tailwind config,
 theme file) for an existing product, or to the human-accepted draft for a
 new one. No token that the code doesn't (or won't) define.
-
 ## Body sections, in order
-
 - **How to use this file** — blockquote: read before any UI change; where
   tokens are defined in code; where the component library lives; the
   never-hardcode / never-rebuild rule.

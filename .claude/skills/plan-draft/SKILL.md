@@ -2,30 +2,23 @@
 name: plan-draft
 description: Draft a technical plan before implementation. Use when the user asks for a plan, architecture, ticket breakdown, or wants to turn a requirement into plan.md without coding yet.
 ---
-
 # plan-draft
-
 Make a short plan that a strong model can execute. Avoid ceremony.
-
 **One pass, full depth.** Draft once — don't loop polishing wording or
-re-survey — but think at full depth on that pass: the plan is the only
-context `implement` inherits, and downstream gates catch bugs, not weak
-architecture. Three things must be exact: the goal, the scope boundary
+re-survey. Three things must be exact: the goal, the scope boundary
 (what's out), and the verification commands. Details may be approximate —
 `implement` corrects them in-flight — but record the *why* behind each
-choice and any gotcha found while surveying; that context is cheap now and
-unrecoverable later.
-
+choice and any gotcha found while surveying.
 ## Flow
-
-1. Read the requirement and the code paths likely to change. The requirement
-   is a starting point, not ground truth — the user has unknown unknowns.
-   While reading the code, derive what the requirement doesn't say: flows
-   that share state or routes with the change, existing behavior it would
-   alter, and the implied cases (permissions, empty/error states, concurrent
-   edits, existing-data migration) the user likely never considered. Carry
-   each derived requirement into the plan explicitly — into `## Scope`
-   (in or out, marked *derived*) or `## Risks` — never resolve one silently.
+1. Read the requirement and the code paths likely to change; derive what the
+   requirement doesn't say: flows sharing state or routes with the change,
+   existing behavior it would alter, implied cases (permissions,
+   empty/error states, concurrent edits, existing-data migration). Carry
+   each derived item into `## Scope` (marked *derived*) or `## Risks` —
+   never resolve one silently — citing a file, commit, or doc; uncited items
+   are guesses, cut them. Mine git history too — the git-archaeology recipe
+   in `../references/finding-unknowns.md` turns the last similar commit into
+   a touchpoint checklist and pothole map.
 2. Survey what already exists before proposing anything new. For UI/frontend
    work this is mandatory in an enterprise codebase: list existing components
    (`bbs-design components`) and design tokens (`bbs-design tokens`), and find
@@ -33,34 +26,28 @@ unrecoverable later.
    work, find the established pattern for routes, data access, and errors.
    When the work adds or reshapes a user-facing surface, read the existing
    design spec from `pointers.design` if present; otherwise invoke the
-   `design-ui` skill via the Skill tool (skill: `design-ui`, or
-   `bbs:design-ui` as listed under the plugin) before finalizing
-   the plan — its spec and prototype are plan inputs. A plan for frontend work without a
-   reviewable prototype gives the human their first look only after
-   `implement`, when the change cost is highest.
+   `design-ui` skill via the Skill tool before finalizing the plan — its
+   spec and prototype are plan inputs.
 3. Classify scope as XS, S, M, or L (rubric:
    `../references/ticket-size-rubric.md`) and persist it:
    `bbs-ticket set-pointer ticket_size <size>`.
-4. Call out ambiguity only when choosing silently risks wrong code.
-5. Write the approach as architecture and basic design: how the change solves
+4. Write the approach as architecture and basic design: how the change solves
    the user's requirement — data flow, where logic lives, component/API
    boundaries, schema shape — not a step-by-step task list (`implement` owns
    task order). Name the specific existing components, tokens, and patterns
    the plan reuses; flag any genuinely new component/pattern and justify why
-   no existing one fits. Consistency with the current product is the default.
-   When the plan adds or reshapes an API, specify the contract to best
-   practice up front: list endpoints get pagination, filtering, and sorting
-   from day one (retrofitting them breaks clients); inputs are validated with
-   a clear error shape; outputs follow the project's existing envelope,
-   naming, and status-code conventions.
-6. For L work, split into ordered sub-tickets with independent verification.
-7. Before handoff, re-check the size: if ≥40% of the in-scope items ended up
+   no existing one fits. A new or reshaped API gets its contract specified to best
+   practice up front (pagination on list endpoints from day one, validated
+   inputs, the project's existing envelope and status-code conventions).
+   Order the plan body by volatility: decisions a human is most likely to
+   tweak first — data model, API/type contracts, user-facing behavior —
+   mechanical refactoring last.
+5. For L work, split into ordered sub-tickets with independent verification.
+6. Before handoff, re-check the size: if ≥40% of the in-scope items ended up
    deferred to follow-up tickets, downgrade `ticket_size` one tier using the
    downgrade hook in `../references/ticket-size-rubric.md` (it writes the
    audit-log line).
-
 ## Plan Format
-
 ```markdown
 # Plan
 
@@ -74,11 +61,8 @@ unrecoverable later.
 ## Risks
 ## Next
 ```
-
 Keep each section brief. Prefer concrete file paths and commands over process language.
-
 ## Output
-
 ```text
 STATUS: DONE | DONE_WITH_CONCERNS | NEEDS_CONTEXT | BLOCKED
 VERDICT: PLANNED(<XS|S|M|L>) | DECOMPOSED(<N>)

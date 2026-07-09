@@ -71,6 +71,7 @@ _yaml_environments() {
   awk '
     BEGIN { in_qa=0; in_envs=0; in_creds=0; ind=-1 }
     /^[[:space:]]*#/ { next }
+    { sub(/[[:space:]]+#.*$/, "") }
     /^qa:[[:space:]]*$/ { in_qa=1; next }
     /^[a-zA-Z]/ && !/^[[:space:]]/ { in_qa=0; in_envs=0; in_creds=0 }
 
@@ -150,6 +151,7 @@ _yaml_simple_local() {
   awk '
     BEGIN { url=""; runtime=""; guideline=""; start=""; check=""; flows=""; user_env=""; pass_env=""; in_envs=0; in_qa=0; in_creds=0 }
     /^[[:space:]]*#/ { next }
+    { sub(/[[:space:]]+#.*$/, "") }
     /^qa:[[:space:]]*$/ { in_qa=1; next }
     /^[a-zA-Z]/ && !/^[[:space:]]/ { in_qa=0; in_creds=0 }
     /^environments:[[:space:]]*$/ || (in_qa && /^[[:space:]]+environments:[[:space:]]*$/) { in_envs=1 }
@@ -205,6 +207,7 @@ _yaml_default_env() {
   local file="$1"
   awk '
     /^[[:space:]]*#/ { next }
+    { sub(/[[:space:]]+#.*$/, "") }
     /^qa:[[:space:]]*$/ { in_qa=1; next }
     /^[a-zA-Z]/ && !/^[[:space:]]/ { in_qa=0 }
     /^default_env:[[:space:]]*/ ||

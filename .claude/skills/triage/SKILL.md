@@ -2,16 +2,11 @@
 name: triage
 description: Tier-1 triage for a stalled or BLOCKED autonomous run. Use when a worker returned BLOCKED/NEEDS_CONTEXT or a ticket's checkpoint stopped advancing — classify recoverable vs needs-human, post a structured handoff, optionally resume from the checkpoint.
 ---
-
 # triage
-
-The layer between mechanical retry and human escalation. A worker that stops
-is not automatically a human's problem: many BLOCKED runs die on transient or
-mechanical causes a fresh session can clear. Triage reads the wreckage,
-classifies it, and either restarts the run or hands the human a precise ask.
-
+The layer between mechanical retry and human escalation: read the wreckage,
+classify recoverable vs needs-human, then restart the run or hand the human
+a precise ask.
 ## Flow
-
 1. Resolve the ticket (`bbs-ticket resolve`, or the id from the invocation)
    and collect the evidence: `checkpoint.json` (status, step, note), the
    latest handoff, `bbs-ticket verdict-status --skill <blocking skill>`, the
@@ -45,17 +40,13 @@ classifies it, and either restarts the run or hands the human a precise ask.
      instead of looping.
    - Needs-human → emit the structured `NEEDS_CONTEXT` block naming the exact
      missing input and the checkpoint it unblocks.
-
 ## Rules
-
 - Triage is diagnosis + dispatch, not repair. A fix that needs code changes is
   an `investigate` or `implement` ticket, not a triage action.
 - Bounded blast radius: no force-push, no deleting branches/worktrees, no
-  dropping the checkpoint. The run being dead does not make its state disposable.
+  dropping the checkpoint.
 - Log the classification to the decision trail (it's a Taste call).
-
 ## Output
-
 ```text
 STATUS: DONE | NEEDS_CONTEXT | BLOCKED
 CLASSIFICATION: recoverable | needs-human

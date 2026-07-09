@@ -1,79 +1,33 @@
 # Skill Preamble
-
-Runtime bootstrap for every babysit skill. Run the bash block first; follow
-the rules below when producing output and reporting status.
-
-This file contains the shared runtime and status contract.
-
-## Decisions
-
-Route every decision point through
+Runtime bootstrap for every babysit skill: run the bash block first, follow
+the status contract when reporting. Route every decision through the
 [Auto-Decision Framework](auto-decision-framework.md) (Mechanical / Taste /
-User Challenge, 6 principles, audit trail). Read it before deciding.
-
+User Challenge). Trust your own judgment for everything these rules don't pin
+down.
 ## Output style — terse by default
-
-ACTIVE EVERY RESPONSE. No filler drift across turns.
-Drop: filler (just/really/basically/actually/simply), pleasantries (sure/certainly/of course/happy to), hedging. Short synonyms (fix not "implement a solution for"). Fragments OK. Code blocks unchanged. Pattern: `[thing] [action] [reason]. [next step].`
-
-Consumer routing (Mechanical — auto-decide, no audit entry):
+Drop filler, pleasantries, hedging. Route by consumer:
 
 | Consumer | Mode | Rules |
 |----------|------|-------|
 | Machine — checkpoint, telemetry, status lines | **Full** | Drop articles too. Maximum terseness. |
-| Downstream model — handoffs, plan.md, requirement.md | **Dense** | Complete sentences. Keep the why, constraints, and gotchas — these files are the next step's only memory; never cut information for brevity. |
-| Human — terminal, AskUserQuestion, NEEDS_CONTEXT | **Lite** | Keep articles + full sentences. Professional but tight. |
+| Downstream model — handoffs, plan.md, requirement.md | **Dense** | Complete sentences. Keep the why, constraints, gotchas — these files are the next step's only memory; never cut information. |
+| Human — terminal, AskUserQuestion, NEEDS_CONTEXT | **Lite** | Full sentences, professional but tight. |
 | Security/destructive/ambiguous | **Normal** | Full prose. Resume terse after. |
-
 Skills with their own output format take precedence.
-Full routing table in [Auto-Decision Framework](auto-decision-framework.md).
-
 ## One mode, two escalation channels
-
-Skills always run autonomously. Decisions go through the Auto-Decision
-Framework; skills **never** prompt mid-flight for taste or cosmetic choices.
-Escalate only when proceeding on a guess would land incorrect work — and when
-you do, emit a `NEEDS_CONTEXT` block.
-
-The `AGENT_ROLE` env var (fallback `GT_ROLE`) picks how that block reaches a
-human:
-
-| `AGENT_ROLE` | Watcher | `NEEDS_CONTEXT` delivery |
-|--------------|---------|--------------------------|
-| `developer` (default, unset) | Human at Claude Code terminal | Render as single `AskUserQuestion` |
-| `mayor`, `general`, `scanner`, any other | Orchestrator (babysit-office, gastown, cron) | Emit structured block; orchestrator relays via its channel |
-
-`AskUserQuestion` in non-`developer` runs **hangs the run** — always check
-`_INVOKER` (set from `AGENT_ROLE` in the preamble) before calling it.
-
-**This file is loaded at skill-invocation time regardless of which repo's
-`CLAUDE.md` is in context** — runtime rules live here, not in babysit's own
-`CLAUDE.md`. The preamble bash block must run end-to-end without prompts.
-
-### When to escalate
-
-Only emit `NEEDS_CONTEXT` when:
-
-- Ambiguous requirement with multiple plausible interpretations that lead to different code.
-- Irreversible / high-blast-radius action (deploy, migration, delete, external send) with no durable authorization on file.
-- Missing config, credentials, or scope that can't be inferred from the repo.
-
-Don't escalate for:
-
-- Style / naming / cosmetic — pick and log (Auto-Decision Framework: Mechanical / Taste).
-- Anything derivable from codebase, git history, or config — look it up.
-- "Is this OK?" checkpoints after self-verifiable work — verify and report.
-- Recoverable forks — try the most likely path; on failure, report `BLOCKED` with what was tried.
-
-A second `NEEDS_CONTEXT` in the same run means you're steering — stop, report
-what you have, let the human triage.
-
+Skills always run autonomously — never prompt mid-flight for taste or
+cosmetic choices. Escalate only when proceeding on a guess would land
+incorrect work: ambiguous requirement with materially different readings,
+irreversible/high-blast-radius action without durable authorization, or
+missing config/credentials that can't be inferred from the repo. Anything
+derivable from the codebase, look up; recoverable forks, try the likely path
+and report `BLOCKED` on failure. A second `NEEDS_CONTEXT` in one run means
+you're steering — stop and report.
+`AGENT_ROLE` (fallback `GT_ROLE`) picks the delivery channel:
+`developer` (default, unset) → render as a single `AskUserQuestion`;
+anything else (`mayor`, `general`, `scanner`, …) → print the structured block
+verbatim (an orchestrator relays it; `AskUserQuestion` would hang the run).
 ### `NEEDS_CONTEXT` shape
-
-`REASON` explains why you can't proceed. `RECOMMENDATION` is the exact question
-with 2–4 labeled options. When `AGENT_ROLE=developer`, render as one
-`AskUserQuestion`; otherwise print the block verbatim.
-
 ```
 STATUS: NEEDS_CONTEXT
 REASON: Requirement "handle duplicate invoices" could mean (a) reject with 409,
@@ -81,9 +35,7 @@ REASON: Requirement "handle duplicate invoices" could mean (a) reject with 409,
 ATTEMPTED: Grepped invoices/*.ts for prior handling — only happy path present.
 RECOMMENDATION: Ask the ticket owner which of A/B/C applies before implementing.
 ```
-
 ## Preamble (run first)
-
 ```bash
 # ── Skill preamble ───────────────────────────────────────────────
 _SKILL_NAME="SKILL_NAME"          # set before running
@@ -91,11 +43,8 @@ _SESSION_ID="$$-$(date +%s)"
 _TEL_START=$(date +%s)
 
 # ── Bin resolver ─────────────────────────────────────────────────
-# Every babysit script is invoked via a BBS_<NAME>_BIN env var that resolves
-# once here: prefer the home shim (`~/.claude/bbs-*`, created by setup-skills)
-# then fall back to the repo copy (`~/.claude/skills/babysit/bin/bbs-*`, used
-# when the pack is installed as a plugin without symlinks). Skill files then
-# call `"${BBS_TICKET_BIN:-$HOME/.claude/bbs-ticket}" init` etc. instead of repeating the dual-path chain.
+# BBS_<NAME>_BIN resolves once here: home shim (~/.claude/bbs-*) first,
+# repo copy (~/.claude/skills/babysit/bin/bbs-*) as plugin fallback.
 _bbs_resolve() {
   local shim="$HOME/.claude/$1" repo="$HOME/.claude/skills/babysit/bin/$1"
   if [ -x "$shim" ]; then echo "$shim"
@@ -167,11 +116,9 @@ _REPO=$(basename "$(git rev-parse --show-toplevel 2>/dev/null || echo "unknown")
 _INVOKER="${AGENT_ROLE:-${GT_ROLE:-developer}}"
 [ -n "$OPENCLAW_SESSION" ] || [ -n "$BABYSIT_SPAWNED" ] && _SPAWNED="true" || _SPAWNED="false"
 
-# Project scope — slug + ticket, derived from git remote + branch name. The
-# ticket id is NEVER taken from conversation memory: it's re-derived on every
-# preamble from the branch, so a compacted or freshly-spawned agent sees the
-# same ticket the prior agent did. Empty TICKET means the branch doesn't
-# encode one (e.g. main) — the skill decides whether that's OK.
+# Project scope — slug + ticket re-derived from git remote + branch on every
+# preamble, never from conversation memory. Empty TICKET = branch encodes
+# none (e.g. main) — the skill decides whether that's OK.
 eval "$("${BBS_SLUG_BIN:-$HOME/.claude/bbs-slug}" env 2>/dev/null || true)"
 SLUG="${SLUG:-unknown}"
 TICKET="${TICKET:-}"
@@ -197,8 +144,8 @@ if [ -n "$TICKET" ]; then
 fi
 
 # Context Recovery — print latest checkpoint + recent timeline for this
-# ticket. Single most important line for compaction survival: a cold agent
-# reads this and knows where the prior agent left off. Silent when no ticket.
+# ticket, so a cold agent knows where the prior one left off. Silent when
+# no ticket.
 if [ -n "$TICKET" ]; then
   "${BBS_AUTOPILOT_BIN:-$HOME/.claude/bbs-autopilot}" recover 2>/dev/null || true
 fi
@@ -211,42 +158,25 @@ if [ "$_TEL" != "off" ]; then
     >> ~/.babysit/analytics/skill-usage.jsonl 2>/dev/null || true
 fi
 ```
-
 Replace `SKILL_NAME` with the skill's `name:` from frontmatter.
-
 ### Interpreting the state echo
-
-- **`INVOKER`** — who triggered this run. Picks the `NEEDS_CONTEXT` delivery
-  channel (see routing table above). `developer` → `AskUserQuestion`;
-  `mayor` / `general` / `scanner` / other → structured block.
-- **`PROACTIVE`** — `"false"` means don't auto-invoke other babysit skills from
-  conversation context; only run what the user explicitly typed. Skip silently
-  — do **not** ask for confirmation. Babysit is non-interactive by design.
-- **`TELEMETRY`** — `local` (default) writes JSONL to `~/.babysit/analytics/`;
-  `off` disables all telemetry writes. Nothing ever leaves the machine.
-- **`SPAWNED`** — `true` means an orchestrator started this session
-  (`OPENCLAW_SESSION` or `BABYSIT_SPAWNED` set). Skip welcome text and optional
-  summaries; the parent is capturing output programmatically.
-
+- **`INVOKER`** — picks the `NEEDS_CONTEXT` channel (above).
+- **`PROACTIVE=false`** — don't auto-invoke other babysit skills; run only
+  what the user typed. Skip silently, never ask.
+- **`TELEMETRY=off`** — disable all telemetry writes. Nothing ever leaves the
+  machine either way.
+- **`SPAWNED=true`** — an orchestrator started this session; skip welcome
+  text and optional summaries.
 ### Ticket consistency — the four-layer invariant
-
-The preamble prints `SLUG`, `BRANCH`, `TICKET`, `PROJECT_HOME`, and (if a
-ticket is in scope) the Context Recovery block. Every skill must respect:
-
-1. **Branch name is the machine-readable anchor.** `feat/<ticket>_<slug>`.
-   Every wake-up re-derives `TICKET` from the current branch via `bbs-slug`.
-   Conversation memory is never trusted.
-2. **Checkpoint cross-check.** `~/.babysit/projects/<slug>/tickets/<ticket>/checkpoint.json`
-   stores `branch` + `ticket` + `slug`. If `branch` field doesn't match
-   current branch, state has diverged — stop and report.
-3. **Timeline audit.** `bbs-autopilot` appends every step boundary to
-   `~/.babysit/projects/<slug>/timeline.jsonl` keyed by ticket.
-4. **Ticket system is the outer oracle.** `"${BBS_TICKET_BIN:-$HOME/.claude/bbs-ticket}" get status` is
-   ground truth for whether the ticket exists / is still open (reads
-   `index.json` from Layout C). Called at workflow load-context.
-
-**Divergence BLOCKED shape** — use when layers 1 and 2 disagree:
-
+1. **Branch name is the anchor** (`feat/<ticket>_<slug>`) — `TICKET` is
+   re-derived from it every wake-up; conversation memory is never trusted.
+2. **Checkpoint cross-check** — `checkpoint.json` records `branch`; if it
+   doesn't match the current branch, stop and report (block below).
+3. **Timeline audit** — `bbs-autopilot` appends step boundaries to
+   `timeline.jsonl`.
+4. **Ticket system is the oracle** — `bbs-ticket get status` is ground truth
+   for whether the ticket exists / is open.
+Divergence (layers 1↔2 disagree):
 ```
 STATUS: BLOCKED
 VERDICT: —
@@ -255,38 +185,19 @@ REASON: branch='<current>' but checkpoint.branch='<recorded>' for ticket <ticket
 ATTEMPTED: Derived ticket from branch, read checkpoint.json, compared branch fields
 RECOMMENDATION: Human triages — checkout the recorded branch or clear state with `bbs-autopilot clear <ticket>`
 ```
-
-**No-ticket scope** — when `TICKET` is empty (branch doesn't encode one):
-- Accept standalone mode (no checkpoint, no ticket comments) for skills that
-  genuinely work without one (`office-hours`, `setup-project`, `browse`), or
-- Stop with `NEEDS_CONTEXT` naming which branch shape is expected.
-
-Never invent a ticket id. If the user says "work on bs-ab123" but the branch
-is `main`, ask them to check out the right branch (`developer`) or emit
-`NEEDS_CONTEXT` (other invokers). Don't fabricate state on the wrong branch.
-
+**No-ticket scope** — empty `TICKET` is a valid shape: skip ticket-state
+writes with a one-line note, take requirement/plan from conversation, do the
+work. Branch shape and git-flow policy are the workflow layer's concern, not
+a skill precondition. Never invent a ticket id; to attach identity without a
+checkout, `export BABYSIT_TICKET=<id>` (wins the resolve ladder).
 ### Handling update-check output
-
-`_UPD` prints one of:
-
-- `UPGRADE_AVAILABLE <old> <new>` — mention once at top of response ("babysit
-  upgrade available — run `bbs-upgrade`") and continue. Don't auto-run
-  `bbs-upgrade` unless `auto_upgrade=true`; even then, prefer after the skill
-  finishes.
-- `JUST_UPGRADED <from> <to>` — user upgraded since last run. Plugin manifest
-  in memory is stale until reload. Emit this exact line at top of response:
-
+- `UPGRADE_AVAILABLE <old> <new>` — mention once ("babysit upgrade available
+  — run `bbs-upgrade`") and continue; never auto-run or block.
+- `JUST_UPGRADED <from> <to>` — emit this exact line at top of response:
   > babysit upgraded v\<from\> → v\<to\>. Run `/plugin marketplace update babysit` then `/reload-plugins` to pick up the new skills (the shell upgrade can't do this for you).
-
-- Nothing — up-to-date, snoozed, or offline. Proceed silently.
-
-Never block on upgrade. A pending upgrade is information, not a gate.
-
 ## Telemetry (run last)
-
 After the skill completes (success, error, abort), append a completion row
 correlated by `_SESSION_ID`.
-
 ```bash
 _TEL_END=$(date +%s)
 _TEL_DUR=$(( _TEL_END - _TEL_START ))
@@ -299,62 +210,22 @@ if [ "$_TEL" != "off" ]; then
     >> ~/.babysit/analytics/skill-usage.jsonl 2>/dev/null || true
 fi
 ```
-
 Replace `OUTCOME` with one of: `success`, `error`, `abort`, `unknown`.
-
 ## Completion Status Protocol
-
-Every skill must end with exactly one status code.
-
-| Status | Meaning | When |
-|--------|---------|------|
-| **DONE** | All steps completed successfully | Normal completion, evidence provided |
-| **DONE_WITH_CONCERNS** | Completed with caveats | Finished but found issues the caller should know about |
-| **BLOCKED** | Cannot proceed | Missing access, broken tool, unresolvable error |
-| **NEEDS_CONTEXT** | Missing info to continue | Ambiguous requirements, missing config, unclear scope |
-
-Output format:
-
+Every skill ends with exactly one status code, printed last:
 ```
 STATUS: DONE | DONE_WITH_CONCERNS | BLOCKED | NEEDS_CONTEXT
 VERDICT: <skill-specific verdict per handoff-contracts.md>
 SUMMARY: <1-2 sentences of what happened>
 ```
-
-For non-happy-path statuses, add:
-
-```
-REASON: [1-2 sentences]
-ATTEMPTED: [what was tried]
-RECOMMENDATION: [what should happen next]
-```
-
-### Escalation rules
-
-Bad work is worse than no work. Escalate when uncertain.
-
-- **3-attempt rule:** same step fails 3×, stop and report `BLOCKED`.
-- **Security uncertainty:** security-sensitive change unclear, stop and report `BLOCKED`.
-- **Scope exceeded:** work exceeds what you can verify, stop and report `NEEDS_CONTEXT`.
-
-When in doubt, stop. Never guess silently. Full escalation rules +
-`NEEDS_CONTEXT` format above in [§ One mode, two escalation channels](#one-mode-two-escalation-channels).
-
-### Status ↔ verdict mapping
-
-Status is separate from skill-specific verdicts in
-[handoff-contracts.md](handoff-contracts.md). Both are reported:
-
-| Skill | Verdict | Status |
-|-------|---------|--------|
-| requirements-check | `PASS` | `DONE` |
-| requirements-check | `REVIEW(M)` | `DONE` (deferred to implement) |
-| bug-scan | `CLEAN` | `DONE` |
-| bug-scan | `FOUND(3 fixed, 1 deferred)` | `DONE_WITH_CONCERNS` |
-| implement | `BUILT` | `DONE` |
-| qa | `FAIL` | `BLOCKED` (never `DONE*` — the PR gate reads `DONE*` as ready) |
-| review-pr | `FINDINGS(N)` unresolved material | `BLOCKED` (minor residuals → `DONE_WITH_CONCERNS`) |
-| investigate | `FIXED` | `DONE` |
-| browse | `CHECKED` | `DONE` |
-| any skill | tool broke, can't proceed | `BLOCKED` |
-| any skill | requirements ambiguous | `NEEDS_CONTEXT` |
+`DONE` = completed with evidence; `DONE_WITH_CONCERNS` = completed, caller
+should read the concerns; `BLOCKED` = cannot proceed (broken tool, missing
+access, same step failed 3×, security uncertainty); `NEEDS_CONTEXT` = missing
+info only a human has — including scope exceeded: the work outgrew what you
+can self-verify, so stop and report rather than ship unverified. Non-happy-path
+statuses add `REASON`, `ATTEMPTED`, `RECOMMENDATION` lines. Bad work is worse
+than no work — when in doubt, stop; never guess silently.
+Two verdict→status rules are hook-enforced, not judgment calls:
+`qa` `FAIL` reports `BLOCKED`, never `DONE*` (the PR gate reads `DONE*` as
+ready); `review-pr` with unresolved material findings reports `BLOCKED`
+(minor residuals → `DONE_WITH_CONCERNS`).

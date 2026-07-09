@@ -2,33 +2,18 @@
 name: Ticket size rubric
 description: Canonical S/M/L signals used by plan-draft to classify tickets and by `bbs-ticket ensure-size` to self-estimate when the `ticket_size` pointer is absent.
 ---
-
 # Ticket size rubric
-
-The `ticket_size` pointer (`S` | `M` | `L`) is the single knob that controls
-depth inside heavy skills. `plan-draft` sets it at Step 1. Downstream workflows
-read it via
-`bbs-ticket ensure-size`, which returns the pointer if set and otherwise
-estimates from the PR diff, persists the result, and prints it. So later
-skills never re-estimate — the first one to hit an absent pointer fixes it.
-
-## Signals
-
-All thresholds are measured against the PR diff (`git diff <base>...HEAD`) or,
-for `plan-draft`, against the expected change footprint.
-
-| Signal | How it's measured |
-|--------|-------------------|
-| **files** | `git diff --name-only <base>...HEAD \| wc -l` |
-| **loc** | insertions + deletions from `git diff --shortstat` |
-| **modules** | distinct top-level dirs (`awk -F/ 'NF>1{print $1}' \| sort -u \| wc -l`) |
-| **migrations** | count of diff paths matching `migrations?/`, `alembic/`, `schema.`, or `*.sql` |
-| **deps** | count of diff paths matching `package.json`, `package-lock*`, `requirements.txt`, `go.mod`/`go.sum`, `Gemfile*`, `pyproject.toml`, `Cargo.toml`/`Cargo.lock` |
-
-## Classification
-
-A ticket is the **largest size any row matches** — thresholds are inclusive
-upper bounds for the given size.
+The `ticket_size` pointer (`XS`|`S`|`M`|`L`) controls depth inside heavy
+skills. `plan-draft` sets it at Step 1 against the expected footprint;
+downstream skills read it via `bbs-ticket ensure-size` (returns the pointer,
+or estimates from the PR diff, persists, and prints — never re-estimate
+inline). When you change thresholds here, update `bbs-ticket`'s `ensure-size`
+in the same commit.
+Signals measured against the PR diff (`git diff <base>...HEAD`): **files**
+(name-only count), **loc** (insertions+deletions), **modules** (distinct
+top-level dirs), **migrations** (paths matching `migrations?/`, `alembic/`,
+`schema.`, `*.sql`), **deps** (manifest/lockfile paths).
+A ticket is the **largest size any row matches**:
 
 | | XS | S | M | L |
 |---|---|---|---|---|
@@ -39,39 +24,16 @@ upper bounds for the given size.
 | deps | 0 | 0 | ≤ 1 (justified) | > 1 or new runtime service |
 | new symbols / API change | none | none | additive | any breaking |
 | ticket type | one-liner (typo, dep bump, null guard, list extension) | pattern-extend/modify | pattern-extend/modify/new-capability (single subsystem) | new-capability / cross-cutting |
-
-**Default when ambiguous:** M. Review cheaper than a missed concern, but L is
-expensive enough that we don't want to pay it by accident — pick M unless a
-signal lands squarely in L territory. XS is the only tier with a positive
-requirement — a row must affirmatively match the XS column; absent confident
-XS signals, fall back to S or higher.
-
-Skills consuming this rubric (`plan-draft`, `implement`) maintain their own
-copy with skill-specific commentary at
-`<skill>/references/ticket-size-rubric.md`. The skill-local rubrics treat
-this one as the source of truth for thresholds; if a skill-local rubric
-disagrees, this file wins.
-
+**Default when ambiguous: M.** XS requires a row to affirmatively match the
+XS column — absent confident XS signals, fall back to S or higher. This file
+wins over any skill-local rubric copy.
 ## Downgrade triggers (scope contraction)
-
-`plan-draft` sets `ticket_size` against the *expected*
-footprint. Real execution sometimes contracts that scope mid-flight — the
-plan defers half its scope to follow-up tickets, or `Files Modified` collapses
-to a few doc-only fixes after an audit. When this happens, the higher-tier
-ceremony in `implement` keeps running on what is now S-shaped work.
-
-Two hooks downgrade the pointer when these signals fire. Each downgrade is
-one tier (`L → M`, `M → S`, `S → XS`); the rubric never upgrades and never
-downgrades below `XS`.
-
-| Hook | Where | Trigger |
-|------|-------|---------|
-| **A. Plan deferral check** | `plan-draft` before handoff | ≥40% of the plan's in-scope items have been deferred to follow-up tickets. |
-| **B. Files-Modified collapse** | `implement` before editing | Expected file list has ≤3 entries and every entry is trivial documentation or comment-only work. |
-
-When either trigger fires, downgrade the pointer and append one line to the
-decision audit trail:
-
+Real execution sometimes contracts the planned scope mid-flight; two hooks
+downgrade the pointer one tier (`L→M`, `M→S`, `S→XS`; never upgrade, never
+below XS): **A. Plan deferral** (`plan-draft` before handoff — ≥40% of
+in-scope items deferred to follow-ups) and **B. Files-Modified collapse**
+(`implement` before editing — ≤3 expected files, all trivial doc/comment
+work).
 ```bash
 OLD="$("${BBS_TICKET_BIN:-$HOME/.claude/bbs-ticket}" get pointers.ticket_size)"
 case "$OLD" in
@@ -89,19 +51,5 @@ if [ "$NEW" != "$OLD" ]; then
     >> "$_ADIR/decisions.jsonl"
 fi
 ```
-
-`$TRIGGER` is one of: `deferral_ratio>=40%` (Hook A) or `files_modified<=3_trivial`
-(Hook B). Subsequent skills read the new value via `bbs-ticket ensure-size`
-and adjust ceremony accordingly — no in-flight phase re-runs needed.
-
-## Implementation
-
-- `bbs-ticket ensure-size` — executes the diff-based rubric. Single source of
-  truth. Skills call it; don't inline the signals bash.
-- `plan-draft` Step 1 — applies the same rubric against expected footprint
-  (no diff yet) and writes the pointer directly via `bbs-ticket set-pointer`.
-  If Step 6b self-review revises the classification, rewrite the pointer
-  before the final handoff.
-
-When you change the thresholds above, update `bbs-ticket`'s `ensure-size`
-case in the same commit.
+`$TRIGGER` is `deferral_ratio>=40%` (A) or `files_modified<=3_trivial` (B).
+Subsequent skills pick up the new value via `bbs-ticket ensure-size`.

@@ -2,15 +2,11 @@
 name: analytics-review
 description: Maintainer pass over babysit telemetry. Use to turn ~/.babysit/analytics (skill-usage.jsonl, decisions.jsonl) into a short ticket-ready report — which skills fire and fail, which Taste decisions repeat, where runs go BLOCKED.
 ---
-
 # analytics-review
-
 The Maintainer archetype pointed at babysit itself. Telemetry is the pack's
 primary feedback channel; this skill closes the loop by reading it and emitting
 tickets, not dashboards. Read-only — it never edits the pack in the same run.
-
 ## Flow
-
 1. Locate the data: `A="${BABYSIT_ANALYTICS_DIR:-$HOME/.babysit/analytics}"`.
    Default window is the last 30 days; honor an explicit window from the
    invocation. Empty/missing files are a valid finding ("telemetry not
@@ -27,48 +23,24 @@ tickets, not dashboards. Read-only — it never edits the pack in the same run.
    - `kind:"resize"` rows → is `plan-draft` habitually over-sizing?
 4. Find where runs die: `outcome:"error"` clusters, BLOCKED/NEEDS_CONTEXT in
    verdict audits, and tickets whose checkpoint stopped advancing (if ticket
-   state is reachable). Also pair `start`/`end` by `(session, skill)` to find
-   **orphaned runs** — a `start` with no matching `end` is a run that died
-   (context death, crash, abandoned session) without closing. Pair within the
-   window only: session ids drifted in older history, so cross-history gross
-   `starts − ends` is unreliable (it can even go negative at a window edge).
-   A skill that emits `start` but *never* any `end` is an instrumentation gap,
-   not a death — report it separately. This is the direct read on the pack's
-   "it finishes" guarantee.
-
-   ```python
-   import json, collections, os, datetime as dt
-   A = os.environ.get("BABYSIT_ANALYTICS_DIR", os.path.expanduser("~/.babysit/analytics"))
-   since = (dt.datetime.now(dt.UTC) - dt.timedelta(days=30)).strftime("%Y-%m-%dT%H:%M:%SZ")
-   starts, ends, last = collections.Counter(), collections.Counter(), {}
-   for line in open(f"{A}/skill-usage.jsonl"):
-       try: r = json.loads(line)
-       except ValueError: continue
-       if (r.get("ts") or "") < since: continue
-       key = (r.get("session"), r.get("skill"))
-       if r.get("event") == "start": starts[key] += 1; last[key] = r.get("ts")
-       elif r.get("event") == "end": ends[key] += 1
-   orphans, latest = collections.Counter(), {}
-   for key, n in starts.items():
-       o = n - ends.get(key, 0)
-       if o > 0: orphans[key[1]] += o; latest[key[1]] = max(latest.get(key[1], ""), last.get(key) or "")
-   for sk, n in orphans.most_common(): print(f"{sk}: {n} orphaned (latest {latest[sk]})")
-   ```
+   state is reachable). Also pair `start`/`end` rows by `(session, skill)` to
+   find **orphaned runs** — a `start` with no matching `end` died without
+   closing. Pair within the window only: session ids drifted in older
+   history, so cross-history gross `starts − ends` is unreliable (it can even
+   go negative at a window edge). A skill that emits `start` but *never* any
+   `end` is an instrumentation gap, not a death — report it separately. This
+   is the direct read on the pack's "it finishes" guarantee.
 5. Emit the report: a ranked, ticket-ready list. Each item is one line of
    ticket title + one line of evidence (counts, skill names, sample ts). ≤7
    items; below that bar, say "no action needed" — an empty report is a valid
    result.
-
 ## Rules
-
 - Evidence or it didn't happen: every item cites counts from the files, never
   impressions. Don't invent trends from <5 data points.
 - Report, don't fix. Changing a skill because of a finding is the next ticket
   (usually `sweep` or `maintain`), not this run.
 - Local-only data: never send telemetry contents to an external service.
-
 ## Output
-
 ```text
 STATUS: DONE | NEEDS_CONTEXT | BLOCKED
 VERDICT: AUDITED
