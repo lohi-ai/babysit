@@ -12,7 +12,10 @@ status prints.
 1. Resolve the invocation: inline requirement, ticket id, named workflow, or
    resume. A checkpoint with work in flight means loop re-entry (below), not
    init.
-2. Ensure a ticket dir with `requirement.md` and `checkpoint.json`
+2. Not a git repo yet → `git init -b main` plus an initial commit first;
+   autopilot owns every git operation (repo init, branch, commit, land,
+   push) — never bounce one to the user or a step skill.
+   Then ensure a ticket dir with `requirement.md` and `checkpoint.json`
    (`bbs-ticket ensure`; git-flow `mode` from `.babysit/git-flow.yaml`, one-run
    override `--mode=<m>` — see [references/git-flow.md](../references/git-flow.md)).
    When seeding `requirement.md` from free text, list open decisions
@@ -41,6 +44,8 @@ review-pr verdict persisted, branch pushed, handoff note written — or a
 NEEDS_CONTEXT / BLOCKED status block printed verbatim.
 Work it: /bbs:autopilot <workflow> <ticket>
 ```
+For a human, introduce it in plain words — pasting that line is all they
+need to do; never assume they know git or babysit internals.
 Inside the loop (re-entry, orchestrator, `SPAWNED=true`), skip the handoff
 and work. Cold session: recover from checkpoint, ticket files, workflow file,
 git state first; warm session: keep going with what's in context. Treat the
@@ -63,6 +68,13 @@ the human runs it after reviewing the handoff.
 - Full reasoning depth at every step; requirement and plan are single-pass on
   wording, not on thinking. `review-pr` and `qa` are the strict gates — their
   persisted verdicts are what the push/PR hook enforces.
+- Git is autopilot's job end to end. Step skills are infra-isolated — they
+  edit the working tree and never branch, commit, or push; commit their
+  output yourself at each milestone.
+- `INVOKER=developer`: lead every stop — handoff, `NEEDS_CONTEXT`, final
+  status — with one plain-language sentence saying what happened and the
+  exact next command to paste; a non-technical user must be able to keep
+  the build moving without knowing git.
 - Never force-push, drop data, send external messages, or create PRs.
 - Always run QA before final handoff and persist the verdict with
   `bbs-ticket set-verdict --skill qa` (real PASS/FIXED, or

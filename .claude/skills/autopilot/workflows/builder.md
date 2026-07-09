@@ -24,19 +24,34 @@ If none match and there is no ticket/requirement, stop with `NEEDS_CONTEXT`.
 > produces: verdict:builder + qa:checked + git:branch-ready
 1. Ensure ticket, branch, and checkpoint exist; record the mode in the
    checkpoint.
-   **Readiness gate:** if `bbs-autopilot probe` reports
-   `state_repo_configured=0` — no `.babysit/git-flow.yaml` at the git toplevel —
-   the repo isn't set up for unattended code-writing work. Stop with
-   `NEEDS_CONTEXT` recommending `/bbs:setup-project` instead of guessing
-   branch/QA policy. `state_landing_doc=0` (no CLAUDE.md or AGENTS.md)
-   is a warning to note in the handoff, not a stop.
+   **Bootstrap gate:** `bbs-autopilot probe` reporting
+   `state_repo_configured=0` — no `.babysit/git-flow.yaml` at the git
+   toplevel — is not a stop: branch policy is mechanical, and a
+   non-technical invoker can't answer it. Seed the documented defaults and
+   keep going:
+   ```bash
+   TOP=$(git rev-parse --show-toplevel)
+   BASE=$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's|^origin/||')
+   [ -n "$BASE" ] || for b in main master; do git show-ref -q --verify "refs/heads/$b" && BASE=$b && break; done
+   git remote get-url origin >/dev/null 2>&1 && PUSH=true || PUSH=false
+   mkdir -p "$TOP/.babysit"
+   printf 'base_branch: %s\nbranch_prefix: feat\npush: %s\nmode: branch\n' \
+     "${BASE:-main}" "$PUSH" > "$TOP/.babysit/git-flow.yaml"
+   ```
+   Record the seeded defaults in the handoff and recommend
+   `/bbs:setup-project` for the QA harness (`qa.yaml`, credentials) — that
+   part is not guessable. `state_landing_doc=0` (no CLAUDE.md or AGENTS.md)
+   stays a warning to note in the handoff, not a stop.
 2. **build mode only (skip when init already seeded `plan.md`):** run
    `plan-draft` (user-facing work routes through `design-ui`, so the plan
    carries the UI spec + prototype). Write `plan.md` unless the task is XS.
    Don't stop for plan/prototype review — the human reviews once, at the
    final handoff — unless `--stop-after=plan` was passed.
 3. **build / implement / child modes:** run `implement` against the
-   requirement, plan, and (child mode) only the child scope.
+   requirement, plan, and (child mode) only the child scope. `implement`
+   leaves the working tree dirty by design — commit its output here. Skills
+   are infra-isolated: every branch, commit, land, and push in this workflow
+   is autopilot's own step, never a skill's.
 4. **orchestrate mode:** run each child in manifest order via `builder`,
    checkpoint each merged child, then merge completed children into the parent.
 5. Run `review-pr`; fix mechanical findings and persist the verdict with
@@ -49,7 +64,8 @@ If none match and there is no ticket/requirement, stop with `NEEDS_CONTEXT`.
    `merge-base` BLOCKs because a diverted primary isn't on base, QA in the
    worktree itself (it holds the complete change); a merge-conflict BLOCK is
    instead resolved in the worktree, committed, and `merge-base` re-run. QA
-   fixes always commit in the worktree, then re-run `merge-base` before
+   fixes land the same way: the `qa` skill only edits files — commit its
+   fixes in the worktree yourself, then re-run `merge-base` before
    re-testing. No runnable target → record the blocker and run the strongest
    fallback (`browse` for UI, else a narrow local check). Persist the verdict
    with `bbs-ticket set-verdict --skill qa`.
@@ -60,8 +76,10 @@ If none match and there is no ticket/requirement, stop with `NEEDS_CONTEXT`.
    warrants, the forward lifecycle edge after `create-pr` (leftover cruft →
    `sweeper`; surface now live and measurable → `grower`). Child mode targets
    the parent orchestrate run. Cross-repo: list every touched repo with its
-   branch. Confirm clean state first: no debug leftovers, nothing
-   uncommitted, checkpoint current.
+   branch. Write it so a non-technical owner can act: lead with what was
+   built and where to see it (URL), and give the next action as a
+   copy-paste command. Confirm clean state first: no debug leftovers,
+   nothing uncommitted, checkpoint current.
 ### Sub-ticket branch shape
 Child branches are slash-namespaced under the parent so they never collide
 with the parent's own underscore branch. Load-bearing — keep both

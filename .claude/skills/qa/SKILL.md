@@ -39,8 +39,9 @@ Exercise the application like a user and leave reproducible evidence.
    workflow's concern (`../references/git-flow.md` § QA loop). Before
    trusting any surface, confirm it actually serves the change (probe a
    marker from the diff); if not, name the stale surface rather than testing
-   blind. Fixes commit in the checkout under test; re-verify on the updated
-   surface.
+   blind. Fixes edit the files in the checkout under test — committing and
+   landing them, like branching, stays the invoking workflow's job —
+   re-verify on the updated surface.
 3. Code-level checks (tests, typecheck, lint) first — they gate, they don't
    prove.
 4. Build a flow matrix from the acceptance criteria — not just the diff —

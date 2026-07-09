@@ -120,10 +120,12 @@ find them — workflows already cover the strict path):
    wraps release gates with the appropriate policy). A skill that does
    read-only or contained work shouldn't refuse a dirty tree.
 5. **Git-flow protocol in the skill** — worktree landing (`merge-base`/`switch`),
-   git-flow `mode:` branching, base-checkout policy belong to autopilot's
-   workflows. A skill invoked directly (e.g. via `/goal`) operates on the
-   current checkout as-is and verifies the surface it tests actually serves
-   the change, instead of enforcing how it got there.
+   git-flow `mode:` branching, base-checkout policy, and every git mutation
+   (branch, commit, push) belong to autopilot's workflows: skills are
+   infra-isolated and only edit the working tree. A skill invoked directly
+   (e.g. via `/goal`) operates on the current checkout as-is and verifies
+   the surface it tests actually serves the change, instead of enforcing
+   how it got there.
 
 Rule of thumb: when adding a gate to a skill, ask "does the workflow that
 calls this skill already enforce this?" If yes, the skill check is dead

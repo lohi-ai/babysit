@@ -29,6 +29,9 @@ guardrails.
   option — smallest change, most reversible, preserves the plan's intent —
   log it (see Ticket Mode), and keep going. Never block on a reversible
   choice; never silently absorb a deviation.
+- Never branch, commit, or push — leave the change in the working tree.
+  Skills are infra-isolated; git belongs to the invoking workflow
+  (autopilot) or the human.
 - Verify with the narrowest meaningful command (tests, typecheck, lint,
   build, or browser check) and summarize changed files, verification, and
   remaining risk.

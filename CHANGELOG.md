@@ -1,5 +1,28 @@
 # Changelog
 
+## 1.53.0 — 2026-07-09
+
+### Changed
+
+- **Builder bootstrap gate** — an unconfigured repo
+  (`state_repo_configured=0`) no longer dead-ends in `NEEDS_CONTEXT`
+  pointing at the developer-only `setup-project`. The builder workflow now
+  seeds `.babysit/git-flow.yaml` with detected defaults (base from
+  `origin/HEAD` → local `main`/`master` → current branch; `push` only when
+  a remote exists; `mode: branch`) and keeps going, recommending
+  `/bbs:setup-project` in the handoff for the QA harness only.
+  `test_autopilot_readiness_gate.sh` now executes the seed block.
+- **Git is autopilot's job, end to end** — step skills are infra-isolated:
+  `implement` and `qa` never branch, commit, or push (QA fixes edit the
+  checkout; the workflow commits and lands them). Autopilot init `git
+  init`s a bare folder, and the builder workflow commits each skill's
+  output itself. `CLAUDE.md` over-strict pattern #5 extended to cover all
+  git mutations.
+- **Plain-language guidance for humans** — with `INVOKER=developer`,
+  autopilot leads every stop (handoff, `NEEDS_CONTEXT`, final status) with
+  one plain sentence plus the exact next command to paste, so a
+  non-technical user can drive a build end to end without knowing git.
+
 ## 1.52.1 — 2026-07-08
 
 ### Changed
