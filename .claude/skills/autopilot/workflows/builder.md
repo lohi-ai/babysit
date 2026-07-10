@@ -58,7 +58,7 @@ If none match and there is no ticket/requirement, stop with `NEEDS_CONTEXT`.
    `bbs-ticket set-verdict --skill review-pr` — the push gate reads it.
    (Skip in verify mode.)
 6. Run `qa` against the requirement's acceptance criteria, the plan's
-   `## Verification`, and the implement handoff — not just the diff. QA needs
+   `**Verify:**` line, and the implement handoff — not just the diff. QA needs
    the change on the served surface first: in-place checkouts QA directly; a
    worktree change lands via `bbs-ticket merge-base` before QA. If
    `merge-base` BLOCKs because a diverted primary isn't on base, QA in the

@@ -35,6 +35,13 @@ REASON: Requirement "handle duplicate invoices" could mean (a) reject with 409,
 ATTEMPTED: Grepped invoices/*.ts for prior handling — only happy path present.
 RECOMMENDATION: Ask the ticket owner which of A/B/C applies before implementing.
 ```
+## Native task list
+Multi-step work mirrors into Claude Code's native task list
+(TaskCreate/TaskUpdate): seed tasks from the skill's driving artifact —
+`plan.md`, the QA flow matrix, workflow milestones — and mark each
+in_progress on start, completed only when its check passes. The task list is
+the visible progress view; disk artifacts stay the durable state — on cold
+resume rebuild the list from them, never the reverse.
 ## Preamble (run first)
 ```bash
 # ── Skill preamble ───────────────────────────────────────────────

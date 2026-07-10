@@ -126,10 +126,30 @@ VERDICT: PASS | FINDINGS(<N>) | FIXED(<N>) | FIXED(<N>)+FINDINGS(<M>)
 SUMMARY: <remaining risk and test gaps>
 ANGLES: A=<cand> B=<cand> C=<cand> D=<cand> E=<cand> F=<cand> G=<cand> H=<cand> sweep=<cand|skipped> | validated=<n> rejected=<n> consensus=<n>
 ```
-**Learn** — when a CONFIRMED finding or verified fix teaches a rule a future
-diff could violate, append `<rule> (<branch>, <date>)` to
-`<repo>/.babysit/review-pr.md`, skipping rules already there. Never one-off
-facts about this change.
+**Learn** — a living rule book (spec: `swatter/docs/DESIGN-RULEBOOK.md`, same
+entry format so Swatter and review-pr can read each other's book). Run once
+after the review, in order, against `<repo>/.babysit/review-pr.md`:
+1. **Learn.** Each CONFIRMED finding / verified fix that teaches a pattern a
+   *future* diff could violate → at most one generalized rule (the class of
+   mistake, never "PR #42 line 88 forgot X"). No confirmed findings → nothing.
+2. **Dedup.** Before adding, compare to every existing rule: a normalized-text
+   match is a free skip; otherwise judge whether it's a paraphrase,
+   generalization, or subset of an existing rule — if so, skip. (Exact-match-only
+   skipping silently accumulates near-dupes.)
+3. **Score.** For rules that fired this review: cited by a surviving finding →
+   `hits++`, `last_hit=today`, nudge confidence up; cited by a rejected
+   candidate → `misses++`, drop confidence fast (noisy rules decay quickest).
+4. **Compact/expire.** When the file exceeds **~4 KB** or every **~20 reviews**:
+   drop any rule whose `path:` no longer exists, then evict lowest
+   `confidence × recency` (≈60-day half-life) until it fits. Rule entry:
+   ```markdown
+   - id: r-2026-07-11-1
+     rule: Wrap external API calls in the shared withRetry helper
+     origin: <branch> 2026-07-11   confidence: 0.90
+     path: api/client.go
+     hits: 2   last_hit: 2026-07-11   misses: 0
+   ```
+Edit the working tree only — the ticket flow owns the commit.
 When a ticket resolves, persist the **full block** — `qa` reads
 `RISK_AREAS`, `FIXED`, and `FINDINGS` to build its case matrix:
 ```bash

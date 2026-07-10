@@ -6,7 +6,7 @@ description: Prepare and create a pull request from the current branch. Use when
 Create a reviewable PR without merging it.
 ## Flow
 1. Inspect git status, branch, commits, and remote. Resolve `base_branch` and `mode` from `.babysit/git-flow.yaml` (fall back to the repo's default branch and `mode: branch`). Honor the mode — see below.
-2. Read requirement, plan, implementation handoff, and verification evidence when present. Carry them into the PR body as a short reviewer explainer: context and intent, where new code meets existing behavior, deviations from the plan (implement handoff's `## Deviations`), QA evidence.
+2. Read requirement, plan, implementation handoff, and verification evidence when present. Carry them into the PR body as a short reviewer explainer: context and intent, where new code meets existing behavior, deviations from the plan (implement handoff's `## Deviations`), QA evidence. End the body with a **Reviewer quiz**: 2–3 questions probing what the diff alone can't show — behavior that rides on existing code paths, the consequence of a deviation, what else the change can reach — with answers collapsed in a `<details>` block so the reviewer self-checks before merging.
 3. Resolve mechanical version or changelog requirements only when the repo requires them.
 4. Commit remaining intended changes, push the ticket branch, and open the PR against `base_branch`. If `push: false`, stop with `BLOCKED` naming the policy instead of pushing.
 5. Return the PR URL, title, summary, tests, and concerns.
@@ -28,5 +28,5 @@ STATUS: DONE | DONE_WITH_CONCERNS | NEEDS_CONTEXT | BLOCKED
 VERDICT: PR_CREATED
 PR: <url>
 SUMMARY: <title + checks>
-NEXT: human review
+NEXT: human review — pass the quiz before merging
 ```

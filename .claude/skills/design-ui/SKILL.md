@@ -34,7 +34,13 @@ with a prototype the human can open.
      built from the real design-system components and tokens.
    - No runnable frontend, or a standalone request: one self-contained HTML
      file (inline CSS, no external assets) at `tickets/<ticket>/prototype.html`
-     when a ticket resolves, else in the working directory.
+     when a ticket resolves, else in the working directory. **Token-skinned,
+     not free-form:** inline the project's real tokens (colors, radii,
+     spacing, type scale from DESIGN.md / `bbs-design tokens`) as CSS
+     variables and imitate inventory components, copying their actual styles
+     from the nearest real screen — the mock must look like the product,
+     because `implement` builds to it as the accepted look. Free-form styling
+     only when the project has no UI yet (step 2's new-project path).
    Show the primary state plus the empty and error variants on the same
    surface. Real copy, never lorem ipsum.
 5. **Check.** Run `bbs-design ux-check --category accessibility` always, plus
@@ -56,6 +62,9 @@ with a prototype the human can open.
   (https://astryx.atmeta.com/docs/getting-started), else shadcn/ui
   (https://ui.shadcn.com/docs/installation). Never hand-roll a primitive
   either one provides.
+- Every prototype element maps to a named component in DESIGN.md's inventory,
+  or is flagged `NEW:` in the spec with a one-clause why — a novel component
+  is a decision the human approves, never an accident.
 - Prototype code is disposable and isolated: never wire it into production
   navigation, routes, or shared state — `implement` rebuilds it properly
   following this spec; do not build the production feature here.

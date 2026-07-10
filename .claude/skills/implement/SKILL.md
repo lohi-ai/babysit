@@ -5,13 +5,19 @@ description: Implement a scoped code change from the user's request, an accepted
 # implement
 Build the smallest correct change; this file only sets the babysit-specific
 guardrails.
-- Read the request, plan (including its `## Reuse` and `## Design` sections),
-  and nearby code before editing. If the plan's `## Files` list has collapsed
-  to ≤3 entries of trivial doc/comment-only work, downgrade `ticket_size` one
-  tier using the downgrade hook in `../references/ticket-size-rubric.md` (it
-  writes the audit-log line).
+- Read the request, plan, and nearby code before editing. The plan is thin
+  by design — goal, approach, unknowns — so you own the detail: derive files,
+  task order, and steps from the code. If the work collapses to ≤3 trivial
+  doc/comment-only edits, downgrade `ticket_size` one tier using the
+  downgrade hook in `../references/ticket-size-rubric.md` (it writes the
+  audit-log line).
+- The plan file is the Claude Code plan: derive the native task list
+  (TaskCreate) from `plan.md` — you own task order, one task per verifiable
+  unit — and keep it live: in_progress when started, completed only after its
+  check passes. A deviation updates the task list and `## Deviations`; never
+  track the work in an ad-hoc list beside the plan.
 - Reuse before writing: before creating any util, helper, or component, check
-  the plan's `## Reuse` section, then grep shared/lib/util dirs and the
+  the reuse notes in the plan's **Approach**, then grep shared/lib/util dirs and the
   nearest similar feature. A new shared util or abstraction is a plan
   decision, not an ad-hoc call.
 - UI: reuse the design system — components, tokens (`bbs-design tokens`; if

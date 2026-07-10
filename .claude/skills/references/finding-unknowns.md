@@ -31,4 +31,6 @@ Per phase: requirement seeding lists open decisions instead of papering over
 them; `plan-draft` runs the blindspot pass and leads with volatile decisions;
 `implement` logs deviations rather than absorbing them; `qa` derives the
 change's reach independently of the producer's claims; `investigate` checks
-history for prior fixes in the failing area before theorizing.
+history for prior fixes in the failing area before theorizing; `create-pr`
+ends the PR body with a reviewer quiz so the human's unknowns surface before
+merge, not after.

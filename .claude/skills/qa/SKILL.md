@@ -8,7 +8,7 @@ Exercise the application like a user and leave reproducible evidence.
 1. Load what to test — disk first, conversation as fallback. Resolve the
    ticket (`bbs-ticket resolve`); when it resolves, read whichever exist:
    - `bbs-ticket path requirement --read` — acceptance criteria
-   - `bbs-ticket path plan --read` — especially `## Verification`
+   - `bbs-ticket path plan --read` — especially its `**Verify:**` line
    - `bbs-ticket path handoff --skill implement --latest --read` — and its
      `## Deviations`: each deviation is where the plan diverged from reality,
      the likeliest home of a wrong guess
@@ -58,6 +58,8 @@ Exercise the application like a user and leave reproducible evidence.
    criterion* case with the gap named in `SUMMARY`; an uncoverable criterion
    is named as a gap now, never silently dropped. Save the matrix:
    `bbs-ticket path evidence --skill qa --name test-matrix.md --write`.
+   Mirror the matrix into the native task list (TaskCreate) — one task per
+   case, closed only when its evidence lands.
 5. Execute the flows end-to-end with a real client. Web UI: the `browse`
    engine — Read `../browse/SKILL.md` § Engine before the first browser
    command; its session-name export and setup are mandatory. Non-UI: a real

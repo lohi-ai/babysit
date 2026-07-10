@@ -52,8 +52,11 @@ git state first; warm session: keep going with what's in context. Treat the
 workflow file as mode router + gate list, not a script — pick the mode from
 durable state, honor the gates, and do everything between them the way a
 direct session would. Checkpoint at milestones (plan seeded, implementation
-verified, findings fixed, QA verdict), not per step. End every pass with the
-status block below.
+verified, findings fixed, QA verdict), not per step. Mirror those milestones
+into the native task list (TaskCreate) at loop entry — rebuilt from checkpoint
++ `plan.md` on cold re-entry — and close each as its gate passes; step skills
+add their finer tasks to the same list. The task list is the visible progress
+view, disk stays the brain. End every pass with the status block below.
 ## Step Skills
 "Run `<skill>`" means a real Skill-tool invocation (`bbs:<name>` when
 installed as the plugin, bare `<name>` inside the babysit repo), never doing
