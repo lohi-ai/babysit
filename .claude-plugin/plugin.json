@@ -1,8 +1,8 @@
 {
   "name": "bbs",
   "description": "Autonomous Claude Code skill pack — scheduled runs, background jobs, CI loops. Skills invoke as /bbs:<name>.",
-  "homepage": "https://github.com/reallongnguyen/babysit",
-  "repository": "https://github.com/reallongnguyen/babysit",
+  "homepage": "https://github.com/lohi-ai/babysit",
+  "repository": "https://github.com/lohi-ai/babysit",
   "license": "MIT",
   "skills": "./.claude/skills"
 }

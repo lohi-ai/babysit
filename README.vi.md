@@ -68,7 +68,7 @@ Ba bước. Cài một lần cho toàn máy, cấu hình mỗi repo một lần,
 **Nhanh nhất — để Claude Code làm hộ.** Dán đoạn này vào Claude Code, nó sẽ clone repo, chạy trình cài đặt, rồi chỉ cho bạn từng bước còn lại:
 
 ```
-Cài plugin babysit giúp mình: clone https://github.com/reallongnguyen/babysit.git
+Cài plugin babysit giúp mình: clone https://github.com/lohi-ai/babysit.git
 vào ~/.claude/skills/babysit, chạy ./bin/setup-skills --full, rồi liệt kê chính xác các
 bước tiếp theo mình cần tự chạy (các lệnh /plugin, cấu hình repo, chạy lần đầu).
 ```
@@ -78,7 +78,7 @@ Claude lo phần clone + `setup-skills`; các lệnh `/plugin` bên dưới là 
 **Hoặc làm thủ công:**
 
 ```bash
-git clone --single-branch --depth 1 https://github.com/reallongnguyen/babysit.git ~/.claude/skills/babysit
+git clone --single-branch --depth 1 https://github.com/lohi-ai/babysit.git ~/.claude/skills/babysit
 cd ~/.claude/skills/babysit
 ./bin/setup-skills --full
 ```

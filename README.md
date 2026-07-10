@@ -68,7 +68,7 @@ Three steps. Install once globally, configure each repo once, then run.
 **Fastest — let Claude Code do it.** Paste this into Claude Code and it clones the repo, runs the installer, and then tells you the remaining steps one by one:
 
 ```
-Install the babysit plugin for me: clone https://github.com/reallongnguyen/babysit.git
+Install the babysit plugin for me: clone https://github.com/lohi-ai/babysit.git
 into ~/.claude/skills/babysit, run ./bin/setup-skills --full, then list the exact next
 steps I still need to run myself (the /plugin commands, configuring a repo, first run).
 ```
@@ -78,7 +78,7 @@ Claude handles the clone + `setup-skills`; the `/plugin` commands below are slas
 **Or do it by hand:**
 
 ```bash
-git clone --single-branch --depth 1 https://github.com/reallongnguyen/babysit.git ~/.claude/skills/babysit
+git clone --single-branch --depth 1 https://github.com/lohi-ai/babysit.git ~/.claude/skills/babysit
 cd ~/.claude/skills/babysit
 ./bin/setup-skills --full
 ```
