@@ -10,8 +10,12 @@ with a prototype the human can open.
    conversation). The landing doc's declared design doc is authoritative —
    pass a non-root path via `bbs-design tokens --design <path>`. Then
    `bbs-design components --root <fe-root>` and the nearest existing screen
-   that solves a similar problem. When improving an existing screen, read the
-   code that renders it and open it live (`browse`) before designing.
+   that solves a similar problem. Designing **into an existing screen** — a
+   new section, tab, or field group on a page that already exists — makes
+   that page the primary design source: read the code that renders it, open
+   it live (`browse`) before designing, and inventory the sibling sections'
+   actual components, wrappers, headings, and spacing — the new section
+   inherits those, never a fresh style.
 2. **No design doc found? Author DESIGN.md** at the repo root in the
    `babysit-design/v1` shape (`references/design-md-template.md`), then
    continue with it as the master:
@@ -41,6 +45,10 @@ with a prototype the human can open.
      from the nearest real screen — the mock must look like the product,
      because `implement` builds to it as the accepted look. Free-form styling
      only when the project has no UI yet (step 2's new-project path).
+   Extending an existing page: prototype the new section **in context** —
+   inside a throwaway copy of the host page, or with one sibling section
+   copied verbatim beside it — so what the human judges is whether it looks
+   like it was always there.
    Show the primary state plus the empty and error variants on the same
    surface. Real copy, never lorem ipsum.
 5. **Check.** Run `bbs-design ux-check --category accessibility` always, plus
@@ -65,6 +73,10 @@ with a prototype the human can open.
 - Every prototype element maps to a named component in DESIGN.md's inventory,
   or is flagged `NEW:` in the spec with a one-clause why — a novel component
   is a decision the human approves, never an accident.
+- On an existing page, the sibling sections outrank the global inventory:
+  reuse the exact section/card/form primitives that page already uses;
+  diverging from the host page's local patterns is itself a `NEW:` flag,
+  not a taste choice.
 - Prototype code is disposable and isolated: never wire it into production
   navigation, routes, or shared state — `implement` rebuilds it properly
   following this spec; do not build the production feature here.
