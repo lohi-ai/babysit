@@ -187,7 +187,7 @@ When to reach for it (and how to think about it when editing it):
 Workflows are split along the four points where a human actually adds value:
 
 1. **Requirement accepted** → `requirement.md` on the ticket. Autopilot drafts it in Flow steps 1–2 and stops at `--stop-after=requirement` if requested; requirement drafting is part of autopilot, not a separate skill.
-2. **Plan accepted** → `plan.md` on the ticket. Owner: autopilot init via `plan-draft` (builder build mode covers the case init didn't seed it); stops at `--stop-after=plan` if requested.
+2. **Plan accepted** → `plan.md` on the ticket. Owner: autopilot init via `plan-draft`; user-facing work routes through `design-ui` inside it, so the plan carries the UI spec + prototype **before** the `/goal` handoff — the handoff is where the human reviews design ahead of implementation (builder build mode covers the case init didn't seed it); stops at `--stop-after=plan` if requested.
 3. **QA ready** → branch implemented, reviewed, checked with `qa` or a named fallback. Owner: `builder` (implement / build / child / verify modes) — the default end-to-end stop.
 4. **PR ready** → human reviews the QA handoff and invokes `create-pr`. Autopilot does not create PRs.
 

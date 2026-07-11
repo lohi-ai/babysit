@@ -31,7 +31,10 @@ status prints.
    named — a named archetype is direction enough to proceed.
 4. Seed the plan when the routed mode needs one (build mode, size above XS):
    run `plan-draft` now — `plan.md` on disk is what a crashed loop recovers
-   from. Stop here on `--stop-after=plan`.
+   from. User-facing work routes through `design-ui` inside `plan-draft`;
+   make sure that ran, so the spec and prototype exist *before* the `/goal`
+   handoff — design is reviewed before implementation, not discovered after
+   it. Stop here on `--stop-after=plan`.
 5. Hand the work to `/goal` (below). Init never executes workflow steps.
 ## The work loop (`/goal`)
 `/goal <condition>` arms a Stop hook that blocks the session from stopping
@@ -44,8 +47,11 @@ review-pr verdict persisted, branch pushed, handoff note written — or a
 NEEDS_CONTEXT / BLOCKED status block printed verbatim.
 Work it: /bbs:autopilot <workflow> <ticket>
 ```
-For a human, introduce it in plain words — pasting that line is all they
-need to do; never assume they know git or babysit internals.
+For a human, introduce it in plain words — point them at `plan.md` and the
+prototype path when `design-ui` produced one ("here's what will be built and
+what it will look like"), so they can redirect the design *before* pasting
+the line; pasting it is all they need to do, never assume they know git or
+babysit internals.
 Inside the loop (re-entry, orchestrator, `SPAWNED=true`), skip the handoff
 and work. Cold session: recover from checkpoint, ticket files, workflow file,
 git state first; warm session: keep going with what's in context. Treat the
