@@ -54,9 +54,9 @@ If none match and there is no ticket/requirement, stop with `NEEDS_CONTEXT`.
    is autopilot's own step, never a skill's.
 4. **orchestrate mode:** run each child in manifest order via `builder`,
    checkpoint each merged child, then merge completed children into the parent.
-5. Run `review-pr`; fix mechanical findings and persist the verdict with
-   `bbs-ticket set-verdict --skill review-pr` — the push gate reads it.
-   (Skip in verify mode.)
+5. Run `review-pr --fix` (applies fixes to the working tree) and persist the
+   verdict with `bbs-ticket set-verdict --skill review-pr` — the push gate
+   reads it. (Skip in verify mode.)
 6. Run `qa` against the requirement's acceptance criteria, the plan's
    `**Verify:**` line, and the implement handoff — not just the diff. QA needs
    the change on the served surface first: in-place checkouts QA directly; a
