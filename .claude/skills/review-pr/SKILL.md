@@ -1,16 +1,19 @@
 ---
 name: review-pr
-description: Review the current diff or a pull request before landing — a verbatim mirror of Claude Code's /code-review at a chosen effort level (low/medium/high/xhigh/max). Parallel finder angles, one-vote verify, sweep, ranked capped findings; --fix and --comment supported.
+description: Review code before it lands — the current branch, working diff, or a GitHub pull request. Use when asked to review a PR/diff/change, run a code review, do a pre-merge or pre-commit check, hunt for bugs, or gate a change before landing. Surfaces correctness bugs, removed behavior, cross-file breakage, security, performance, and cleanup, then verifies each candidate before reporting. Effort levels low|medium|high|xhigh|max (default medium); --fix applies findings to the working tree, --comment posts inline PR comments. Verbatim mirror of Claude Code's /code-review.
 ---
 # review-pr
 
-This skill is a **verbatim mirror** of Claude Code's built-in `/code-review`,
-extracted in `docs/claude-code-2.1.201-code-review.md`. The shared fragments
-(§1), inline level templates (§2), and flag appendices (§3) below are the exact
-prompt strings the CLI emits — do not paraphrase them. Assemble the requested
-level's template from the fragments it references and run it as written.
-Minified identifiers are kept in parentheses so each region maps 1:1 to the
-extraction doc.
+How to execute:
+1. Resolve the effort level and flags from the invocation (§0).
+2. Take that level's template from §2 and expand every `<…>` reference into the
+   matching fragment from §1 (and the §3 appendix for each flag that was set).
+3. Send the assembled prompt **word for word** — never paraphrase, summarize,
+   reorder, or "improve" it. These strings are tuned; edits change behavior.
+
+The parenthesized minified identifiers (`IFl`, `H2o`, `P2o`, …) are anchors
+that map each region 1:1 to the extraction doc; keep them so the mirror can be
+re-verified against a future dump.
 
 ## 0. Routing
 

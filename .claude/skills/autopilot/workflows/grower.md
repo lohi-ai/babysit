@@ -19,7 +19,7 @@ reversible experiment per run.
    `growth-experiment`.
 3. If asked to implement, scaffold the smallest flagged, reversible variant with
    exposure and conversion tracking. Otherwise stop at the ranked recommendation.
-4. If code changed: run `review-pr`, then `qa` (or the strongest fallback), and
+4. If code changed: run `review-pr --fix`, then `qa` (or the strongest fallback), and
    persist the verdict with `bbs-ticket set-verdict --skill qa`.
 5. Commit and push any scaffolded variant when policy allows.
 6. Write a handoff: metric, winning experiment + constraining assumption, and
