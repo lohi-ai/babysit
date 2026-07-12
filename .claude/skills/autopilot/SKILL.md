@@ -39,19 +39,27 @@ status prints.
 ## The work loop (`/goal`)
 `/goal <condition>` arms a Stop hook that blocks the session from stopping
 until the condition holds. Autopilot cannot arm it itself — after init, print
-the handoff line and stop (`developer`: the human runs it; orchestrators put
-the same line at the front of the spawn prompt):
+the handoff and stop (`developer`: the human runs it; orchestrators put the
+`/goal` block at the front of the spawn prompt).
+For `developer`, lead with a fixed **Review-before-you-paste** preamble
+carrying the pointers init produced — one line each, and omit a line only when
+that artifact does not exist — then the `/goal` block:
 ```
+Ready for <ticket>. Before you paste, review what will be built:
+  plan:      <plan.md path>
+  prototype: <prototype path>   ← how it will look; open it locally
+Redirect the design now if it's wrong — pasting the line below is all you do next.
+
 /goal <ticket> is done: qa verdict PASS/FIXED persisted via bbs-ticket set-verdict,
 review-pr verdict persisted, branch pushed, handoff note written — or a
 NEEDS_CONTEXT / BLOCKED status block printed verbatim.
 Work it: /bbs:autopilot <workflow> <ticket>
 ```
-For a human, introduce it in plain words — point them at `plan.md` and the
-prototype path when `design-ui` produced one ("here's what will be built and
-what it will look like"), so they can redirect the design *before* pasting
-the line; pasting it is all they need to do, never assume they know git or
-babysit internals.
+The preamble is mandatory whenever `plan-draft`/`design-ui` produced those
+artifacts — it is the design checkpoint, not decoration; keep it in plain
+words and never assume the human knows git or babysit internals. Orchestrators
+(non-`developer`) skip the preamble and put only the `/goal` block in the
+spawn prompt.
 Inside the loop (re-entry, orchestrator, `SPAWNED=true`), skip the handoff
 and work. Cold session: recover from checkpoint, ticket files, workflow file,
 git state first; warm session: keep going with what's in context. Treat the

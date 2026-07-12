@@ -54,7 +54,11 @@ with a prototype the human can open.
 5. **Check.** Run `bbs-design ux-check --category accessibility` always, plus
    the categories the surface touches (forms, navigation, charts, …), and fix
    violations in the prototype. Verify it actually renders — load the dev
-   route or open the HTML (use `browse` when available).
+   route or open the HTML (use `browse` when available). The prototype stays a
+   local file the human opens locally — **never publish it as a Claude Artifact
+   (`claude.ai`).** `browse` already renders at any device width (390px mobile
+   included) without sending the mock — which clones the project's real tokens
+   and screens — to an external service.
 6. **Handoff.** When a ticket resolves, write the spec to `design.md` and
    `bbs-ticket set-pointer design <path>`; otherwise emit it inline. State
    the prototype path and the one command/URL to view it.
