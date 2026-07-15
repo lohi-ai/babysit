@@ -188,7 +188,7 @@ Workflows are split along the four points where a human actually adds value:
 
 1. **Requirement accepted** → `requirement.md` on the ticket. Autopilot drafts it in Flow steps 1–2 and stops at `--stop-after=requirement` if requested; requirement drafting is part of autopilot, not a separate skill.
 2. **Plan accepted** → `plan.md` on the ticket. Owner: autopilot init via `plan-draft`; user-facing work routes through `design-ui` inside it, so the plan carries the UI spec + prototype **before** the `/goal` handoff — the handoff is where the human reviews design ahead of implementation (builder build mode covers the case init didn't seed it); stops at `--stop-after=plan` if requested.
-3. **QA ready** → branch implemented, reviewed, checked with `qa` or a named fallback. Owner: `builder` (implement / build / child / verify modes) — the default end-to-end stop.
+3. **QA ready** → branch implemented, reviewed, checked with `qa` or a named fallback. Owner: `builder` (implement / build / child / verify modes) — the default end-to-end stop. For a batch of *independent* tickets, `conductor` owns this checkpoint batch-wide: one background worker per ticket, QA serialized on `bbs-ticket qa-lease` (one test surface), a combined integration pass, and one aggregate handoff.
 4. **PR ready** → human reviews the QA handoff and invokes `create-pr`. Autopilot does not create PRs.
 
 When adding or editing a workflow, be explicit about which checkpoint it stops at, and make sure the final step's handoff comment ends with a `Next:` line pointing at the human's next action (read + accept plan, review QA evidence, run `create-pr`, etc.). A workflow that crosses a checkpoint without stopping should say so in its frontmatter description (see `builder.md`).
@@ -204,7 +204,7 @@ terminal or wrap them in an orchestrator that can relay `NEEDS_CONTEXT`.
 
 | Compatibility | Skills |
 |---------------|--------|
-| **`INVOKER`-agnostic** (safe to chain unattended) | `analytics-review`, `autopilot`, `browse`, `conversion-fix`, `copy-rewrite`, `create-pr`, `design-ui`, `growth-experiment`, `implement`, `investigate`, `maintain`, `plan-draft`, `prototype`, `qa`, `recon`, `review-pr`, `social-content`, `sweep`, `triage` |
+| **`INVOKER`-agnostic** (safe to chain unattended) | `analytics-review`, `autopilot`, `browse`, `conversion-fix`, `copy-rewrite`, `create-pr`, `design-ui`, `fix-pr`, `growth-experiment`, `implement`, `investigate`, `maintain`, `plan-draft`, `prototype`, `qa`, `recon`, `review-pr`, `social-content`, `sweep`, `triage` |
 | **`developer`-only** (require a human at the keyboard) | `office-hours`, `setup-project` |
 
 Rules of thumb when wiring a workflow:

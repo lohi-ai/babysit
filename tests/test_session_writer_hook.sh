@@ -21,16 +21,38 @@ awk '/^# Session-writer hook/,/^# Config \+ repo state/' "$PREAMBLE" \
   | sed '$d' > "$BLOCK"
 [ -s "$BLOCK" ] || { echo "FAIL: could not extract session block" >&2; rm -f "$BLOCK"; exit 1; }
 
-# ── no-op-when-BABYSIT_SESSION-unset ───────────────────────────────────
+# ── no-op-when-no-session-id-at-all ────────────────────────────────────
+T="$(mktemp -d)"
+(
+  HOME="$T/h"; export HOME
+  mkdir -p "$HOME/.babysit/sessions"
+  unset BABYSIT_SESSION CLAUDE_CODE_SESSION_ID
+  bash -c ". '$BLOCK'" >/dev/null 2>&1
+  count="$(find "$HOME/.babysit/sessions" -type f -name '*.yaml' | wc -l | tr -d ' ')"
+  [ "$count" = "0" ] || { echo "expected 0 yaml files, got $count"; exit 1; }
+) && ok "no-op-when-no-session-id-at-all" || fail "no-op-when-no-session-id-at-all"
+rm -rf "$T"
+
+# ── mints-from-claude-code-session-id ──────────────────────────────────
+# Every real Claude Code tab exports CLAUDE_CODE_SESSION_ID; the hook mints
+# BABYSIT_SESSION=cc-<id> from it so sessions get tracked without autopilot.
 T="$(mktemp -d)"
 (
   HOME="$T/h"; export HOME
   mkdir -p "$HOME/.babysit/sessions"
   unset BABYSIT_SESSION
+  export CLAUDE_CODE_SESSION_ID="abc-123" BABYSIT_TICKET="bs-mint"
   bash -c ". '$BLOCK'" >/dev/null 2>&1
-  count="$(find "$HOME/.babysit/sessions" -type f -name '*.yaml' | wc -l | tr -d ' ')"
-  [ "$count" = "0" ] || { echo "expected 0 yaml files, got $count"; exit 1; }
-) && ok "no-op-when-BABYSIT_SESSION-unset" || fail "no-op-when-BABYSIT_SESSION-unset"
+  F="$HOME/.babysit/sessions/cc-abc-123.yaml"
+  [ -f "$F" ] || { echo "no yaml at $F"; ls -R "$HOME/.babysit"; exit 1; }
+  grep -qx "session_id: cc-abc-123" "$F" || { echo "bad session_id"; cat "$F"; exit 1; }
+  grep -qx "ticket: bs-mint" "$F" || { echo "bad ticket"; cat "$F"; exit 1; }
+  # Explicit BABYSIT_SESSION still wins over the minted default.
+  export BABYSIT_SESSION="sess-explicit"
+  bash -c ". '$BLOCK'" >/dev/null 2>&1
+  [ -f "$HOME/.babysit/sessions/sess-explicit.yaml" ] \
+    || { echo "explicit BABYSIT_SESSION ignored"; exit 1; }
+) && ok "mints-from-claude-code-session-id" || fail "mints-from-claude-code-session-id"
 rm -rf "$T"
 
 # ── writes-yaml-with-correct-fields ────────────────────────────────────

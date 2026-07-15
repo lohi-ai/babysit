@@ -82,7 +82,11 @@ If none match and there is no ticket/requirement, stop with `NEEDS_CONTEXT`.
    the parent orchestrate run. Cross-repo: list every touched repo with its
    branch. Write it so a non-technical owner can act: lead with what was
    built and where to see it (URL), and give the next action as a
-   copy-paste command. Confirm clean state first: no debug leftovers,
+   copy-paste command — in worktree mode that is
+   `bbs-ticket serve <ticket>` (puts the ticket, and its siblings
+   cross-repo, on the served surface for human browser review; see
+   git-flow.md § Attended parallel review), then `create-pr` per repo
+   after approval. Confirm clean state first: no debug leftovers,
    nothing uncommitted, checkpoint current.
 ### Sub-ticket branch shape
 Child branches are slash-namespaced under the parent so they never collide

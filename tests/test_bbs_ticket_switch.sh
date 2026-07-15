@@ -197,6 +197,28 @@ T="$(mktemp -d)"
 ) && ok "switch-conflict" || fail "switch-conflict"
 rm -rf "$T"
 
+# ── switch-persists-serving ───────────────────────────────────────────
+# switch writes <gitdir>/bbs-serving with set semantics: exactly the named
+# tickets, replacing whatever was there (board reads this file).
+T="$(mktemp -d)"
+(
+  export PATH="$SCRIPT_DIR/bin:$PATH"
+  export HOME="$T/home"; mkdir -p "$HOME"
+  export AGENT_ROLE=mayor
+  build_two_tickets "$T" || { echo "fixture failed"; exit 1; }
+  GD="$(git rev-parse --absolute-git-dir)"
+
+  "$BBS_TICKET_BIN" switch "$TK_A" >/dev/null 2>&1 || { echo "switch A failed"; exit 1; }
+  [ "$(cat "$GD/bbs-serving")" = "$TK_A" ] || { echo "expected serving=$TK_A: $(cat "$GD/bbs-serving")"; exit 1; }
+  "$BBS_TICKET_BIN" switch "$TK_B" >/dev/null 2>&1 || { echo "switch B failed"; exit 1; }
+  [ "$(cat "$GD/bbs-serving")" = "$TK_B" ] || { echo "set semantics: A should be replaced"; exit 1; }
+  "$BBS_TICKET_BIN" switch "$TK_A" "$TK_B" >/dev/null 2>&1 || { echo "switch A B failed"; exit 1; }
+  [ "$(cat "$GD/bbs-serving")" = "$TK_A,$TK_B" ] || { echo "expected $TK_A,$TK_B: $(cat "$GD/bbs-serving")"; exit 1; }
+  "$BBS_TICKET_BIN" reset-base >/dev/null 2>&1 || { echo "reset-base failed"; exit 1; }
+  [ -z "$(cat "$GD/bbs-serving")" ] || { echo "reset-base should clear serving"; exit 1; }
+) && ok "switch-persists-serving" || fail "switch-persists-serving"
+rm -rf "$T"
+
 echo
 if [ "$FAIL" -eq 0 ]; then
   printf '\033[0;32mPASS\033[0m %d scenario(s)\n' "$PASS"
