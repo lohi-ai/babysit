@@ -120,18 +120,27 @@ In `worktree` mode, QA lands a ticket on the shared surface with `bbs-ticket mer
 /bbs:autopilot "add a settings page with dark mode toggle"
 ```
 
-Autopilot inits the ticket — requirement, plan, branch — then prints a one-line `/goal` handoff. Paste that line and walk away: the goal session writes the code, reviews it, runs QA, and pushes the branch. Open the PR yourself after review.
+Autopilot inits the ticket — requirement, plan, branch — then stops and prints a `/goal` block as its **last message**. That block is the one thing you do next: **copy it, paste it back into Claude Code, and walk away.** The goal session then writes the code, reviews it, runs QA, and pushes the branch. Open the PR yourself after review.
+
+> **The handoff looks like this** — autopilot ends with a plain-language preamble, then the block to copy:
+>
+> ```
+> Ready for bs-ab123. Before you paste, review what will be built:
+>   plan:      tickets/bs-ab123/plan.md
+>   prototype: tickets/bs-ab123/prototype.html
+> Redirect the design now if it's wrong — otherwise you're one paste from done.
+>
+> 👉 Copy the block below and paste it into Claude Code to build it:
+>
+> /goal bs-ab123 is done: qa verdict PASS/FIXED persisted via bbs-ticket set-verdict,
+> review-pr verdict persisted, branch pushed, handoff note written — or a
+> NEEDS_CONTEXT / BLOCKED status block printed verbatim.
+> Work it: /bbs:autopilot builder bs-ab123
+> ```
 
 #### Why `/goal` owns the work
 
-`/goal <condition>` (built-in, Claude Code 2.1.139+) arms a session-scoped Stop hook: the model works free-form with full context — no step ceremony — and the hook blocks stopping until the condition holds. Autopilot's printed handoff already encodes the babysit gates and the escape clause:
-
-```
-/goal bs-ab123 is done: qa verdict PASS/FIXED persisted via bbs-ticket set-verdict,
-review-pr verdict persisted, branch pushed, handoff note written — or a
-NEEDS_CONTEXT / BLOCKED status block printed verbatim.
-Work it: /bbs:autopilot builder bs-ab123
-```
+`/goal <condition>` (built-in, Claude Code 2.1.139+) arms a session-scoped Stop hook: the model works free-form with full context — no step ceremony — and the hook blocks stopping until the condition holds. That's why the step is *paste the `/goal` block* rather than "run a command": pasting it is what arms the hook. Autopilot's printed block already encodes the babysit gates and the escape clause.
 
 The escape clause means the loop terminates on escalation instead of grinding against a missing input. To bail mid-run: `/goal clear`, `Ctrl-C`, or touch `~/.babysit/projects/<slug>/tickets/<ticket>/STOP`.
 

@@ -26,7 +26,10 @@ status prints.
    Stop here on `--stop-after=requirement`.
 3. Pick the archetype workflow ([references/archetypes.md](../references/archetypes.md)):
    named one wins; else route by the shape of the work; ambiguous or ordinary
-   production work → `builder`. `NEEDS_CONTEXT` only when there is no ticket,
+   production work → `builder`. Several *independent* tickets or
+   `+`-separated requirements in one invocation → `conductor` (parallel
+   batch: one background worker per ticket, QA serialized on
+   `bbs-ticket qa-lease`, integration pass, aggregate handoff). `NEEDS_CONTEXT` only when there is no ticket,
    requirement, plan, manifest, or branch work at all *and* no archetype was
    named — a named archetype is direction enough to proceed.
 4. Seed the plan when the routed mode needs one (build mode, size above XS):
@@ -39,16 +42,23 @@ status prints.
 ## The work loop (`/goal`)
 `/goal <condition>` arms a Stop hook that blocks the session from stopping
 until the condition holds. Autopilot cannot arm it itself — after init, print
-the handoff and stop (`developer`: the human runs it; orchestrators put the
-`/goal` block at the front of the spawn prompt).
-For `developer`, lead with a fixed **Review-before-you-paste** preamble
-carrying the pointers init produced — one line each, and omit a line only when
-that artifact does not exist — then the `/goal` block:
+the handoff and stop (`developer`: the human copy-pastes it; orchestrators put
+the `/goal` block at the front of the spawn prompt).
+For `developer`, the handoff **is the whole final message and must be the very
+last thing on screen** — nothing after it. Init may have run `plan-draft` /
+`design-ui`, which print their own reports; do **not** let those be the last
+thing the human sees. Condense any step-skill report into the pointer lines
+below and drop the rest, so the copy-paste line is what the eye lands on. Lead
+with a fixed **Review-before-you-paste** preamble carrying the pointers init
+produced — one line each, omit a line only when that artifact does not exist —
+then the `/goal` block, fenced on its own so it is one-click copyable:
 ```
 Ready for <ticket>. Before you paste, review what will be built:
   plan:      <plan.md path>
-  prototype: <prototype path>   ← how it will look; open it locally
-Redirect the design now if it's wrong — pasting the line below is all you do next.
+  prototype: <prototype path>
+Redirect the design now if it's wrong — otherwise you're one paste from done.
+
+👉 Copy the block below and paste it into Claude Code to build it:
 
 /goal <ticket> is done: qa verdict PASS/FIXED persisted via bbs-ticket set-verdict,
 review-pr verdict persisted, branch pushed, handoff note written — or a
@@ -57,9 +67,11 @@ Work it: /bbs:autopilot <workflow> <ticket>
 ```
 The preamble is mandatory whenever `plan-draft`/`design-ui` produced those
 artifacts — it is the design checkpoint, not decoration; keep it in plain
-words and never assume the human knows git or babysit internals. Orchestrators
-(non-`developer`) skip the preamble and put only the `/goal` block in the
-spawn prompt.
+words and never assume the human knows git or babysit internals. The
+`👉 Copy … paste it into Claude Code` line is mandatory in every `developer`
+handoff — a non-technical user must never have to guess that the fenced block
+is a thing they paste. Orchestrators (non-`developer`) skip the preamble and
+the copy-paste line and put only the `/goal` block in the spawn prompt.
 Inside the loop (re-entry, orchestrator, `SPAWNED=true`), skip the handoff
 and work. Cold session: recover from checkpoint, ticket files, workflow file,
 git state first; warm session: keep going with what's in context. Treat the

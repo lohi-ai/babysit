@@ -60,7 +60,11 @@ If none match and there is no ticket/requirement, stop with `NEEDS_CONTEXT`.
 6. Run `qa` against the requirement's acceptance criteria, the plan's
    `**Verify:**` line, and the implement handoff — not just the diff. QA needs
    the change on the served surface first: in-place checkouts QA directly; a
-   worktree change lands via `bbs-ticket merge-base` before QA. If
+   worktree change lands via `bbs-ticket merge-base` before QA. When other
+   tickets are in flight on the same repo (worktree mode, or `qa-lease
+   status` isn't FREE), hold the surface for the whole QA session:
+   `bbs-ticket qa-lease acquire` → `bbs-ticket switch $TICKET` (surface =
+   base + exactly this ticket) → QA → `qa-lease release`. If
    `merge-base` BLOCKs because a diverted primary isn't on base, QA in the
    worktree itself (it holds the complete change); a merge-conflict BLOCK is
    instead resolved in the worktree, committed, and `merge-base` re-run. QA
@@ -109,7 +113,12 @@ land and QA each repo's change against *its own* base, once per repo touched.
    `bbs-ticket set-sibling --role <fe|be|shared> --repo <name> --ticket <id>`.
 3. Before QA, run `bbs-ticket merge-base` from inside the sibling worktree —
    skipping it means QA tests a stale base there. Fixes commit in the sibling
-   worktree; re-run `merge-base` before re-testing.
+   worktree; re-run `merge-base` before re-testing. Leases are per repo: when
+   other tickets are in flight, hold a qa-lease in *every* repo you QA on for
+   the same session (acquire in the sibling worktree too), and persist that
+   repo's result on the sibling ticket
+   (`BBS_TICKET=<sibling> bbs-ticket set-verdict --skill qa`); release all
+   leases when QA ends.
 4. The handoff lists every touched repo with its branch.
 **Stop conditions**
 

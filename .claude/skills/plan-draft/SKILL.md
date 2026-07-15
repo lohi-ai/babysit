@@ -14,7 +14,10 @@ Record the *why* behind a choice in one clause, not a paragraph.
 1. Read the requirement and the code paths likely to change; derive what the
    requirement doesn't say: flows sharing state or routes with the change,
    existing behavior it would alter, implied cases (permissions,
-   empty/error states, concurrent edits, existing-data migration). Carry
+   empty/error states, concurrent edits, existing-data migration, query
+   access paths at production data volume — an aggregate or filter the
+   declared indexes can't bound is a plan-level decision:
+   index/denormalize/cache). Carry
    each derived item into **Unknowns** (marked *derived*) — never resolve
    one silently — citing a file, commit, or doc; uncited items
    are guesses, cut them. Mine git history too — the git-archaeology recipe

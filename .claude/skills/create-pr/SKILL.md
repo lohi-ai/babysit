@@ -5,11 +5,11 @@ description: Prepare and create a pull request from the current branch. Use when
 # create-pr
 Create a reviewable PR without merging it.
 ## Flow
-1. Inspect git status, branch, commits, and remote. Resolve `base_branch` and `mode` from `.babysit/git-flow.yaml` (fall back to the repo's default branch and `mode: branch`). Honor the mode — see below.
+1. Inspect git status, branch, commits, and remote. Resolve `base_branch` and `mode` from `.babysit/git-flow.yaml` (fall back to the repo's default branch and `mode: branch`). Honor the mode — see below. Load repo env: `eval "$(bbs-secrets load)"`; if `GH_ACCOUNT` is set, `gh auth switch -u "$GH_ACCOUNT"` before any push or `gh pr` call (multi-account machines fail with "Repository not found" on the wrong account).
 2. Read requirement, plan, implementation handoff, and verification evidence when present. Carry them into the PR body as a short reviewer explainer: context and intent, where new code meets existing behavior, deviations from the plan (implement handoff's `## Deviations`), QA evidence. End the body with a **Reviewer quiz**: 2–3 questions probing what the diff alone can't show — behavior that rides on existing code paths, the consequence of a deviation, what else the change can reach — with answers collapsed in a `<details>` block so the reviewer self-checks before merging.
 3. Resolve mechanical version or changelog requirements only when the repo requires them.
-4. Commit remaining intended changes, push the ticket branch, and open the PR against `base_branch`. If `push: false`, stop with `BLOCKED` naming the policy instead of pushing.
-5. Return the PR URL, title, summary, tests, and concerns.
+4. Commit remaining intended changes, push the ticket branch, and open the PR against `base_branch`. If `push: false`, stop with `BLOCKED` naming the policy instead of pushing. After the PR opens, persist it: `bbs-ticket set-pointer pr <url>` — `board --pr` and `fix-pr` resolve the PR from this pointer.
+5. Return the PR URL, title, summary, tests, and concerns. Cross-repo tickets: a sibling repo's change needs its own create-pr run there; list the sibling repo + branch in the summary instead of fanning out.
 ## Git-flow mode
 The PR is always cut from the **ticket branch** and targets `base_branch`.
 

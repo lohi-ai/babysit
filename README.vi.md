@@ -120,18 +120,27 @@ Wizard viết ra config `.babysit/` nhỏ nhất mà vẫn đủ xài: `git-flow
 /bbs:autopilot "add a settings page with dark mode toggle"
 ```
 
-Autopilot init ticket — requirement, plan, branch — rồi in ra một dòng `/goal` bàn giao. Dán dòng đó vào rồi đi chơi: session goal sẽ viết code, review, chạy QA, và push branch. Review xong thì tự mở PR.
+Autopilot init ticket — requirement, plan, branch — rồi dừng lại và in ra một block `/goal` làm **tin nhắn cuối cùng**. Block đó chính là việc duy nhất bạn làm tiếp theo: **copy nó, dán lại vào Claude Code, rồi đi chơi.** Session goal sẽ viết code, review, chạy QA, và push branch. Review xong thì tự mở PR.
+
+> **Bản bàn giao trông như vầy** — autopilot kết thúc bằng một đoạn dẫn bằng lời thường, rồi tới block để copy:
+>
+> ```
+> Ready for bs-ab123. Before you paste, review what will be built:
+>   plan:      tickets/bs-ab123/plan.md
+>   prototype: tickets/bs-ab123/prototype.html
+> Redirect the design now if it's wrong — otherwise you're one paste from done.
+>
+> 👉 Copy the block below and paste it into Claude Code to build it:
+>
+> /goal bs-ab123 is done: qa verdict PASS/FIXED persisted via bbs-ticket set-verdict,
+> review-pr verdict persisted, branch pushed, handoff note written — or a
+> NEEDS_CONTEXT / BLOCKED status block printed verbatim.
+> Work it: /bbs:autopilot builder bs-ab123
+> ```
 
 #### Vì sao `/goal` nắm phần việc
 
-`/goal <condition>` (có sẵn, Claude Code 2.1.139+) gắn một Stop hook theo session: model làm việc thoải mái với đầy đủ context — không nghi thức từng bước — và cái hook chặn không cho dừng chừng nào điều kiện chưa thỏa. Dòng bàn giao autopilot in ra đã gói sẵn các cổng gác của babysit lẫn điều khoản thoát:
-
-```
-/goal bs-ab123 is done: qa verdict PASS/FIXED persisted via bbs-ticket set-verdict,
-review-pr verdict persisted, branch pushed, handoff note written — or a
-NEEDS_CONTEXT / BLOCKED status block printed verbatim.
-Work it: /bbs:autopilot builder bs-ab123
-```
+`/goal <condition>` (có sẵn, Claude Code 2.1.139+) gắn một Stop hook theo session: model làm việc thoải mái với đầy đủ context — không nghi thức từng bước — và cái hook chặn không cho dừng chừng nào điều kiện chưa thỏa. Đó là lý do bước tiếp theo là *dán block `/goal`* chứ không phải "chạy một lệnh": chính việc dán nó là cái gắn hook lên. Block autopilot in ra đã gói sẵn các cổng gác của babysit lẫn điều khoản thoát.
 
 Điều khoản thoát là chỗ chịu lực: vòng lặp kết thúc khi cần leo thang, thay vì nghiến răng cày mãi vào một input còn thiếu. Muốn thoát giữa chừng: `/goal clear`, `Ctrl-C`, hoặc touch `~/.babysit/projects/<slug>/tickets/<ticket>/STOP`.
 

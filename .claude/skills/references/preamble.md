@@ -87,11 +87,14 @@ touch ~/.babysit/sessions/"$PPID"
 _SESSIONS=$(find ~/.babysit/sessions -mmin -120 -type f 2>/dev/null | wc -l | tr -d ' ')
 find ~/.babysit/sessions -mmin +120 -type f -exec rm {} + 2>/dev/null || true
 
-# Session-writer hook — when an autopilot run set $BABYSIT_SESSION, persist
-# (or refresh) the matching ~/.babysit/sessions/<uuid>.yaml. Atomic
-# mktemp+mv so the file's mtime gets bumped (in-place edit on Linux
-# preserves mtime — see docs/identity.md § Atomic writes). Skipped when
-# $BABYSIT_SESSION is unset — most preamble runs are not autopilot.
+# Session-writer hook — persist (or refresh) ~/.babysit/sessions/<id>.yaml.
+# $BABYSIT_SESSION defaults from Claude Code's own session id, so every real
+# tab gets a yaml (feeds `session list`, `board`, dashboard); autopilot's
+# explicit $BABYSIT_SESSION still wins. Atomic mktemp+mv so the file's mtime
+# gets bumped (in-place edit on Linux preserves mtime — see docs/identity.md
+# § Atomic writes). Skipped when neither id is available.
+BABYSIT_SESSION="${BABYSIT_SESSION:-cc-${CLAUDE_CODE_SESSION_ID:-}}"
+[ "$BABYSIT_SESSION" = "cc-" ] && BABYSIT_SESSION=""
 if [ -n "${BABYSIT_SESSION:-}" ]; then
   _SF="$HOME/.babysit/sessions/${BABYSIT_SESSION}.yaml"
   _STMP="$(mktemp "$HOME/.babysit/sessions/.session.XXXXXX" 2>/dev/null)" || _STMP=""

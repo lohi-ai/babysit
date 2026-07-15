@@ -57,3 +57,42 @@ truth and the base checkout is the test surface:
 primary's side: `reset-base` + merge the named tickets in, so the server
 serves exactly base + those tickets (conflicts BLOCK naming the ticket to
 fix). Complement of `merge-base` — same lock, opposite direction.
+## QA lease — parallel tickets, one test surface
+The merge-base lock serializes single git operations; it cannot keep the
+surface stable for the minutes a QA session takes — a parallel ticket's
+`merge-base` mid-QA would silently change what's being tested.
+`bbs-ticket qa-lease` closes that gap: while a ticket holds it, `merge-base` /
+`switch` / `reset-base` from any *other* ticket BLOCK naming the owner.
+Protocol when tickets run in parallel:
+1. `bbs-ticket qa-lease acquire` (BLOCKs while another ticket QAs).
+2. `bbs-ticket switch <ticket>` — surface = base + exactly this ticket, not
+   whatever merge-base piled up.
+3. QA; fixes commit in the worktree, re-run `switch` after each fix.
+4. `bbs-ticket set-verdict --skill qa`, then `bbs-ticket qa-lease release`.
+Reentrant for the owner (`acquire` refreshes). A crashed holder can't wedge
+the queue: past its ttl (default 60 min, `--ttl-min`) the lease is stale —
+the next `acquire` steals it and guard sites clear it, both loudly.
+The lease is per repo (it lives in that repo's shared git dir): a cross-repo
+ticket QAing on a pair of repos acquires one lease in each repo for the same
+session and releases them all when QA ends.
+Solo runs never notice any of this: no lease on disk means zero behavior
+change.
+## Attended parallel review — board / serve / fix-pr
+Human review on the real site is the longest must-do step, and it holds the
+test surface. The attended loop, per ticket:
+1. `bbs-ticket board` — who's on what: status, verdicts, sessions, PR,
+   lease holder, and what the primary currently serves. Read-only.
+2. `bbs-ticket serve <ticket>` — take the surface for human review: a long
+   qa-lease (240 min — agent-length TTLs would let a parallel run steal the
+   surface mid-review) + `switch <ticket>`, here **and** in each linked
+   sibling repo (`siblings` × `RELATED_*_REPO`), so the FE/BE pair serves the
+   ticket together.
+3. Review-fix loop: human reviews in the browser → asks the ticket's agent →
+   agent fixes **in the ticket worktree**, commits → re-run `serve <ticket>`
+   (reentrant: refreshes the lease, re-switches every repo) → refresh browser.
+   Other tickets keep implementing/reviewing in their worktrees; only their
+   QA waits on the lease.
+4. Approved → `bbs-ticket serve --release <ticket>` (frees leases, leaves the
+   surface as-is) → `create-pr` per repo → review comments via `fix-pr`.
+5. `board --pr` flags merged PRs; then `bbs-ticket reset-base` and
+   `set-status done`.

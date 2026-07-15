@@ -31,6 +31,10 @@ guardrails.
   sees after implementation.
 - API surfaces follow best practice by default, even when the plan is silent
   — an unpaginated list endpoint is a bug, not a simplification.
+- Same at the DB layer: every new or changed query needs a bounded access
+  path — check the declared indexes; cost should grow with rows returned,
+  not table size. A query the schema can't serve is a bug — add the index,
+  or log a denormalization/caching need as a deviation.
 - When an edge case forces a deviation from the plan: pick the conservative
   option — smallest change, most reversible, preserves the plan's intent —
   log it (see Ticket Mode), and keep going. Never block on a reversible
