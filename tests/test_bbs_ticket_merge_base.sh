@@ -205,6 +205,39 @@ T="$(mktemp -d)"
 ) && ok "from-primary-BLOCK" || fail "from-primary-BLOCK"
 rm -rf "$T"
 
+# ── serving-appends ───────────────────────────────────────────────────
+# merge-base records what landed in <gitdir>/bbs-serving with append
+# semantics (dedup): tickets pile up on the surface until reset-base/switch.
+T="$(mktemp -d)"
+(
+  test_env "$T"
+  build_repo_with_worktree "$T" mbh
+  (
+    cd "$T/repo"
+    git worktree add -q --no-track -b "feat/bs-mbi_test" .babysit/worktrees/mbi main
+    cd .babysit/worktrees/mbi
+    echo change > change-mbi.txt
+    git add change-mbi.txt
+    git commit -q -m "feat: mbi change"
+  )
+  GD="$(git -C "$T/repo" rev-parse --absolute-git-dir)"
+
+  ( cd "$T/repo/.babysit/worktrees/mbh" && "$BBS_TICKET_BIN" merge-base >/dev/null 2>&1 ) \
+    || { echo "merge-base mbh failed"; exit 1; }
+  [ "$(cat "$GD/bbs-serving")" = "bs-mbh" ] \
+    || { echo "expected serving=bs-mbh: $(cat "$GD/bbs-serving")"; exit 1; }
+  ( cd "$T/repo/.babysit/worktrees/mbi" && "$BBS_TICKET_BIN" merge-base >/dev/null 2>&1 ) \
+    || { echo "merge-base mbi failed"; exit 1; }
+  [ "$(cat "$GD/bbs-serving")" = "bs-mbh,bs-mbi" ] \
+    || { echo "expected serving=bs-mbh,bs-mbi: $(cat "$GD/bbs-serving")"; exit 1; }
+  # Re-merge of an already-served ticket must not duplicate it.
+  ( cd "$T/repo/.babysit/worktrees/mbh" && "$BBS_TICKET_BIN" merge-base >/dev/null 2>&1 ) \
+    || { echo "re-merge mbh failed"; exit 1; }
+  [ "$(cat "$GD/bbs-serving")" = "bs-mbh,bs-mbi" ] \
+    || { echo "dedup broken: $(cat "$GD/bbs-serving")"; exit 1; }
+) && ok "serving-appends" || fail "serving-appends"
+rm -rf "$T"
+
 echo
 if [ "$FAIL" -eq 0 ]; then
   printf '\033[0;32mPASS\033[0m %d scenario(s)\n' "$PASS"

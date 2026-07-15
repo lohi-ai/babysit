@@ -112,7 +112,7 @@ The wizard writes the smallest useful `.babysit/` config: `git-flow.yaml` with `
 | `branch` *(default)* | cut `feat/<id>_<slug>` in place when the checkout is a clean base; auto-divert to a worktree when it isn't | clean one-ticket PRs with mostly-serial work — cheapest QA, the server serves the ticket branch directly |
 | `worktree` | every ticket gets its own worktree; the primary checkout stays pinned to base as the shared test surface | team/enterprise repos: parallel tickets, one clean PR each |
 
-In `worktree` mode, QA lands a ticket on the shared surface with `bbs-ticket merge-base` (from the worktree), or hops the surface between tickets with `bbs-ticket switch <ticket>...` (from the primary — resets to base, then merges exactly the named tickets). After PRs merge upstream, `bbs-ticket reset-base` snaps local base back to origin. All three refuse loudly instead of losing work. Details: [`references/git-flow.md`](.claude/skills/references/git-flow.md).
+In `worktree` mode, QA lands a ticket on the shared surface with `bbs-ticket merge-base` (from the worktree), or hops the surface between tickets with `bbs-ticket switch <ticket>...` (from the primary — resets to base, then merges exactly the named tickets). After PRs merge upstream, `bbs-ticket reset-base` snaps local base back to origin. All three refuse loudly instead of losing work. The human-facing layer on top — `board`, `serve`, `/bbs:fix-pr` — is covered in [Working tickets in parallel](#working-tickets-in-parallel-worktree-mode). Details: [`references/git-flow.md`](.claude/skills/references/git-flow.md).
 
 ### 3. Run it
 
@@ -120,18 +120,27 @@ In `worktree` mode, QA lands a ticket on the shared surface with `bbs-ticket mer
 /bbs:autopilot "add a settings page with dark mode toggle"
 ```
 
-Autopilot inits the ticket — requirement, plan, branch — then prints a one-line `/goal` handoff. Paste that line and walk away: the goal session writes the code, reviews it, runs QA, and pushes the branch. Open the PR yourself after review.
+Autopilot inits the ticket — requirement, plan, branch — then stops and prints a `/goal` block as its **last message**. That block is the one thing you do next: **copy it, paste it back into Claude Code, and walk away.** The goal session then writes the code, reviews it, runs QA, and pushes the branch. Open the PR yourself after review.
+
+> **The handoff looks like this** — autopilot ends with a plain-language preamble, then the block to copy:
+>
+> ```
+> Ready for bs-ab123. Before you paste, review what will be built:
+>   plan:      tickets/bs-ab123/plan.md
+>   prototype: tickets/bs-ab123/prototype.html
+> Redirect the design now if it's wrong — otherwise you're one paste from done.
+>
+> 👉 Copy the block below and paste it into Claude Code to build it:
+>
+> /goal bs-ab123 is done: qa verdict PASS/FIXED persisted via bbs-ticket set-verdict,
+> review-pr verdict persisted, branch pushed, handoff note written — or a
+> NEEDS_CONTEXT / BLOCKED status block printed verbatim.
+> Work it: /bbs:autopilot builder bs-ab123
+> ```
 
 #### Why `/goal` owns the work
 
-`/goal <condition>` (built-in, Claude Code 2.1.139+) arms a session-scoped Stop hook: the model works free-form with full context — no step ceremony — and the hook blocks stopping until the condition holds. Autopilot's printed handoff already encodes the babysit gates and the escape clause:
-
-```
-/goal bs-ab123 is done: qa verdict PASS/FIXED persisted via bbs-ticket set-verdict,
-review-pr verdict persisted, branch pushed, handoff note written — or a
-NEEDS_CONTEXT / BLOCKED status block printed verbatim.
-Work it: /bbs:autopilot builder bs-ab123
-```
+`/goal <condition>` (built-in, Claude Code 2.1.139+) arms a session-scoped Stop hook: the model works free-form with full context — no step ceremony — and the hook blocks stopping until the condition holds. That's why the step is *paste the `/goal` block* rather than "run a command": pasting it is what arms the hook. Autopilot's printed block already encodes the babysit gates and the escape clause.
 
 The escape clause means the loop terminates on escalation instead of grinding against a missing input. To bail mid-run: `/goal clear`, `Ctrl-C`, or touch `~/.babysit/projects/<slug>/tickets/<ticket>/STOP`.
 
@@ -146,7 +155,7 @@ Babysit is a small assembly line for shipping a change. You drop an idea at one 
 1. **"Is this the right thing to build?"** — `requirement.md` ready. You read and accept.
 2. **"Is this the right way to build it?"** — `plan.md` ready. You read, tweak, accept.
 3. **"Does it actually work?"** — code written, reviewed, QA checked, pushed.
-4. **"Should this become a PR?"** — you review the handoff and run `/bbs:create-pr`.
+4. **"Should this become a PR?"** — you review the handoff and run `/bbs:create-pr`; when reviewer comments land, `/bbs:fix-pr` works through them.
 
 ### Pick where it stops
 
@@ -168,6 +177,26 @@ When a stage finishes, the ticket gets a `Next:` line — literally what to do n
 ```
 
 That's the whole surface. Flags (`--stop-after=`, `--replan`, `--dry-run`, `--workflow=<name> --force`) extend it; verb tokens don't exist.
+
+### Working tickets in parallel (worktree mode)
+
+One heavy checkout per repo runs the dev server; every ticket lives in its own lightweight worktree. That makes everything parallel *except* the moment someone needs to see a ticket actually running — and that moment gets three commands:
+
+```bash
+bbs-ticket board            # every ticket at a glance: status, verdicts, live session, PR, who holds the surface
+bbs-ticket serve bs-ab123   # put this ticket on the running dev server for human review
+/bbs:fix-pr                 # after reviewer comments land: fetch unresolved threads, fix, reply, resolve
+```
+
+**The review loop.** Reviewing the running feature in the browser is the longest must-do step, so babysit makes it the cheapest to repeat:
+
+1. A ticket reaches pause 3 — its handoff's `Next:` line hands you the exact command: `bbs-ticket serve bs-ab123`.
+2. `serve` holds the test surface for 4 hours (agents' QA politely queues behind you) and switches the running server to base + exactly this ticket — in this repo **and** in its FE/BE sibling repo when the ticket spans both.
+3. Review in the browser. Ask the ticket's session for changes; it commits in its own worktree; re-run `serve` (reentrant — refreshes the hold, re-cuts the surface) and refresh the browser. Repeat until happy.
+4. Approved → `bbs-ticket serve bs-ab123 --release`, then `/bbs:create-pr` per repo. Reviewer comments later → `/bbs:fix-pr`.
+5. `bbs-ticket board --pr` flags merged PRs and prints the exact cleanup commands (`reset-base`, `set-status done`).
+
+**One ticket, two repos** (a feature spanning frontend + backend): `/bbs:setup-project` records the sibling repos once; autopilot's builder crosses over on its own — creates the linked sibling ticket, implements and QAs both sides — and `serve` puts the whole pair in front of you with one command. Meanwhile other tickets' sessions keep implementing and reviewing in their own worktrees; `board` shows everyone who holds the surface and for how long. Full recipe: [`references/git-flow.md` § Attended parallel review](.claude/skills/references/git-flow.md).
 
 ## Going deeper
 
@@ -193,6 +222,7 @@ That's the whole surface. Flags (`--stop-after=`, `--replan`, `--dry-run`, `--wo
 | Root-cause a bug | `/bbs:investigate` |
 | Configure this repo for autopilot | `/bbs:setup-project` |
 | Create a reviewable pull request | `/bbs:create-pr` |
+| Work through PR review comments (fix, reply, resolve) | `/bbs:fix-pr` |
 
 Full skill table (with autonomous-ready / interactive-only classification) in [`docs/skills.md`](docs/skills.md).
 

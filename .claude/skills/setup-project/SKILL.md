@@ -59,6 +59,9 @@ When the app has a login, seed the credential placeholders into the gitignored
 ```bash
 bbs-secrets seed --repo-root "$(git rev-parse --show-toplevel)" QA_USER QA_PASS
 ```
+On machines with multiple GitHub accounts, also seed `GH_ACCOUNT=<login>` into
+`.babysit/.env` — `create-pr` and `fix-pr` run `gh auth switch -u "$GH_ACCOUNT"`
+before pushing, so the wrong active account can't fail the push.
 ## Landing Doc Section
 Add or update exactly one concise section in `AGENTS.md` or `CLAUDE.md`:
 ```md

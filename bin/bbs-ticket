@@ -31,7 +31,7 @@
 #       "blocks": [], "blocked_by": [], "duplicate_of": null, "related": []
 #     },
 #     "siblings": [                   cross-repo same-feature tickets
-#       {"role": "fe|be|mobile", "repo": "org/repo", "ticket": "<id>"}
+#       {"role": "fe|be|shared", "repo": "org/repo", "ticket": "<id>"}
 #     ],
 #     "labels": [],
 #     "assignee": "<invoker>",
@@ -116,6 +116,25 @@
 #                                        each ticket's branch into the primary.
 #                                        Fast QA hop between worktree tickets;
 #                                        runnable from anywhere in the repo.
+#   qa-lease <acquire|release|status> [--ticket <id>] [--ttl-min <n>] [--force]
+#                                        exclusive QA-session lease on the shared
+#                                        test surface: while held, merge-base /
+#                                        switch / reset-base from other tickets
+#                                        BLOCK. Reentrant for the owner; stale
+#                                        (age > ttl, default 60min) is stolen.
+#   serve <ticket> [--ttl-min <n>]       human-review lever: qa-lease acquire
+#                                        (long ttl, default 240min) + switch, in
+#                                        this repo AND each sibling repo of a
+#                                        cross-repo pair. Reentrant — re-run
+#                                        after each fix to refresh lease +
+#                                        re-switch. serve --release <ticket>
+#                                        frees the lease(s), tree untouched.
+#   board [--all] [--pr]                 read-only view of every ticket: status,
+#                                        branch, qa/review verdicts, session,
+#                                        PR pointer, siblings, plus qa-lease and
+#                                        what the primary is serving. --all adds
+#                                        done/cancelled tickets; --pr asks gh
+#                                        for each PR's merge state.
 #   session <list|attach|end>            inspect/rehydrate ~/.babysit/sessions/;
 #                                        attach echoes export lines for eval.
 #   env                                  print TICKET_HOME, INDEX, etc. for eval
@@ -187,6 +206,15 @@ Subcommands:
                                  test surface = base + exactly these tickets:
                                  reset-base then merge each ticket branch in;
                                  the fast QA hop between worktree tickets
+  qa-lease <acquire|release|status> [--ticket ID] [--ttl-min N] [--force]
+                                 exclusive QA-session lease on the test surface;
+                                 other tickets' merge-base/switch/reset-base
+                                 BLOCK while held; stale (> ttl) is stolen
+  serve <ticket> [--ttl-min N]   human review: long qa-lease (240min) + switch,
+                                 here and in each sibling repo; re-run after
+                                 each fix; serve --release <ticket> frees leases
+  board [--all] [--pr]           read-only ticket board: status, branch, qa/
+                                 review verdicts, session, PR, qa-lease, serving
   path <kind> [selectors] --read|--write   resolve a ticket file path (canonical → legacy)
   list <kind> [selectors]                  list ticket files of a kind
   reconcile [--ticket <id> | --all] [--dry-run] [--quiet]
@@ -532,6 +560,80 @@ print(json.dumps(row))
 EOF
   )"
   printf '%s\n' "$line" >> "$th/history.jsonl" 2>/dev/null || true
+}
+
+# qa_lease_guard <gitdir> <cmd> — BLOCK (return 2) when the shared test
+# surface is qa-leased by a different owner than the caller's ticket. FREE,
+# own lease, or a stale lease (age > ttl: holder presumed dead — cleared with
+# a warning) pass through. See the qa-lease subcommand.
+qa_lease_guard() {
+  local gitdir="$1" cmd="$2" dir owner since ttl now age
+  dir="$gitdir/bbs-qa-lease"
+  [ -d "$dir" ] || return 0
+  owner="$(sed -n 's/^owner=//p' "$dir/owner" 2>/dev/null | head -1)"
+  if [ -n "$TICKET" ] && [ "$owner" = "$TICKET" ]; then return 0; fi
+  since="$(sed -n 's/^since_epoch=//p' "$dir/owner" 2>/dev/null | head -1)"
+  ttl="$(sed -n 's/^ttl_min=//p' "$dir/owner" 2>/dev/null | head -1)"
+  now="$(date +%s)"; age=$(( (now - ${since:-$now}) / 60 ))
+  if [ -z "$owner" ] || [ "$age" -gt "${ttl:-60}" ]; then
+    echo "$cmd: warning — cleared stale qa-lease from '${owner:-unknown}' (${age}min > ${ttl:-60}min ttl)." >&2
+    rm -rf "$dir" 2>/dev/null
+    return 0
+  fi
+  echo "STATUS: BLOCKED" >&2
+  echo "REASON: shared test surface is qa-leased by '$owner' (${age}min into a ${ttl:-60}min lease) — $cmd would change it mid-QA." >&2
+  echo "RECOMMENDATION: wait for '$owner' to run 'bbs-ticket qa-lease release', or 'bbs-ticket qa-lease release --force' if that run is dead." >&2
+  return 2
+}
+
+# _serving_write <gitdir> <set|append> [ticket...] — persist what the primary
+# checkout currently serves as a comma list in <gitdir>/bbs-serving. Callers
+# hold bbs-merge-base.lock. set = exactly these tickets (none = base only);
+# append = add to the existing list (dedup, order preserved).
+_serving_write() {
+  local gitdir="$1" mode="$2"; shift 2
+  local f="$gitdir/bbs-serving" cur=""
+  if [ "$mode" = "append" ] && [ -f "$f" ]; then cur="$(cat "$f" 2>/dev/null)"; fi
+  printf '%s\n%s\n' "$cur" "$*" | tr ' ,' '\n\n' | sed '/^$/d' \
+    | awk '!seen[$0]++' | paste -sd, - > "$f" 2>/dev/null || true
+}
+
+# _related_repo_env <role> — map a sibling role to its .babysit/.env path var.
+# Roles follow set-sibling's vocabulary: fe|be|shared (RELATED_MOBILE_REPO has
+# no convention — unmapped roles return 1 and callers report, never guess).
+_related_repo_env() {
+  case "$1" in
+    fe|frontend) echo "RELATED_FRONTEND_REPO" ;;
+    be|backend)  echo "RELATED_BACKEND_REPO" ;;
+    shared)      echo "RELATED_SHARED_REPO" ;;
+    *) return 1 ;;
+  esac
+}
+
+# _related_repo_path <role> <repo-toplevel> — resolve a sibling repo's local
+# path from <toplevel>/.babysit/.env. Empty/unset → return 1.
+_related_repo_path() {
+  local var envf="$2/.babysit/.env" val
+  var="$(_related_repo_env "$1")" || return 1
+  [ -f "$envf" ] || return 1
+  val="$(sed -n "s/^${var}=//p" "$envf" | head -1 \
+    | sed -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'\$//")"
+  [ -n "$val" ] || return 1
+  printf '%s' "$val"
+}
+
+# Top-level scalar from a fixed-schema session yaml (flat, no nesting).
+# Shared by `session list` and `board`.
+ss_field() {
+  awk -v k="$2" '
+    /^[[:space:]]*#/ { next }
+    $0 ~ "^" k ":" {
+      sub("^" k ":[[:space:]]*", "")
+      gsub(/^["'\'']|["'\'']$/, "")
+      print
+      exit
+    }
+  ' "$1" 2>/dev/null || true
 }
 
 # Read the next handoff sequence number (0-padded 3 digits).
@@ -1906,6 +2008,7 @@ EOF
     # One merge at a time across parallel autopilot runs: the lock lives in
     # the shared git dir, which every linked worktree of this repo sees.
     MB_GITDIR="$(git -C "$MB_PRIMARY" rev-parse --absolute-git-dir 2>/dev/null)"
+    qa_lease_guard "$MB_GITDIR" merge-base || exit 2
     MB_LOCK="$MB_GITDIR/bbs-merge-base.lock"
     if ! bbs_lock_acquire "$MB_LOCK" 300; then
       echo "STATUS: BLOCKED" >&2
@@ -1923,6 +2026,7 @@ EOF
       exit 2
     fi
     MB_POST="$(git -C "$MB_PRIMARY" rev-parse HEAD)"
+    [ -n "$TICKET" ] && _serving_write "$MB_GITDIR" append "$TICKET"
     bbs_lock_release "$MB_LOCK"
     [ -n "$TICKET" ] && history_append "merge_base" "${AGENT_ROLE:-${GT_ROLE:-developer}}" \
       "$(printf '{"base":"%s","head":"%s"}' "$MB_BASE" "$MB_POST")"
@@ -2003,6 +2107,7 @@ EOF
     fi
     # Serialize with merge-base: same lock in the shared git dir.
     RB_GITDIR="$(git -C "$RB_PRIMARY" rev-parse --absolute-git-dir 2>/dev/null)"
+    qa_lease_guard "$RB_GITDIR" reset-base || exit 2
     RB_LOCK="$RB_GITDIR/bbs-merge-base.lock"
     if ! bbs_lock_acquire "$RB_LOCK" 300; then
       echo "STATUS: BLOCKED" >&2
@@ -2017,6 +2122,7 @@ EOF
       exit 2
     fi
     RB_POST="$(git -C "$RB_PRIMARY" rev-parse HEAD)"
+    _serving_write "$RB_GITDIR" set
     bbs_lock_release "$RB_LOCK"
     [ -n "$TICKET" ] && history_append "reset_base" "${AGENT_ROLE:-${GT_ROLE:-developer}}" \
       "$(printf '{"base":"%s","head":"%s"}' "$RB_BASE" "$RB_POST")"
@@ -2057,6 +2163,8 @@ EOF
     fi
     SW_PRIMARY="$(git worktree list --porcelain 2>/dev/null | sed -n 's/^worktree //p' | head -1)"
     [ -z "$SW_PRIMARY" ] && SW_PRIMARY="$(git rev-parse --show-toplevel)"
+    SW_GITDIR="$(git -C "$SW_PRIMARY" rev-parse --absolute-git-dir 2>/dev/null)"
+    qa_lease_guard "$SW_GITDIR" switch || exit 2
     # Resolve every ticket to a branch before touching anything — a typo'd
     # ticket id must not leave the surface half-switched.
     SW_BRANCHES=""
@@ -2080,7 +2188,6 @@ EOF
       SW_BASE="$(cd "$SW_PRIMARY" && "$AUTOPILOT_BIN" base-branch 2>/dev/null || true)"
       [ -z "$SW_BASE" ] && SW_BASE="main"
     fi
-    SW_GITDIR="$(git -C "$SW_PRIMARY" rev-parse --absolute-git-dir 2>/dev/null)"
     SW_LOCK="$SW_GITDIR/bbs-merge-base.lock"
     if ! bbs_lock_acquire "$SW_LOCK" 300; then
       echo "STATUS: BLOCKED" >&2
@@ -2099,6 +2206,8 @@ EOF
       fi
     done
     SW_HEAD="$(git -C "$SW_PRIMARY" rev-parse HEAD)"
+    # shellcheck disable=SC2086
+    _serving_write "$SW_GITDIR" set $SW_TICKETS
     bbs_lock_release "$SW_LOCK"
     echo "BASE=$SW_BASE"
     echo "PRIMARY=$SW_PRIMARY"
@@ -2107,24 +2216,233 @@ EOF
     echo "switch: test surface now serves '$SW_BASE' + $SW_TICKETS — fixes go in the ticket worktree(s), then re-run switch." >&2
     ;;
 
+  # serve — the human-review lever for attended parallel tickets.
+  #
+  # Human review on the real site is the longest stage that touches the shared
+  # surface, so it gets the qa-lease with a long ttl (default 240min — the
+  # 60min agent-QA default would let a parallel run stale-steal the surface
+  # mid-review), then switch so the dev server serves base + exactly this
+  # ticket. Cross-repo pairs fan out: the same acquire+switch runs in every
+  # sibling repo (index.json.siblings × RELATED_*_REPO). Reentrant — after the
+  # agent commits a review fix in the ticket worktree, re-run serve to refresh
+  # the lease and re-switch every surface. serve --release frees the lease(s)
+  # and leaves the tree alone (the next serve/switch resets it anyway).
+  serve)
+    SV_TICKET="" SV_RELEASE=0 SV_TTL=240
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --release|--done) SV_RELEASE=1; shift ;;
+        --ttl-min) SV_TTL="$2"; shift 2 ;;
+        -*) echo "serve: unknown flag '$1'" >&2; exit 2 ;;
+        *) SV_TICKET="$1"; shift ;;
+      esac
+    done
+    [ -n "$SV_TICKET" ] || SV_TICKET="$TICKET"
+    if [ -z "$SV_TICKET" ]; then
+      echo "usage: bbs-ticket serve <ticket> [--ttl-min N] | serve --release <ticket>" >&2; exit 2
+    fi
+    command -v git >/dev/null 2>&1 || { echo "serve: git not found" >&2; exit 2; }
+    if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+      echo "serve: not in a git work tree" >&2; exit 2
+    fi
+    SV_PRIMARY="$(git worktree list --porcelain 2>/dev/null | sed -n 's/^worktree //p' | head -1)"
+    [ -z "$SV_PRIMARY" ] && SV_PRIMARY="$(git rev-parse --show-toplevel)"
+    SV_REPO="$(basename "$SV_PRIMARY")"
+    # Sibling rows as "role<TAB>repo<TAB>ticket" lines (empty when none).
+    # JSON goes in as argv, not stdin — the heredoc already owns stdin.
+    SV_SIBS="$(_py - "$(json_read "$PROJECT_HOME/tickets/$(safe "$SV_TICKET")/index.json" siblings)" <<'EOF'
+import json, sys
+try:
+    sibs = json.loads(sys.argv[1])
+except Exception:
+    sys.exit(0)
+for s in sibs or []:
+    print(f"{s.get('role','')}\t{s.get('repo','')}\t{s.get('ticket','')}")
+EOF
+)"
+    SV_RC=0
+
+    # _serve_one <repo-dir> <ticket>: acquire long lease + switch, releasing a
+    # lease we just created (not one refreshed from an earlier serve) if the
+    # switch BLOCKs — a failed serve must not leave a stray lease.
+    _serve_one() {
+      local dir="$1" t="$2" out
+      out="$(cd "$dir" && BABYSIT_TICKET="$t" "$0" qa-lease acquire --ticket "$t" --ttl-min "$SV_TTL")" || return 2
+      if ! (cd "$dir" && BABYSIT_TICKET="$t" "$0" switch "$t" >/dev/null); then
+        case "$out" in
+          *REFRESHED=1*) : ;;  # lease predates this serve — keep it
+          *) (cd "$dir" && BABYSIT_TICKET="$t" "$0" qa-lease release --ticket "$t" >/dev/null 2>&1) ;;
+        esac
+        return 2
+      fi
+      return 0
+    }
+
+    if [ "$SV_RELEASE" = "1" ]; then
+      BABYSIT_TICKET="$SV_TICKET" "$0" qa-lease release --ticket "$SV_TICKET" >/dev/null || exit $?
+      echo "RELEASED: $SV_REPO $SV_TICKET"
+      while IFS="$(printf '\t')" read -r sv_role sv_repo sv_t; do
+        [ -n "$sv_t" ] || continue
+        sv_path="$(_related_repo_path "$sv_role" "$SV_PRIMARY")" || {
+          echo "serve: sibling $sv_repo/$sv_t not released — RELATED repo path for role '$sv_role' unresolved" >&2
+          continue
+        }
+        if (cd "$sv_path" 2>/dev/null && BABYSIT_TICKET="$sv_t" "$0" qa-lease release --ticket "$sv_t" >/dev/null); then
+          echo "RELEASED: $(basename "$sv_path") $sv_t"
+        else
+          echo "serve: sibling release failed in $sv_path for $sv_t" >&2
+        fi
+      done <<EOF
+$SV_SIBS
+EOF
+      exit 0
+    fi
+
+    _serve_one "$SV_PRIMARY" "$SV_TICKET" || exit $?
+    echo "SERVED: $SV_REPO $SV_TICKET"
+    TICKET="$SV_TICKET" history_append "serve" "${AGENT_ROLE:-${GT_ROLE:-developer}}" \
+      "$(printf '{"ticket":"%s","ttl_min":%s}' "$SV_TICKET" "$SV_TTL")"
+
+    while IFS="$(printf '\t')" read -r sv_role sv_repo sv_t; do
+      [ -n "$sv_t" ] || continue
+      sv_path="$(_related_repo_path "$sv_role" "$SV_PRIMARY")" || {
+        echo "STATUS: NEEDS_CONTEXT" >&2
+        echo "REASON: sibling $sv_repo/$sv_t (role '$sv_role') has no resolvable local path — RELATED_*_REPO unset in $SV_PRIMARY/.babysit/.env." >&2
+        echo "RECOMMENDATION: set it (see setup-project § Related Repos), then re-run serve; this repo is already serving $SV_TICKET." >&2
+        SV_RC=2
+        continue
+      }
+      if [ ! -d "$sv_path" ]; then
+        echo "STATUS: NEEDS_CONTEXT" >&2
+        echo "REASON: sibling repo path '$sv_path' (role '$sv_role') does not exist on this machine." >&2
+        echo "RECOMMENDATION: fix RELATED_*_REPO in .babysit/.env, then re-run serve; this repo is already serving $SV_TICKET." >&2
+        SV_RC=2
+        continue
+      fi
+      if _serve_one "$sv_path" "$sv_t"; then
+        echo "SERVED: $(basename "$sv_path") $sv_t"
+      else
+        SV_RC=2
+      fi
+    done <<EOF
+$SV_SIBS
+EOF
+    if [ "$SV_RC" = "0" ]; then
+      echo "serve: review on the dev server(s); fixes commit in the ticket worktree, then re-run serve $SV_TICKET." >&2
+      echo "  Done reviewing → bbs-ticket serve --release $SV_TICKET" >&2
+    fi
+    exit "$SV_RC"
+    ;;
+
+  # qa-lease — exclusive QA-session lease on the shared test surface.
+  #
+  # The merge-base lock serializes individual git operations; it cannot keep
+  # the surface stable for the minutes a QA session takes. The lease can:
+  # while held, merge-base / switch / reset-base from any *other* ticket
+  # BLOCK (qa_lease_guard), so a PASS verdict always describes the surface
+  # it was measured on. Reentrant for the owner (acquire refreshes); a stale
+  # lease (age > ttl) is stolen loudly — a crashed run must not wedge the
+  # queue. Parallel-QA protocol: acquire → switch <ticket> → run qa (fixes
+  # commit in the worktree, re-run switch) → set-verdict → release.
+  qa-lease)
+    QL_VERB="${1:-}"; [ $# -gt 0 ] && shift || true
+    QL_TICKET="" QL_TTL=60 QL_FORCE=false
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --ticket) QL_TICKET="$2"; shift 2 ;;
+        --ttl-min) QL_TTL="$2"; shift 2 ;;
+        --force) QL_FORCE=true; shift ;;
+        *) echo "qa-lease: unknown arg '$1'" >&2; exit 2 ;;
+      esac
+    done
+    [ -n "$QL_TICKET" ] || QL_TICKET="$TICKET"
+    command -v git >/dev/null 2>&1 || { echo "qa-lease: git not found" >&2; exit 2; }
+    if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+      echo "qa-lease: not in a git work tree" >&2; exit 2
+    fi
+    QL_PRIMARY="$(git worktree list --porcelain 2>/dev/null | sed -n 's/^worktree //p' | head -1)"
+    [ -z "$QL_PRIMARY" ] && QL_PRIMARY="$(git rev-parse --show-toplevel)"
+    QL_GITDIR="$(git -C "$QL_PRIMARY" rev-parse --absolute-git-dir 2>/dev/null)"
+    QL_DIR="$QL_GITDIR/bbs-qa-lease"
+    ql_read() { sed -n "s/^$1=//p" "$QL_DIR/owner" 2>/dev/null | head -1; }
+    ql_write_owner() {
+      printf 'owner=%s\npid=%s\nsince=%s\nsince_epoch=%s\nttl_min=%s\n' \
+        "$QL_TICKET" "$$" "$(iso_now)" "$(date +%s)" "$QL_TTL" > "$QL_DIR/owner"
+    }
+    ql_age_min() {
+      local since now; since="$(ql_read since_epoch)"; now="$(date +%s)"
+      echo $(( (now - ${since:-$now}) / 60 ))
+    }
+    case "$QL_VERB" in
+      acquire)
+        if [ -z "$QL_TICKET" ]; then
+          echo "qa-lease: no owner — no ticket in scope and no --ticket given" >&2; exit 2
+        fi
+        if mkdir "$QL_DIR" 2>/dev/null; then
+          ql_write_owner
+          [ -n "$TICKET" ] && history_append "qa_lease_acquire" "${AGENT_ROLE:-${GT_ROLE:-developer}}" \
+            "$(printf '{"owner":"%s","ttl_min":%s}' "$QL_TICKET" "$QL_TTL")"
+          echo "OWNER=$QL_TICKET"; echo "TTL_MIN=$QL_TTL"; echo "ACQUIRED=1"
+          exit 0
+        fi
+        QL_OWNER="$(ql_read owner)"
+        if [ -n "$QL_OWNER" ] && [ "$QL_OWNER" = "$QL_TICKET" ]; then
+          ql_write_owner
+          echo "OWNER=$QL_TICKET"; echo "TTL_MIN=$QL_TTL"; echo "ACQUIRED=1"; echo "REFRESHED=1"
+          exit 0
+        fi
+        QL_AGE="$(ql_age_min)"
+        QL_HELD_TTL="$(ql_read ttl_min)"; [ -n "$QL_HELD_TTL" ] || QL_HELD_TTL=60
+        if [ -z "$QL_OWNER" ] || [ "$QL_AGE" -gt "$QL_HELD_TTL" ]; then
+          rm -rf "$QL_DIR" 2>/dev/null
+          if mkdir "$QL_DIR" 2>/dev/null; then
+            ql_write_owner
+            echo "qa-lease: stole stale lease from '${QL_OWNER:-unknown}' (${QL_AGE}min > ${QL_HELD_TTL}min ttl)" >&2
+            [ -n "$TICKET" ] && history_append "qa_lease_steal" "${AGENT_ROLE:-${GT_ROLE:-developer}}" \
+              "$(printf '{"owner":"%s","stolen_from":"%s","ttl_min":%s}' "$QL_TICKET" "${QL_OWNER:-unknown}" "$QL_TTL")"
+            echo "OWNER=$QL_TICKET"; echo "TTL_MIN=$QL_TTL"; echo "ACQUIRED=1"; echo "STOLE_FROM=${QL_OWNER:-unknown}"
+            exit 0
+          fi
+          QL_OWNER="$(ql_read owner)"; QL_AGE="$(ql_age_min)"
+        fi
+        echo "STATUS: BLOCKED" >&2
+        echo "REASON: qa-lease held by '${QL_OWNER:-unknown}' (${QL_AGE}min into a ${QL_HELD_TTL}min lease) — one QA session at a time on the shared surface." >&2
+        echo "RECOMMENDATION: wait and re-run acquire, or 'bbs-ticket qa-lease release --force' if that run is dead." >&2
+        exit 2
+        ;;
+      release)
+        [ -d "$QL_DIR" ] || { echo "FREE=1"; exit 0; }
+        QL_OWNER="$(ql_read owner)"
+        if [ "$QL_FORCE" != "true" ] && [ -n "$QL_OWNER" ] && [ "$QL_OWNER" != "$QL_TICKET" ]; then
+          echo "STATUS: BLOCKED" >&2
+          echo "REASON: qa-lease belongs to '$QL_OWNER', not '${QL_TICKET:-<none>}' — releasing someone else's lease mid-QA corrupts their verdict." >&2
+          echo "RECOMMENDATION: let the owner release it, or pass --force if that run is dead." >&2
+          exit 2
+        fi
+        rm -rf "$QL_DIR" 2>/dev/null
+        [ -n "$TICKET" ] && history_append "qa_lease_release" "${AGENT_ROLE:-${GT_ROLE:-developer}}" \
+          "$(printf '{"owner":"%s"}' "${QL_OWNER:-unknown}")"
+        echo "RELEASED=1"; echo "OWNER=${QL_OWNER:-unknown}"
+        ;;
+      status)
+        if [ ! -d "$QL_DIR" ]; then echo "FREE"; exit 0; fi
+        echo "OWNER=$(ql_read owner)"
+        echo "AGE_MIN=$(ql_age_min)"
+        echo "TTL_MIN=$(ql_read ttl_min)"
+        ;;
+      *)
+        echo "usage: bbs-ticket qa-lease <acquire|release|status> [--ticket ID] [--ttl-min N] [--force]" >&2
+        exit 2
+        ;;
+    esac
+    ;;
+
   # session — inspect/rehydrate ~/.babysit/sessions/<uuid>.yaml written by
   # the preamble session-writer hook (docs/identity.md). `attach` echoes
   # export lines so a fresh shell can recover ticket identity after a crash.
   session)
     SS_VERB="${1:-}"; [ $# -gt 0 ] && shift || true
     SS_DIR="${BABYSIT_HOME:-$HOME/.babysit}/sessions"
-    # Top-level scalar from a fixed-schema session yaml (flat, no nesting).
-    ss_field() {
-      awk -v k="$2" '
-        /^[[:space:]]*#/ { next }
-        $0 ~ "^" k ":" {
-          sub("^" k ":[[:space:]]*", "")
-          gsub(/^["'\'']|["'\'']$/, "")
-          print
-          exit
-        }
-      ' "$1" 2>/dev/null || true
-    }
     case "$SS_VERB" in
       list)
         [ -d "$SS_DIR" ] || exit 0
@@ -2768,6 +3086,138 @@ EOF
     need_ticket
     rc_one "$TICKET"
     exit $?
+    ;;
+
+  # board — read-only aggregated view: every ticket in this project joined
+  # with its manifest (branch/pushed), verdicts (qa, review-pr), live session,
+  # PR pointer, and siblings, plus who holds the qa-lease and what the primary
+  # checkout is serving. Zero mutation — safe to run any time, from anywhere
+  # in the repo. Skips done/cancelled/duplicate unless --all; --pr asks gh for
+  # each PR's state (the only part that touches the network).
+  board)
+    BD_PR=0 BD_ALL=0
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --pr)  BD_PR=1; shift ;;
+        --all) BD_ALL=1; shift ;;
+        *) echo "board: unknown arg '$1'" >&2; exit 2 ;;
+      esac
+    done
+    [ -d "$PROJECT_HOME/tickets" ] || { echo "board: no tickets at $PROJECT_HOME/tickets" >&2; exit 0; }
+    BD_PRIMARY="" BD_GITDIR="" BD_REPO=""
+    if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+      BD_PRIMARY="$(git worktree list --porcelain 2>/dev/null | sed -n 's/^worktree //p' | head -1)"
+      [ -z "$BD_PRIMARY" ] && BD_PRIMARY="$(git rev-parse --show-toplevel)"
+      BD_GITDIR="$(git -C "$BD_PRIMARY" rev-parse --absolute-git-dir 2>/dev/null)"
+      BD_REPO="$(basename "$BD_PRIMARY")"
+    fi
+    BD_SESS_DIR="${BABYSIT_HOME:-$HOME/.babysit}/sessions"
+    BD_NOW="$(date +%s)"
+    bd_session_for() {  # $1 = ticket → "id… (Xm)" for the freshest live session
+      local f t mt
+      [ -d "$BD_SESS_DIR" ] || return 0
+      for f in "$BD_SESS_DIR"/*.yaml; do
+        [ -e "$f" ] || continue
+        mt="$(stat -f %m "$f" 2>/dev/null || stat -c %Y "$f" 2>/dev/null || echo 0)"
+        [ $((BD_NOW - mt)) -gt 7200 ] && continue   # 120m window, matches session list
+        t="$(ss_field "$f" ticket)"
+        [ "$t" = "$1" ] || continue
+        printf '%s(%sm)' "$(ss_field "$f" session_id | head -c 12)" "$(( (BD_NOW - mt) / 60 ))"
+        return 0
+      done
+    }
+    bd_sib_tsv() {  # $1 = siblings JSON → "role<TAB>repo<TAB>ticket" lines
+      _py - "$1" <<'EOF'
+import json, sys
+try:
+    sibs = json.loads(sys.argv[1])
+except Exception:
+    sys.exit(0)
+for s in sibs or []:
+    print(f"{s.get('role','')}\t{s.get('repo','')}\t{s.get('ticket','')}")
+EOF
+    }
+    printf '%-14s %-12s %-9s %-9s %-7s %-16s %-12s %s\n' \
+      "TICKET" "STATUS" "QA" "REVIEW" "PUSHED" "SESSION" "PR" "BRANCH"
+    for BD_D in "$PROJECT_HOME"/tickets/*/; do
+      [ -d "$BD_D" ] || continue
+      BD_T="$(basename "$BD_D")"
+      BD_IDX="${BD_D%/}/index.json"
+      BD_STATUS="$(json_read "$BD_IDX" status)"; [ -n "$BD_STATUS" ] || BD_STATUS="triage"
+      if [ "$BD_ALL" != "1" ]; then
+        case "$BD_STATUS" in done|cancelled|duplicate) continue ;; esac
+      fi
+      BD_BRANCH="-" BD_PUSHED="-"
+      if [ -f "${BD_D%/}/manifest.yaml" ]; then
+        BD_ROW="$(_py - "$(manifest_read "${BD_D%/}/manifest.yaml" 2>/dev/null)" "$BD_REPO" <<'EOF'
+import json, sys
+try:
+    d = json.loads(sys.argv[1])
+except Exception:
+    sys.exit(0)
+repos = d.get("repos") or []
+r = next((x for x in repos if x.get("name") == sys.argv[2]), repos[0] if repos else None)
+if r:
+    print(f"{r.get('branch','')}\t{r.get('pushed','')}")
+EOF
+)"
+        [ -n "$BD_ROW" ] && {
+          BD_BRANCH="$(printf '%s' "$BD_ROW" | cut -f1)"
+          BD_PUSHED="$(printf '%s' "$BD_ROW" | cut -f2)"
+        }
+      fi
+      BD_QA="$(BABYSIT_TICKET="$BD_T" "$0" verdict-status --skill qa 2>/dev/null || true)"
+      BD_RV="$(BABYSIT_TICKET="$BD_T" "$0" verdict-status --skill review-pr 2>/dev/null || true)"
+      BD_SESSION="$(bd_session_for "$BD_T")"
+      BD_PRURL="$(json_read "$BD_IDX" pointers.pr)"
+      BD_PRDISP="-" BD_MERGED=""
+      if [ -n "$BD_PRURL" ]; then
+        BD_PRDISP="$(printf '%s' "$BD_PRURL" | sed -n 's|.*/pull/|#|p')"
+        [ -n "$BD_PRDISP" ] || BD_PRDISP="$BD_PRURL"
+        if [ "$BD_PR" = "1" ]; then
+          BD_PRSTATE="$(gh pr view "$BD_PRURL" --json state -q .state 2>/dev/null || true)"
+          [ -n "$BD_PRSTATE" ] && BD_PRDISP="$BD_PRDISP $BD_PRSTATE"
+          [ "$BD_PRSTATE" = "MERGED" ] && BD_MERGED=1
+        fi
+      fi
+      printf '%-14s %-12s %-9s %-9s %-7s %-16s %-12s %s\n' \
+        "$BD_T" "$BD_STATUS" "${BD_QA:-none}" "${BD_RV:-none}" "$BD_PUSHED" \
+        "${BD_SESSION:--}" "$BD_PRDISP" "$BD_BRANCH"
+      [ -n "$BD_MERGED" ] && \
+        echo "  ↳ PR merged — next: bbs-ticket reset-base; BABYSIT_TICKET=$BD_T bbs-ticket set-status done"
+      BD_SIBS="$(bd_sib_tsv "$(json_read "$BD_IDX" siblings)")"
+      while IFS="$(printf '\t')" read -r bd_role bd_repo bd_st; do
+        [ -n "$bd_st" ] || continue
+        bd_path="$(_related_repo_path "$bd_role" "$BD_PRIMARY")" || {
+          echo "  └─ $bd_role:$bd_st ($bd_repo) — path unresolved (RELATED repo env unset)"
+          continue
+        }
+        if [ ! -d "$bd_path" ]; then
+          echo "  └─ $bd_role:$bd_st ($bd_repo) — path '$bd_path' missing"
+          continue
+        fi
+        bd_slug="$(cd "$bd_path" 2>/dev/null && eval "$("$SLUG_BIN" env 2>/dev/null)" && printf '%s' "${SLUG:-}")"
+        bd_home="${BABYSIT_HOME:-$HOME/.babysit}/projects/$bd_slug"
+        bd_sst="$(json_read "$bd_home/tickets/$bd_st/index.json" status)"
+        bd_sqa="$(BABYSIT_PROJECT_HOME="$bd_home" BABYSIT_TICKET="$bd_st" "$0" verdict-status --skill qa 2>/dev/null || true)"
+        echo "  └─ $bd_role:$bd_st ($(basename "$bd_path")) status=${bd_sst:-?} qa=${bd_sqa:-none}"
+      done <<EOF
+$BD_SIBS
+EOF
+    done
+    if [ -n "$BD_GITDIR" ]; then
+      if [ -d "$BD_GITDIR/bbs-qa-lease" ]; then
+        bd_owner="$(sed -n 's/^owner=//p' "$BD_GITDIR/bbs-qa-lease/owner" 2>/dev/null | head -1)"
+        bd_since="$(sed -n 's/^since_epoch=//p' "$BD_GITDIR/bbs-qa-lease/owner" 2>/dev/null | head -1)"
+        bd_ttl="$(sed -n 's/^ttl_min=//p' "$BD_GITDIR/bbs-qa-lease/owner" 2>/dev/null | head -1)"
+        echo "QA-LEASE: ${bd_owner:-unknown} ($(( (BD_NOW - ${bd_since:-$BD_NOW}) / 60 ))min into ${bd_ttl:-60}min ttl)"
+      else
+        echo "QA-LEASE: FREE"
+      fi
+      BD_SERVING="$(cat "$BD_GITDIR/bbs-serving" 2>/dev/null || true)"
+      echo "SERVING: ${BD_SERVING:-(base only)}"
+    fi
+    exit 0
     ;;
 
   assert-cwd)
