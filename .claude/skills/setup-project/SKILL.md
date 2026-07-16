@@ -41,6 +41,8 @@ version: 1
 url: http://localhost:5173
 start: npm run dev
 check: npm test
+prepare: npm i && npm run db:migrate   # include only if QA needs install/migrate (idempotent)
+revert: npm run db:rollback            # include only if migrations must be undone after QA
 flows: login validation, empty state, error state, mobile layout
 credentials:            # include only if the app needs a login
   username_env: QA_USER

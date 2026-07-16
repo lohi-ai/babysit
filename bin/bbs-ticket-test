@@ -417,7 +417,7 @@ expect_stderr_contains "S4: handoff --write redirects to add-handoff" 2 "add-han
 expect_stderr_contains "S4: verdict --write redirects to set-verdict" 2 "set-verdict" \
   bbs path verdict --skill implement --write
 bbs add-handoff --skill implement --status "FIXED(1 commit)" --brief "added cmd" >/dev/null
-bbs set-verdict --skill implement --status PASS --note "tests green" >/dev/null
+bbs set-verdict --skill implement --body "STATUS: DONE\ntests green" >/dev/null
 expect_exit "S4: read implement handoff back" 0 \
   bbs path handoff --skill implement --latest --read
 expect_stdout "S4: read implement verdict back" 0 "$TH/verdicts/implement.md" \
@@ -451,7 +451,7 @@ expect_stdout "S6: write quality summary in evidence/quality" 0 "$TH/evidence/qu
 echo "summary" > "$TH/evidence/quality/quality-summary.md"
 expect_stdout "S6: read quality summary back" 0 "$TH/evidence/quality/quality-summary.md" \
   bbs path evidence --skill quality --name quality-summary.md --read
-bbs set-verdict --skill quality --status PASS --note "all green" >/dev/null
+bbs set-verdict --skill quality --body "STATUS: DONE\nall green" >/dev/null
 expect_stdout "S6: read quality verdict" 0 "$TH/verdicts/quality.md" \
   bbs path verdict --skill quality --read
 

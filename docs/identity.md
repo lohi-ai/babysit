@@ -126,9 +126,12 @@ mutations. Concurrent set-branch calls serialize.
 ## `.babysit/sessions/<uuid>.yaml` schema
 
 One file per active Claude Code session at
-`~/.babysit/sessions/<session-uuid>.yaml`. Auto-written by the preamble
-session-writer hook when `$BABYSIT_SESSION` is set; bumped by
-`bbs-autopilot checkpoint`.
+`~/.babysit/sessions/<session-uuid>.yaml`. Auto-written by the
+`bin/hooks/session-writer` plugin hook (SessionStart + PostToolUse(Bash),
+throttled to one write/60s; ticket derived from the cwd's worktree dir or
+branch since hooks can't see `$BABYSIT_TICKET`), and by the preamble
+session-writer block when a skill executes it with `$BABYSIT_SESSION` set;
+bumped by `bbs-autopilot checkpoint`.
 
 ```yaml
 version: 1

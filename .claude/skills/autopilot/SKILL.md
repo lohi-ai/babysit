@@ -26,10 +26,10 @@ status prints.
    Stop here on `--stop-after=requirement`.
 3. Pick the archetype workflow ([references/archetypes.md](../references/archetypes.md)):
    named one wins; else route by the shape of the work; ambiguous or ordinary
-   production work → `builder`. Several *independent* tickets or
-   `+`-separated requirements in one invocation → `conductor` (parallel
-   batch: one background worker per ticket, QA serialized on
-   `bbs-ticket qa-lease`, integration pass, aggregate handoff). `NEEDS_CONTEXT` only when there is no ticket,
+   production work → `builder`. Several *independent* requirements in one
+   invocation → don't batch here: autopilot runs one ticket end-to-end;
+   parallel dispatch belongs to the `foreman` skill (one tmux worker per
+   ticket, each running autopilot). `NEEDS_CONTEXT` only when there is no ticket,
    requirement, plan, manifest, or branch work at all *and* no archetype was
    named — a named archetype is direction enough to proceed.
 4. Seed the plan when the routed mode needs one (build mode, size above XS):
@@ -37,7 +37,11 @@ status prints.
    from. User-facing work routes through `design-ui` inside `plan-draft`;
    make sure that ran, so the spec and prototype exist *before* the `/goal`
    handoff — design is reviewed before implementation, not discovered after
-   it. Stop here on `--stop-after=plan`.
+   it. Stop here on `--stop-after=plan`. Size relaxes *only this step*: an
+   XS change still gets the step-2 ticket + worktree and the verdict gates —
+   there is no inline path, and under `mode: worktree` nothing is ever
+   committed in the primary checkout (code reaches it only via
+   `bbs-ticket merge-base`/`switch`).
 5. Hand the work to `/goal` (below). Init never executes workflow steps.
 ## The work loop (`/goal`)
 `/goal <condition>` arms a Stop hook that blocks the session from stopping

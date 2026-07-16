@@ -20,7 +20,14 @@ set -euo pipefail
 SUB="${1:-env}"
 
 CACHE_DIR="$HOME/.babysit/slug-cache"
-PROJECT_DIR="$(pwd)"
+# Key the cache by the repo's PRIMARY worktree, not the cwd: a linked
+# worktree (.babysit/worktrees/<t>_<slug>/) must resolve the same project
+# home as the primary checkout, or ticket state splits between the two
+# (verdicts written from a worktree landing in a different
+# ~/.babysit/projects/<slug>/ than the ticket created from the primary).
+# First `git worktree list` entry is always the primary; outside git, pwd.
+PROJECT_DIR="$(git worktree list --porcelain 2>/dev/null | sed -n 's/^worktree //p' | head -1)"
+[[ -n "$PROJECT_DIR" ]] || PROJECT_DIR="$(pwd)"
 # Encode absolute path as cache key: /Users/j/foo → _Users_j_foo
 CACHE_KEY=$(printf '%s' "$PROJECT_DIR" | tr '/' '_')
 CACHE_FILE="${CACHE_DIR}/${CACHE_KEY}"

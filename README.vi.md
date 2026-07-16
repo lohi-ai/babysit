@@ -2,13 +2,22 @@
 
 [English](README.md) | Tiếng Việt
 
-**Gõ một câu. Đi chơi đi. Quay lại đã thấy một branch QA xong xuôi, nằm chờ review sẵn.**
+**Giao một loạt yêu cầu. Worker xây song song ngay trước mắt bạn. Review một bản gộp duy nhất.**
+
+```
+/bbs:foreman product-wide search on the home page
+/bbs:foreman rebuild the novel request flow
+```
+
+**`foreman` là luồng chính**: mỗi yêu cầu một worker tmux nhìn thấy được (mỗi worker chạy autopilot trọn gói — plan, code, review, QA, push), design được duyệt trước khi viết dòng code nào, và mọi ticket xong đều được merge lên base local để bạn review cả lô đang chạy trong một trình duyệt — rồi mới tạo PR.
+
+Với **một ticket lẻ**, gọi thẳng autopilot (cũng chính là thứ mỗi worker chạy):
 
 ```
 /bbs:autopilot add a settings page with dark mode toggle
 ```
 
-~40 phút tự chạy — plan, code, review, QA, push — mà vẫn xong xuôi, dù chẳng session Claude nào ôm nổi ngần ấy việc trong một hơi. Bạn ngó lại branch, ưng thì tự bấm mở PR.
+~40 phút tự chạy mỗi ticket — mà vẫn xong xuôi, dù chẳng session Claude nào ôm nổi ngần ấy việc trong một hơi. Bạn ngó lại branch, ưng thì tự bấm mở PR.
 
 *babysit là việc bạn làm khi khỏi cần ai trông.* Nó chuộng mấy quyết định Claude tự làm tự kiểm được, hơn là mấy quyết định phải có người ngồi kè kè — đẻ ra cho các lần chạy theo lịch, pipeline được điều phối, và bất cứ thứ gì bạn muốn giao rồi đi chơi.
 
@@ -116,6 +125,17 @@ Wizard viết ra config `.babysit/` nhỏ nhất mà vẫn đủ xài: `git-flow
 
 ### 3. Chạy
 
+**Luồng chính — `foreman`, chạy song song có người trông:**
+
+```
+/bbs:foreman <yêu cầu một dòng>     # mỗi yêu cầu một worker; lặp lại để giao thêm
+/bbs:foreman                               # attach/resume: điểm danh worker đang sống + board
+```
+
+Foreman mở một worker tmux cho mỗi ticket (`tmux attach -t <session>` để xem hoặc tự lái bất kỳ worker nào), theo dõi các pane, và giữ chốt chặn giữa design và build: khi một worker dừng ở bản bàn giao plan/prototype, foreman review design, góp ý, rồi hoặc bật đèn xanh cho build hoặc hỏi bạn khi tiếng nói của bạn có thể đổi hướng kết quả. Nó tự trả lời các câu hỏi máy móc của worker, chuyển cho bạn những câu cần bạn, kiểm chứng mọi verdict QA/review trên đĩa, và — với `land: local` (mặc định ở mode worktree) — merge hết các ticket xong lên base local để bạn review sản phẩm gộp trên dev server trước khi quyết: PR từng ticket hay một compose PR.
+
+**Luồng phụ — `autopilot`, cho một ticket lẻ** (cũng là thứ mỗi worker của foreman chạy):
+
 ```
 /bbs:autopilot "add a settings page with dark mode toggle"
 ```
@@ -180,11 +200,14 @@ Cả bề mặt chỉ có vậy. Các flag (`--stop-after=`, `--replan`, `--dry-
 
 ### Làm nhiều ticket song song (mode `worktree`)
 
+`/bbs:foreman` chạy giùm bạn nguyên mục này — dispatch, chốt design, kiểm verdict, và bề mặt gộp cuối cùng. Các lệnh bên dưới là tầng bên dưới, cho lúc bạn tự lái hoặc muốn hiểu foreman đang làm gì.
+
 Mỗi repo có một checkout nặng chạy dev server; mỗi ticket sống trong worktree nhẹ riêng của nó. Nhờ vậy mọi thứ chạy song song được hết — *trừ* cái khoảnh khắc có người cần thấy một ticket đang chạy thật — và khoảnh khắc đó có đúng ba lệnh:
 
 ```bash
 bbs-ticket board            # toàn bộ ticket trong một cái nhìn: status, verdict, session đang sống, PR, ai đang giữ bề mặt
 bbs-ticket serve bs-ab123   # đưa ticket này lên dev server đang chạy cho người review
+bbs-ticket serve            # để trống: gộp mọi ticket đã xong (qa + review DONE) lên server
 /bbs:fix-pr                 # khi reviewer để lại comment: kéo các thread chưa resolve, sửa, trả lời, resolve
 ```
 
@@ -193,7 +216,7 @@ bbs-ticket serve bs-ab123   # đưa ticket này lên dev server đang chạy cho
 1. Một ticket chạm chặng 3 — dòng `Next:` trong bản handoff đưa tận tay lệnh cần gõ: `bbs-ticket serve bs-ab123`.
 2. `serve` giữ bề mặt test trong 4 tiếng (QA của các agent lịch sự xếp hàng sau bạn) và chuyển server đang chạy sang base + đúng ticket này — ở repo này **và** ở repo FE/BE anh em khi ticket trải qua cả hai.
 3. Review trong browser. Nhờ session của ticket sửa; nó commit trong worktree của riêng nó; chạy lại `serve` (reentrant — làm mới thời gian giữ, cắt lại bề mặt) rồi refresh browser. Lặp tới khi ưng.
-4. Ưng rồi → `bbs-ticket serve bs-ab123 --release`, rồi `/bbs:create-pr` cho từng repo. Reviewer comment sau đó → `/bbs:fix-pr`.
+4. Ưng rồi → `bbs-ticket serve --release`, rồi `/bbs:create-pr` cho từng repo. Reviewer comment sau đó → `/bbs:fix-pr`.
 5. `bbs-ticket board --pr` chỉ ra các PR đã merge và in đúng các lệnh dọn dẹp (`reset-base`, `set-status done`).
 
 **Một ticket, hai repo** (feature trải cả frontend + backend): `/bbs:setup-project` ghi lại các repo anh em một lần; builder của autopilot tự băng qua — tạo ticket anh em đã liên kết, code và QA cả hai bên — và `serve` bày cả cặp ra trước mặt bạn bằng một lệnh. Trong lúc đó session của các ticket khác vẫn code và review trong worktree riêng của chúng; `board` cho cả nhà thấy ai đang giữ bề mặt và giữ bao lâu nữa. Công thức đầy đủ: [`references/git-flow.md` § Attended parallel review](.claude/skills/references/git-flow.md).
@@ -209,6 +232,7 @@ bbs-ticket serve bs-ab123   # đưa ticket này lên dev server đang chạy cho
 
 | Tôi muốn… | Skill |
 |-----------|-------|
+| Giao nhiều yêu cầu chạy song song mà vẫn nhìn thấy được | `/bbs:foreman "<ý tưởng>"` |
 | Vặn thử một ý tưởng trước khi quyết định làm | `/bbs:office-hours` |
 | Thiết kế một feature trong hệ UI có sẵn | `/bbs:design-ui` |
 | Ship một feature đầu-tới-cuối từ một ý tưởng một dòng | `/bbs:autopilot "<idea>"` |

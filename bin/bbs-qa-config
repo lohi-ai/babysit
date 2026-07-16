@@ -23,6 +23,10 @@
 #   url: http://localhost:5173
 #   start: npm run dev              # optional; folded into QA_ENV_GUIDELINE
 #   check: npm test                 # optional; folded into QA_ENV_GUIDELINE
+#   prepare: npm i && npm run db:migrate   # optional; idempotent server prep run in
+#                                          # the serving checkout before QA (QA_ENV_PREPARE)
+#   revert: npm run db:rollback     # optional; undo THIS ticket's DB migrations when
+#                                   # QA leaves a shared surface (QA_ENV_REVERT)
 #   flows: login validation, empty state, mobile layout
 #   credentials:                    # optional; standard login env-var NAMES
 #     username_env: QA_USER         # value lives in .babysit/.env, never here
@@ -201,23 +205,37 @@ _yaml_simple_local() {
   ' "$file" 2>/dev/null || true
 }
 
-# Top-level scalar (or under qa: block). Matches `default_env:` at column 0
-# OR `<indent>default_env:` when the previous non-indented line was `qa:`.
-_yaml_default_env() {
-  local file="$1"
-  awk '
+# Top-level scalar (or under qa: block). Matches `<key>:` at column 0
+# OR `<indent><key>:` when the previous non-indented line was `qa:`.
+_yaml_top_scalar() {
+  local file="$1" key="$2"
+  awk -v k="$key" '
     /^[[:space:]]*#/ { next }
     { sub(/[[:space:]]+#.*$/, "") }
     /^qa:[[:space:]]*$/ { in_qa=1; next }
     /^[a-zA-Z]/ && !/^[[:space:]]/ { in_qa=0 }
-    /^default_env:[[:space:]]*/ ||
-    (in_qa && /^[[:space:]]+default_env:[[:space:]]*/) {
-      sub(/^[[:space:]]*default_env:[[:space:]]*/, "")
+    $0 ~ ("^" k ":[[:space:]]*") ||
+    (in_qa && $0 ~ ("^[[:space:]]+" k ":[[:space:]]*")) {
+      sub("^[[:space:]]*" k ":[[:space:]]*", "")
       gsub(/^["'\'']|["'\'']$/, "")
       print
       exit
     }
   ' "$file" 2>/dev/null || true
+}
+
+_yaml_default_env() { _yaml_top_scalar "$1" default_env; }
+
+# Highest-precedence value of a top-level scalar across the config files.
+_collect_top_scalar() {
+  local key="$1" repo val
+  repo="$(_repo_toplevel)"
+  for f in "$repo/.babysit/qa.local.yaml" "$repo/.babysit/qa.yaml"; do
+    [ -n "$repo" ] && [ -f "$f" ] || continue
+    val="$(_yaml_top_scalar "$f" "$key")"
+    if [ -n "$val" ]; then printf '%s\n' "$val"; return 0; fi
+  done
+  return 0
 }
 
 # Single-quote a value for safe `eval`.
@@ -309,6 +327,8 @@ cmd_probe() {
   printf 'QA_ENV_GUIDELINE=%s\n' "$(_shquote "$guideline")"
   printf 'QA_ENV_USERNAME_ENV=%s\n' "$(_shquote "$user_env")"
   printf 'QA_ENV_PASSWORD_ENV=%s\n' "$(_shquote "$pass_env")"
+  printf 'QA_ENV_PREPARE=%s\n'   "$(_shquote "$(_collect_top_scalar prepare)")"
+  printf 'QA_ENV_REVERT=%s\n'    "$(_shquote "$(_collect_top_scalar revert)")"
   printf 'QA_ENV_SOURCE=%s\n'    "$(_shquote "$source")"
 }
 

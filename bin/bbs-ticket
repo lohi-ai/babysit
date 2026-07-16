@@ -122,13 +122,16 @@
 #                                        switch / reset-base from other tickets
 #                                        BLOCK. Reentrant for the owner; stale
 #                                        (age > ttl, default 60min) is stolen.
-#   serve <ticket> [--ttl-min <n>]       human-review lever: qa-lease acquire
-#                                        (long ttl, default 240min) + switch, in
-#                                        this repo AND each sibling repo of a
-#                                        cross-repo pair. Reentrant — re-run
-#                                        after each fix to refresh lease +
-#                                        re-switch. serve --release <ticket>
-#                                        frees the lease(s), tree untouched.
+#   serve [<ticket>...] [--ttl-min <n>]  THE human-review command: qa-lease
+#                                        acquire (long ttl, default 240min) +
+#                                        composed switch, in this repo AND each
+#                                        sibling repo of a cross-repo pair.
+#                                        Bare = the finished batch (every open
+#                                        ticket with qa + review-pr DONE); args
+#                                        = exactly those tickets. Reentrant —
+#                                        re-run after each fix to refresh lease
+#                                        + re-switch. serve --release frees the
+#                                        lease(s), tree untouched.
 #   board [--all] [--pr]                 read-only view of every ticket: status,
 #                                        branch, qa/review verdicts, session,
 #                                        PR pointer, siblings, plus qa-lease and
@@ -210,9 +213,11 @@ Subcommands:
                                  exclusive QA-session lease on the test surface;
                                  other tickets' merge-base/switch/reset-base
                                  BLOCK while held; stale (> ttl) is stolen
-  serve <ticket> [--ttl-min N]   human review: long qa-lease (240min) + switch,
-                                 here and in each sibling repo; re-run after
-                                 each fix; serve --release <ticket> frees leases
+  serve [<ticket>...] [--ttl-min N]
+                                 human review: long qa-lease (240min) + switch,
+                                 here and in each sibling repo; bare = every
+                                 finished ticket (qa + review-pr DONE); re-run
+                                 after each fix; serve --release frees leases
   board [--all] [--pr]           read-only ticket board: status, branch, qa/
                                  review verdicts, session, PR, qa-lease, serving
   path <kind> [selectors] --read|--write   resolve a ticket file path (canonical → legacy)
@@ -1403,7 +1408,11 @@ EOF
         --skill)     SKILL="$2"; shift 2 ;;
         --body)      BODY="$2"; shift 2 ;;
         --body-file) BODYFILE="$2"; shift 2 ;;
-        *) shift ;;
+        # Unknown args must fail loud: silently shifting them let callers run
+        # `--verdict PASS --note ...` and persist a `<no verdict>` body that
+        # verdict-status reads as none — a hollow verdict downstream gates
+        # then re-ask about, hiding the real bug.
+        *) echo "set-verdict: unknown arg '$1' (usage: set-verdict --skill S [--body MD | --body-file FILE])" >&2; exit 2 ;;
       esac
     done
     [ -z "$SKILL" ] && { echo "set-verdict: --skill required" >&2; exit 2; }
@@ -1412,7 +1421,8 @@ EOF
     ensure_dirs
     TH="$(ticket_home)"
     VP="$TH/verdicts/$SKILL.md"
-    if [ -n "$BODYFILE" ] && [ -f "$BODYFILE" ]; then
+    if [ -n "$BODYFILE" ]; then
+      [ -f "$BODYFILE" ] || { echo "set-verdict: --body-file '$BODYFILE' not found" >&2; exit 2; }
       cp "$BODYFILE" "$VP"
     else
       printf '%s\n' "${BODY:-<no verdict>}" > "$VP"
@@ -1462,7 +1472,7 @@ EOF
         --skill)     SKILL="$2"; shift 2 ;;
         --body)      BODY="$2"; shift 2 ;;
         --body-file) BODYFILE="$2"; shift 2 ;;
-        *) shift ;;
+        *) echo "set-review: unknown arg '$1' (usage: set-review --skill S [--body MD | --body-file FILE])" >&2; exit 2 ;;
       esac
     done
     [ -z "$SKILL" ] && { echo "set-review: --skill required" >&2; exit 2; }
@@ -1471,7 +1481,8 @@ EOF
     ensure_dirs
     TH="$(ticket_home)"
     RP="$TH/reviews/$SKILL.md"
-    if [ -n "$BODYFILE" ] && [ -f "$BODYFILE" ]; then
+    if [ -n "$BODYFILE" ]; then
+      [ -f "$BODYFILE" ] || { echo "set-review: --body-file '$BODYFILE' not found" >&2; exit 2; }
       cp "$BODYFILE" "$RP"
     else
       printf '%s\n' "${BODY:-<no review>}" > "$RP"
@@ -2050,10 +2061,11 @@ EOF
   # Discarding merge commits is safe — their content lives on ticket branches;
   # in-flight worktrees just re-run merge-base afterwards.
   reset-base)
-    RB_BASE=""
+    RB_BASE="" RB_QUIET=0
     while [ $# -gt 0 ]; do
       case "$1" in
         --base) RB_BASE="$2"; shift 2 ;;
+        --quiet) RB_QUIET=1; shift ;;
         *) shift ;;
       esac
     done
@@ -2130,8 +2142,13 @@ EOF
     echo "BASE=$RB_BASE"
     echo "PRIMARY=$RB_PRIMARY"
     echo "HEAD=$RB_POST"
-    echo "reset-base: '$RB_BASE' now matches origin — re-run merge-base from any in-flight worktree" >&2
-    echo "  so the shared server serves those tickets again." >&2
+    # The advisory is only true for a direct invocation: switch/serve call
+    # reset-base mid-compose and immediately merge tickets back in, so
+    # "matches origin" would mislead anyone reading the combined output.
+    if [ "$RB_QUIET" != "1" ]; then
+      echo "reset-base: '$RB_BASE' now matches origin — re-run merge-base from any in-flight worktree" >&2
+      echo "  so the shared server serves those tickets again." >&2
+    fi
     ;;
 
   # switch — point the shared test surface at exactly the named ticket(s).
@@ -2181,7 +2198,7 @@ EOF
     SW_BRANCHES="${SW_BRANCHES# }"
     # Clean slate: reset-base does the safety checks (dirty, off-base, stray
     # commits) and BLOCKs loudly; its stderr passes through.
-    "$0" reset-base ${SW_BASE:+--base "$SW_BASE"} >/dev/null || exit $?
+    "$0" reset-base --quiet ${SW_BASE:+--base "$SW_BASE"} >/dev/null || exit $?
     if [ -z "$SW_BASE" ]; then
       AUTOPILOT_BIN="$SCRIPT_DIR/bbs-autopilot"
       [ -x "$AUTOPILOT_BIN" ] || AUTOPILOT_BIN="$(command -v bbs-autopilot 2>/dev/null || echo "$HOME/.claude/bbs-autopilot")"
@@ -2228,19 +2245,16 @@ EOF
   # the lease and re-switch every surface. serve --release frees the lease(s)
   # and leaves the tree alone (the next serve/switch resets it anyway).
   serve)
-    SV_TICKET="" SV_RELEASE=0 SV_TTL=240
+    SV_TICKETS="" SV_RELEASE=0 SV_TTL=240
     while [ $# -gt 0 ]; do
       case "$1" in
         --release|--done) SV_RELEASE=1; shift ;;
         --ttl-min) SV_TTL="$2"; shift 2 ;;
         -*) echo "serve: unknown flag '$1'" >&2; exit 2 ;;
-        *) SV_TICKET="$1"; shift ;;
+        *) SV_TICKETS="$SV_TICKETS $1"; shift ;;
       esac
     done
-    [ -n "$SV_TICKET" ] || SV_TICKET="$TICKET"
-    if [ -z "$SV_TICKET" ]; then
-      echo "usage: bbs-ticket serve <ticket> [--ttl-min N] | serve --release <ticket>" >&2; exit 2
-    fi
+    SV_TICKETS="${SV_TICKETS# }"
     command -v git >/dev/null 2>&1 || { echo "serve: git not found" >&2; exit 2; }
     if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
       echo "serve: not in a git work tree" >&2; exit 2
@@ -2248,9 +2262,14 @@ EOF
     SV_PRIMARY="$(git worktree list --porcelain 2>/dev/null | sed -n 's/^worktree //p' | head -1)"
     [ -z "$SV_PRIMARY" ] && SV_PRIMARY="$(git rev-parse --show-toplevel)"
     SV_REPO="$(basename "$SV_PRIMARY")"
-    # Sibling rows as "role<TAB>repo<TAB>ticket" lines (empty when none).
+    SV_GITDIR="$(git -C "$SV_PRIMARY" rev-parse --absolute-git-dir 2>/dev/null)"
+    sv_lease_owner() {  # $1 = gitdir → current lease owner (empty when free)
+      sed -n 's/^owner=//p' "$1/bbs-qa-lease/owner" 2>/dev/null | head -1
+    }
+    # sv_sibs <ticket> — sibling rows as "role<TAB>repo<TAB>ticket" lines.
     # JSON goes in as argv, not stdin — the heredoc already owns stdin.
-    SV_SIBS="$(_py - "$(json_read "$PROJECT_HOME/tickets/$(safe "$SV_TICKET")/index.json" siblings)" <<'EOF'
+    sv_sibs() {
+      _py - "$(json_read "$PROJECT_HOME/tickets/$(safe "$1")/index.json" siblings)" <<'EOF'
 import json, sys
 try:
     sibs = json.loads(sys.argv[1])
@@ -2259,77 +2278,147 @@ except Exception:
 for s in sibs or []:
     print(f"{s.get('role','')}\t{s.get('repo','')}\t{s.get('ticket','')}")
 EOF
-)"
+    }
+
+    if [ "$SV_RELEASE" = "1" ]; then
+      # Bare release covers whatever is being served right now.
+      [ -n "$SV_TICKETS" ] || SV_TICKETS="$(cat "$SV_GITDIR/bbs-serving" 2>/dev/null | tr ',' ' ')"
+      SV_OWNER="$(sv_lease_owner "$SV_GITDIR")"
+      if [ -n "$SV_OWNER" ]; then
+        BABYSIT_TICKET="$SV_OWNER" "$0" qa-lease release --ticket "$SV_OWNER" >/dev/null || exit $?
+        echo "RELEASED: $SV_REPO $SV_OWNER"
+      else
+        echo "RELEASED: $SV_REPO (already free)"
+      fi
+      for SV_T in $SV_TICKETS; do
+        while IFS="$(printf '\t')" read -r sv_role sv_repo sv_t; do
+          [ -n "$sv_t" ] || continue
+          sv_path="$(_related_repo_path "$sv_role" "$SV_PRIMARY")" || {
+            echo "serve: sibling $sv_repo/$sv_t not released — RELATED repo path for role '$sv_role' unresolved" >&2
+            continue
+          }
+          sv_gd="$(git -C "$sv_path" rev-parse --absolute-git-dir 2>/dev/null)"
+          sv_owner="$(sv_lease_owner "$sv_gd")"
+          [ -n "$sv_owner" ] || continue   # already free (or released via an earlier sibling)
+          if (cd "$sv_path" 2>/dev/null && BABYSIT_TICKET="$sv_owner" "$0" qa-lease release --ticket "$sv_owner" >/dev/null); then
+            echo "RELEASED: $(basename "$sv_path") $sv_owner"
+          else
+            echo "serve: sibling release failed in $sv_path for $sv_owner" >&2
+          fi
+        done <<EOF
+$(sv_sibs "$SV_T")
+EOF
+      done
+      exit 0
+    fi
+
+    # Bare serve: inside a ticket context serve that ticket; otherwise serve
+    # the finished batch — every open ticket with qa + review-pr DONE.
+    if [ -z "$SV_TICKETS" ]; then
+      if [ -n "$TICKET" ]; then
+        SV_TICKETS="$TICKET"
+      else
+        for SV_D in "$PROJECT_HOME"/tickets/*/; do
+          [ -d "$SV_D" ] || continue
+          SV_T="$(basename "$SV_D")"
+          case "$(json_read "${SV_D%/}/index.json" status)" in done|cancelled|duplicate) continue ;; esac
+          case "$(BABYSIT_TICKET="$SV_T" "$0" verdict-status --skill qa 2>/dev/null)" in
+            DONE|DONE_WITH_CONCERNS) : ;; *) continue ;;
+          esac
+          case "$(BABYSIT_TICKET="$SV_T" "$0" verdict-status --skill review-pr 2>/dev/null)" in
+            DONE|DONE_WITH_CONCERNS) : ;; *) continue ;;
+          esac
+          SV_TICKETS="$SV_TICKETS $SV_T"
+        done
+        SV_TICKETS="${SV_TICKETS# }"
+        if [ -z "$SV_TICKETS" ]; then
+          echo "serve: nothing finished to serve — no open ticket has qa + review-pr DONE (see bbs-ticket board)" >&2
+          exit 0
+        fi
+      fi
+    fi
     SV_RC=0
 
-    # _serve_one <repo-dir> <ticket>: acquire long lease + switch, releasing a
-    # lease we just created (not one refreshed from an earlier serve) if the
-    # switch BLOCKs — a failed serve must not leave a stray lease.
-    _serve_one() {
-      local dir="$1" t="$2" out
-      out="$(cd "$dir" && BABYSIT_TICKET="$t" "$0" qa-lease acquire --ticket "$t" --ttl-min "$SV_TTL")" || return 2
-      if ! (cd "$dir" && BABYSIT_TICKET="$t" "$0" switch "$t" >/dev/null); then
+    # _serve_set <repo-dir> <owner-ticket> <ticket...>: long lease + composed
+    # switch. A lease we just created (not one refreshed from an earlier serve)
+    # is released if the switch BLOCKs — a failed serve must not leave a stray
+    # lease.
+    _serve_set() {
+      local dir="$1" owner="$2" out; shift 2
+      out="$(cd "$dir" && BABYSIT_TICKET="$owner" "$0" qa-lease acquire --ticket "$owner" --ttl-min "$SV_TTL")" || return 2
+      if ! (cd "$dir" && BABYSIT_TICKET="$owner" "$0" switch "$@" >/dev/null); then
         case "$out" in
           *REFRESHED=1*) : ;;  # lease predates this serve — keep it
-          *) (cd "$dir" && BABYSIT_TICKET="$t" "$0" qa-lease release --ticket "$t" >/dev/null 2>&1) ;;
+          *) (cd "$dir" && BABYSIT_TICKET="$owner" "$0" qa-lease release --ticket "$owner" >/dev/null 2>&1) ;;
         esac
         return 2
       fi
       return 0
     }
+    # sv_pick_owner <gitdir> <ticket...> — reuse the live lease owner when it
+    # is one of the tickets being served (keeps re-serve reentrant even when
+    # the set grows or reorders); otherwise the first ticket owns.
+    sv_pick_owner() {
+      local gd="$1" cur; shift
+      cur="$(sv_lease_owner "$gd")"
+      if [ -n "$cur" ]; then
+        case " $* " in *" $cur "*) printf '%s' "$cur"; return 0 ;; esac
+      fi
+      printf '%s' "$1"
+    }
 
-    if [ "$SV_RELEASE" = "1" ]; then
-      BABYSIT_TICKET="$SV_TICKET" "$0" qa-lease release --ticket "$SV_TICKET" >/dev/null || exit $?
-      echo "RELEASED: $SV_REPO $SV_TICKET"
+    SV_OWNER="$(sv_pick_owner "$SV_GITDIR" $SV_TICKETS)"
+    _serve_set "$SV_PRIMARY" "$SV_OWNER" $SV_TICKETS || exit $?
+    SV_LIST="$(printf '%s' "$SV_TICKETS" | tr ' ' ',')"
+    echo "SERVED: $SV_REPO $SV_LIST"
+    TICKET="$SV_OWNER" history_append "serve" "${AGENT_ROLE:-${GT_ROLE:-developer}}" \
+      "$(printf '{"tickets":"%s","ttl_min":%s}' "$SV_LIST" "$SV_TTL")"
+
+    # Sibling fan-out: collect "path<TAB>ticket" rows across every served
+    # ticket, then one lease + one composed switch per sibling repo (two
+    # tickets sharing a sibling repo must land there together, not reset
+    # each other).
+    SV_SIB_ROWS=""
+    for SV_T in $SV_TICKETS; do
       while IFS="$(printf '\t')" read -r sv_role sv_repo sv_t; do
         [ -n "$sv_t" ] || continue
         sv_path="$(_related_repo_path "$sv_role" "$SV_PRIMARY")" || {
-          echo "serve: sibling $sv_repo/$sv_t not released — RELATED repo path for role '$sv_role' unresolved" >&2
+          echo "STATUS: NEEDS_CONTEXT" >&2
+          echo "REASON: sibling $sv_repo/$sv_t (role '$sv_role') has no resolvable local path — RELATED_*_REPO unset in $SV_PRIMARY/.babysit/.env." >&2
+          echo "RECOMMENDATION: set it (see setup-project § Related Repos), then re-run serve; this repo is already serving $SV_LIST." >&2
+          SV_RC=2
           continue
         }
-        if (cd "$sv_path" 2>/dev/null && BABYSIT_TICKET="$sv_t" "$0" qa-lease release --ticket "$sv_t" >/dev/null); then
-          echo "RELEASED: $(basename "$sv_path") $sv_t"
-        else
-          echo "serve: sibling release failed in $sv_path for $sv_t" >&2
+        if [ ! -d "$sv_path" ]; then
+          echo "STATUS: NEEDS_CONTEXT" >&2
+          echo "REASON: sibling repo path '$sv_path' (role '$sv_role') does not exist on this machine." >&2
+          echo "RECOMMENDATION: fix RELATED_*_REPO in .babysit/.env, then re-run serve; this repo is already serving $SV_LIST." >&2
+          SV_RC=2
+          continue
         fi
+        SV_SIB_ROWS="$SV_SIB_ROWS$sv_path	$sv_t
+"
       done <<EOF
-$SV_SIBS
+$(sv_sibs "$SV_T")
 EOF
-      exit 0
-    fi
-
-    _serve_one "$SV_PRIMARY" "$SV_TICKET" || exit $?
-    echo "SERVED: $SV_REPO $SV_TICKET"
-    TICKET="$SV_TICKET" history_append "serve" "${AGENT_ROLE:-${GT_ROLE:-developer}}" \
-      "$(printf '{"ticket":"%s","ttl_min":%s}' "$SV_TICKET" "$SV_TTL")"
-
-    while IFS="$(printf '\t')" read -r sv_role sv_repo sv_t; do
-      [ -n "$sv_t" ] || continue
-      sv_path="$(_related_repo_path "$sv_role" "$SV_PRIMARY")" || {
-        echo "STATUS: NEEDS_CONTEXT" >&2
-        echo "REASON: sibling $sv_repo/$sv_t (role '$sv_role') has no resolvable local path — RELATED_*_REPO unset in $SV_PRIMARY/.babysit/.env." >&2
-        echo "RECOMMENDATION: set it (see setup-project § Related Repos), then re-run serve; this repo is already serving $SV_TICKET." >&2
-        SV_RC=2
-        continue
-      }
-      if [ ! -d "$sv_path" ]; then
-        echo "STATUS: NEEDS_CONTEXT" >&2
-        echo "REASON: sibling repo path '$sv_path' (role '$sv_role') does not exist on this machine." >&2
-        echo "RECOMMENDATION: fix RELATED_*_REPO in .babysit/.env, then re-run serve; this repo is already serving $SV_TICKET." >&2
-        SV_RC=2
-        continue
-      fi
-      if _serve_one "$sv_path" "$sv_t"; then
-        echo "SERVED: $(basename "$sv_path") $sv_t"
+    done
+    while IFS= read -r sv_path; do
+      [ -n "$sv_path" ] || continue
+      sv_ts="$(printf '%s' "$SV_SIB_ROWS" | awk -F'\t' -v p="$sv_path" '$1==p{print $2}' | tr '\n' ' ')"
+      sv_ts="${sv_ts% }"
+      sv_gd="$(git -C "$sv_path" rev-parse --absolute-git-dir 2>/dev/null)"
+      sv_owner="$(sv_pick_owner "$sv_gd" $sv_ts)"
+      if _serve_set "$sv_path" "$sv_owner" $sv_ts; then
+        echo "SERVED: $(basename "$sv_path") $(printf '%s' "$sv_ts" | tr ' ' ',')"
       else
         SV_RC=2
       fi
     done <<EOF
-$SV_SIBS
+$(printf '%s' "$SV_SIB_ROWS" | cut -f1 | awk 'NF && !seen[$0]++')
 EOF
     if [ "$SV_RC" = "0" ]; then
-      echo "serve: review on the dev server(s); fixes commit in the ticket worktree, then re-run serve $SV_TICKET." >&2
-      echo "  Done reviewing → bbs-ticket serve --release $SV_TICKET" >&2
+      echo "serve: review on the dev server(s); fixes commit in the ticket worktree, then re-run 'bbs-ticket serve $SV_TICKETS'." >&2
+      echo "  Done reviewing → bbs-ticket serve --release" >&2
     fi
     exit "$SV_RC"
     ;;

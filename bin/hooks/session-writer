@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+# SessionStart + PostToolUse(Bash) session writer.
+#
+# Persists ~/.babysit/sessions/cc-<session_id>.yaml for every Claude Code
+# session, keyed by the harness's own session id. This is the guaranteed
+# delivery path for session tracking: the equivalent block in
+# references/preamble.md only runs when a skill executes it, and prompts are
+# advisory — hooks are the control mechanism (see hooks/hooks.json). Feeds
+# `bbs-ticket session list`, `bbs-ticket board`'s SESSION column, and the
+# dashboard.
+#
+# Ticket derivation (no env available in hooks): the cwd's worktree dir name
+# (.babysit/worktrees/<ticket>_<slug>), else the branch
+# (feat|fix|...)/<ticket>_<slug> incl. the sub-ticket shape
+# <prefix>/<parent>/<pos>_<ticket>_<slug>. Neither → ticket stays empty; a
+# later invocation from inside the worktree fills it in.
+#
+# Input:  hook JSON on stdin (.session_id, .cwd).
+# Output: none; always exit 0. Throttled to one write per 60s per session.
+set -uo pipefail
+
+command -v jq >/dev/null 2>&1 || exit 0
+
+INPUT="$(cat)"
+SID="$(printf '%s' "$INPUT" | jq -r '.session_id // empty' 2>/dev/null)"
+CWD="$(printf '%s' "$INPUT" | jq -r '.cwd // empty' 2>/dev/null)"
+[ -n "$SID" ] || exit 0
+
+SESS_DIR="${BABYSIT_HOME:-$HOME/.babysit}/sessions"
+SF="$SESS_DIR/cc-${SID}.yaml"
+mkdir -p "$SESS_DIR" 2>/dev/null || exit 0
+
+# Throttle: PostToolUse(Bash) fires on every shell call; once a minute is
+# plenty for a last-seen heartbeat.
+if [ -f "$SF" ]; then
+  NOW="$(date +%s)"
+  MT="$(stat -f %m "$SF" 2>/dev/null || stat -c %Y "$SF" 2>/dev/null || echo 0)"
+  [ $((NOW - MT)) -lt 60 ] && exit 0
+fi
+
+# Ticket from worktree path, else from branch. Both parses are best-effort;
+# empty is fine (board just shows no session for the ticket).
+TICKET=""
+case "$CWD" in
+  */.babysit/worktrees/*)
+    WT="${CWD##*/.babysit/worktrees/}"; WT="${WT%%/*}"
+    TICKET="${WT%%_*}"
+    ;;
+esac
+if [ -z "$TICKET" ] && [ -n "$CWD" ]; then
+  BR="$(git -C "$CWD" branch --show-current 2>/dev/null || true)"
+  case "$BR" in
+    feat/*|fix/*|chore/*|bug/*|refactor/*|hotfix/*)
+      SEG="${BR##*/}"                       # last path segment
+      case "$SEG" in
+        [0-9][0-9][0-9]_*) SEG="${SEG#*_}" ;;  # sub-ticket: drop <pos>_
+      esac
+      TICKET="${SEG%%_*}"
+      ;;
+  esac
+fi
+
+TMP="$(mktemp "$SESS_DIR/.session.XXXXXX" 2>/dev/null)" || exit 0
+{
+  echo "version: 1"
+  echo "session_id: cc-${SID}"
+  echo "ticket: ${TICKET}"
+  if [ -f "$SF" ]; then
+    awk '/^started_at:/ { print; found=1 } END { if (!found) exit 1 }' "$SF" 2>/dev/null \
+      || echo "started_at: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  else
+    echo "started_at: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  fi
+  echo "last_seen_at: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  echo "pid: "
+  echo "cwd: ${CWD}"
+} > "$TMP" 2>/dev/null && mv "$TMP" "$SF" 2>/dev/null || rm -f "$TMP" 2>/dev/null
+
+# Sweep stale sessions (>120 min) — the preamble's sweep only ran when a
+# skill executed it; do it here so the dir self-cleans.
+find "$SESS_DIR" -mmin +120 -type f ! -name ".*" -delete 2>/dev/null || true
+
+exit 0

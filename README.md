@@ -2,13 +2,22 @@
 
 English | [Tiếng Việt](README.vi.md)
 
-**Type one sentence. Walk away. Come back to a QA-checked branch ready for review.**
+**Hand it your feature requests. Workers build them in parallel while you watch. Review one combined result.**
+
+```
+/bbs:foreman product-wide search on the home page
+/bbs:foreman rebuild the novel request flow
+```
+
+**`foreman` is the primary flow**: one visible tmux worker per request (each running autopilot end-to-end — plan, code, review, QA, push), a design review before any code is written, and every finished ticket merged onto your local base so you review the whole batch running in one browser — then you create the PRs.
+
+For a **single ticket**, drive autopilot directly (this is also exactly what each worker runs):
 
 ```
 /bbs:autopilot add a settings page with dark mode toggle
 ```
 
-~40 minutes of autonomous work — plan, code, review, QA, push — that finishes even though no single Claude session could hold it all at once. You review the branch, then open the PR when you're happy.
+~40 minutes of autonomous work per ticket that finishes even though no single Claude session could hold it all at once. You review the branch, then open the PR when you're happy.
 
 *babysit is what you do when you don't need a babysitter.* It prefers decisions Claude can make and verify alone over decisions that need a human in the loop — built for scheduled runs, orchestrated pipelines, and anything you want to walk away from.
 
@@ -116,6 +125,17 @@ In `worktree` mode, QA lands a ticket on the shared surface with `bbs-ticket mer
 
 ### 3. Run it
 
+**Primary — `foreman`, the attended parallel flow:**
+
+```
+/bbs:foreman <one-line requirement>     # one worker per request; repeat for more
+/bbs:foreman                                   # attach/resume: reconcile live workers + board
+```
+
+Foreman spawns a visible tmux worker per ticket (`tmux attach -t <session>` to watch or take over any of them), monitors the panes, and owns the checkpoint between design and build: when a worker stops at its plan/prototype handoff, foreman reviews the design, gives feedback, and either greenlights the build or escalates to you when your voice could change the outcome. It answers workers' mechanical questions itself, relays the ones that need you, verifies every QA/review verdict on disk, and — with `land: local` (the default in worktree mode) — merges all finished tickets onto your local base so you review the combined product on the dev server before deciding: per-ticket PRs or one compose PR.
+
+**Secondary — `autopilot`, the single-ticket flow** (also what every foreman worker runs):
+
 ```
 /bbs:autopilot "add a settings page with dark mode toggle"
 ```
@@ -180,11 +200,14 @@ That's the whole surface. Flags (`--stop-after=`, `--replan`, `--dry-run`, `--wo
 
 ### Working tickets in parallel (worktree mode)
 
+`/bbs:foreman` runs this whole section for you — dispatch, design gates, verdict checks, and the composed final surface. The commands below are the layer underneath, for when you drive it by hand or want to see what foreman is doing.
+
 One heavy checkout per repo runs the dev server; every ticket lives in its own lightweight worktree. That makes everything parallel *except* the moment someone needs to see a ticket actually running — and that moment gets three commands:
 
 ```bash
 bbs-ticket board            # every ticket at a glance: status, verdicts, live session, PR, who holds the surface
 bbs-ticket serve bs-ab123   # put this ticket on the running dev server for human review
+bbs-ticket serve            # bare: compose every finished ticket (qa + review DONE) on the server
 /bbs:fix-pr                 # after reviewer comments land: fetch unresolved threads, fix, reply, resolve
 ```
 
@@ -193,7 +216,7 @@ bbs-ticket serve bs-ab123   # put this ticket on the running dev server for huma
 1. A ticket reaches pause 3 — its handoff's `Next:` line hands you the exact command: `bbs-ticket serve bs-ab123`.
 2. `serve` holds the test surface for 4 hours (agents' QA politely queues behind you) and switches the running server to base + exactly this ticket — in this repo **and** in its FE/BE sibling repo when the ticket spans both.
 3. Review in the browser. Ask the ticket's session for changes; it commits in its own worktree; re-run `serve` (reentrant — refreshes the hold, re-cuts the surface) and refresh the browser. Repeat until happy.
-4. Approved → `bbs-ticket serve bs-ab123 --release`, then `/bbs:create-pr` per repo. Reviewer comments later → `/bbs:fix-pr`.
+4. Approved → `bbs-ticket serve --release`, then `/bbs:create-pr` per repo. Reviewer comments later → `/bbs:fix-pr`.
 5. `bbs-ticket board --pr` flags merged PRs and prints the exact cleanup commands (`reset-base`, `set-status done`).
 
 **One ticket, two repos** (a feature spanning frontend + backend): `/bbs:setup-project` records the sibling repos once; autopilot's builder crosses over on its own — creates the linked sibling ticket, implements and QAs both sides — and `serve` puts the whole pair in front of you with one command. Meanwhile other tickets' sessions keep implementing and reviewing in their own worktrees; `board` shows everyone who holds the surface and for how long. Full recipe: [`references/git-flow.md` § Attended parallel review](.claude/skills/references/git-flow.md).
@@ -209,6 +232,7 @@ bbs-ticket serve bs-ab123   # put this ticket on the running dev server for huma
 
 | I want to… | Skill |
 |------------|-------|
+| Run several feature requests in parallel while staying able to watch | `/bbs:foreman "<idea>"` |
 | Stress-test an idea before I commit to building it | `/bbs:office-hours` |
 | Design a feature inside the existing UI system | `/bbs:design-ui` |
 | Ship a feature end-to-end from a one-line idea | `/bbs:autopilot "<idea>"` |

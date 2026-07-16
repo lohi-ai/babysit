@@ -88,6 +88,9 @@ _SESSIONS=$(find ~/.babysit/sessions -mmin -120 -type f 2>/dev/null | wc -l | tr
 find ~/.babysit/sessions -mmin +120 -type f -exec rm {} + 2>/dev/null || true
 
 # Session-writer hook — persist (or refresh) ~/.babysit/sessions/<id>.yaml.
+# Best-effort: the guaranteed path is the bin/hooks/session-writer plugin
+# hook (SessionStart + PostToolUse); this block additionally records the
+# ticket from $BABYSIT_TICKET when a skill runs it.
 # $BABYSIT_SESSION defaults from Claude Code's own session id, so every real
 # tab gets a yaml (feeds `session list`, `board`, dashboard); autopilot's
 # explicit $BABYSIT_SESSION still wins. Atomic mktemp+mv so the file's mtime

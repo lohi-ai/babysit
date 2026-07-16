@@ -36,7 +36,16 @@ Exercise the application like a user and leave reproducible evidence.
 2. Boot or probe the local target first; hosted URLs only when local run is
    impossible and the reason is recorded. QA the current checkout as-is —
    landing a worktree branch onto a shared surface is the autopilot
-   workflow's concern (`../references/git-flow.md` § QA loop). Before
+   workflow's concern (`../references/git-flow.md` § QA loop). The dev
+   server lives in the repo's **primary checkout only** — never npm-install
+   or boot a server inside a ticket worktree (one heavy tree per repo); if
+   the local target is down and can't be started there, that's the recorded
+   blocker. Server prep: when `QA_ENV_PREPARE` is set (qa.yaml `prepare:`,
+   idempotent install + migrate), run it in the serving checkout after the
+   change lands, before probing. When leaving a shared surface (worktree
+   mode) and the ticket's diff added DB migrations, run `QA_ENV_REVERT`
+   (`revert:`) before releasing the qa-lease — reset-base drops the code
+   but not the schema. Before
    trusting any surface, confirm it actually serves the change (probe a
    marker from the diff); if not, name the stale surface rather than testing
    blind. Fixes edit the files in the checkout under test — committing and

@@ -222,6 +222,32 @@ fi
 # The loader is independent of the qa skill's URL parsing; it only refuses
 # to invent envs. Confirmed by probe-missing-env above.
 
+# ─── prepare / revert scalars ─────────────────────────────────────────
+case_header "probe — prepare/revert server-prep scalars"
+T="$(mk_repo)"
+cat > "$T/.babysit/qa.yaml" <<'YAML'
+version: 1
+url: http://localhost:3000
+prepare: npm i && npm run db:migrate
+revert: npm run db:rollback
+YAML
+out="$(run_in "$T" probe --env local)"
+printf '%s\n' "$out" | grep -qF "QA_ENV_PREPARE='npm i && npm run db:migrate'" \
+  && ok "probe emits QA_ENV_PREPARE" || fail "probe-prepare" "got: $out"
+printf '%s\n' "$out" | grep -qF "QA_ENV_REVERT='npm run db:rollback'" \
+  && ok "probe emits QA_ENV_REVERT" || fail "probe-revert" "got: $out"
+# qa.local.yaml overrides the committed value.
+printf 'url: http://localhost:3000\nprepare: make prep-local\n' > "$T/.babysit/qa.local.yaml"
+out="$(run_in "$T" probe --env local)"
+printf '%s\n' "$out" | grep -qF "QA_ENV_PREPARE='make prep-local'" \
+  && ok "qa.local.yaml prepare wins" || fail "probe-prepare-local-precedence" "got: $out"
+# Absent keys emit empty values (callers can [ -n ] gate).
+T="$(mk_repo)"
+printf 'url: http://localhost:3000\n' > "$T/.babysit/qa.yaml"
+out="$(run_in "$T" probe --env local)"
+printf '%s\n' "$out" | grep -qF "QA_ENV_PREPARE=''" \
+  && ok "absent prepare is empty" || fail "probe-prepare-absent" "got: $out"
+
 # ─── summary ──────────────────────────────────────────────────────────
 echo
 printf 'Passed: \033[0;32m%d\033[0m   Failed: \033[0;31m%d\033[0m\n' "$PASS" "$FAIL"
