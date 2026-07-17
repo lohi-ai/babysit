@@ -13,7 +13,13 @@ Set up only the config the repo needs. Re-running should be safe.
 ## Rules
 - Detect defaults from the repo before asking: remote, default branch, run
   commands (package scripts, compose, Makefile), app URL hints.
-- Ask once for the git-flow `mode` (see `references/git-flow.md § mode:`): `trunk` = tickets share the current branch, no cuts; `branch` (default) = cut in place when safe, worktree when not; `worktree` = every ticket in its own worktree, primary checkout pinned to base as the shared test surface. Rule of thumb: solo/hobby repos → `trunk` or `branch`; one-ticket-per-PR team repos → `worktree`.
+- Ask once: **how will babysit work in this repo?** (see `references/git-flow.md § Profiles`) — the answer picks the git-flow preset; never ask about `mode`/`land`/`push` directly:
+  - Pair-programming assistant — a human watches every run → `trunk`: ride the current branch, no cuts, no PRs.
+  - Background worker — one ticket at a time (freelance / client repo) → `branch-pr`: cut per ticket, straight PR — the client-facing work trail.
+  - Background worker — parallel tickets, composed local review (small team, or solo + foreman) → `worktree-review`: parallel worktree tickets, review the composed surface on local dev (`serve`), then `create-pr`.
+  - Background worker — parallel tickets, straight PRs (big team / enterprise) → `worktree-pr`: parallel worktree tickets, straight per-ticket PRs; review lives on GitHub, browser-test any PR locally on demand (`bbs-ticket serve <ticket>`).
+  Write the resulting knobs (not a `profile:` key) into `git-flow.yaml`, with the profile name as a comment.
+- Re-run on a configured repo = switch: read the current profile from `git-flow.yaml`, ask the same question with the current answer marked as current, and on change rewrite only the git-flow knobs and walk the user through the transition steps (`references/git-flow.md § Profiles`, "Switching later"). Leave `qa.yaml`, `.env`, and the landing doc untouched unless they're missing.
 - Prefer the simple top-level `qa.yaml` shape with a localhost `url`; hosted
   URLs are secondary, never a substitute for local QA. If the project cannot
   run locally, record the blocker and closest harness in the landing doc.
@@ -29,11 +35,12 @@ Set up only the config the repo needs. Re-running should be safe.
 Prefer this committed shape:
 ```yaml
 # .babysit/git-flow.yaml
+# profile: branch-pr — see references/git-flow.md § Profiles
 base_branch: main
 branch_prefix: feat
 push: true
-# mode: trunk | branch | worktree — see references/git-flow.md
 mode: branch
+land: pr
 ```
 ```yaml
 # .babysit/qa.yaml

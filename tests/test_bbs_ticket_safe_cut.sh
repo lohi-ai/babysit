@@ -16,6 +16,11 @@
 #                                forks from main (not feat/a), manifest records
 #                                the worktree path
 #   worktree-on-dirty-base       on main + dirty → worktree divert
+#   in-place-cuts-from-origin    local main ahead of origin (integration
+#                                merge) → in-place cut forks from origin/main,
+#                                not local main; local main untouched
+#   worktree-cuts-from-origin    same, via the worktree divert: worktree HEAD
+#                                = origin/main, carries no merged-ticket files
 #   developer-no-confirm-for-worktree
 #                                developer role, unsafe cut → no exit 3, the
 #                                divert proceeds (it never moves the checkout)
@@ -137,6 +142,63 @@ T="$(mktemp -d)"
     || { echo "checkout moved off main"; exit 1; }
   [ -f dirty.txt ] || { echo "dirty.txt lost"; exit 1; }
 ) && ok "worktree-on-dirty-base" || fail "worktree-on-dirty-base"
+rm -rf "$T"
+
+# ── in-place-cuts-from-origin ─────────────────────────────────────────
+T="$(mktemp -d)"
+(
+  export PATH="$SCRIPT_DIR/bin:$PATH"
+  export HOME="$T/home"; mkdir -p "$HOME"
+  export AGENT_ROLE=mayor
+  build_repo "$T"
+  cd "$T/repo"
+  # Simulate a landed ticket integrated into local main but not pushed:
+  # local main is ahead of origin/main by one merge.
+  git checkout -q -b feat/landed
+  echo "landed" > landed.txt
+  git add landed.txt && git -c user.email=t@t -c user.name=t commit -q -m "landed ticket"
+  git checkout -q main
+  git -c user.email=t@t -c user.name=t merge -q --no-ff feat/landed -m "integrate landed"
+
+  out="$("$BBS_TICKET_BIN" ensure --slug-hint feat-f --type feat 2>"$T/err")" || {
+    echo "ensure failed: $(cat "$T/err")"; exit 1; }
+  printf '%s\n' "$out" | grep -q '^WORKTREE=' \
+    && { echo "unexpected WORKTREE= on a clean base cut; out: $out"; exit 1; }
+  [ "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)" ] \
+    || { echo "in-place cut forked from local main, not origin/main"; exit 1; }
+  [ ! -e landed.txt ] || { echo "new branch carries the integrated ticket's landed.txt"; exit 1; }
+  # No upstream: tracking origin/main would break plain `git push` later.
+  git config "branch.$(git branch --show-current).merge" >/dev/null 2>&1 \
+    && { echo "new branch has an upstream configured (should be --no-track)"; exit 1; }
+  # Local main itself keeps its integration merge.
+  [ "$(git rev-parse main)" != "$(git rev-parse origin/main)" ] \
+    || { echo "local main lost its integration merge"; exit 1; }
+) && ok "in-place-cuts-from-origin" || fail "in-place-cuts-from-origin"
+rm -rf "$T"
+
+# ── worktree-cuts-from-origin ─────────────────────────────────────────
+T="$(mktemp -d)"
+(
+  export PATH="$SCRIPT_DIR/bin:$PATH"
+  export HOME="$T/home"; mkdir -p "$HOME"
+  export AGENT_ROLE=mayor
+  build_repo "$T"
+  cd "$T/repo"
+  git checkout -q -b feat/landed
+  echo "landed" > landed.txt
+  git add landed.txt && git -c user.email=t@t -c user.name=t commit -q -m "landed ticket"
+  git checkout -q main
+  git -c user.email=t@t -c user.name=t merge -q --no-ff feat/landed -m "integrate landed"
+  git checkout -q -b feat/next
+
+  out="$("$BBS_TICKET_BIN" ensure --slug-hint feat-g --type feat 2>"$T/err")" || {
+    echo "ensure failed: $(cat "$T/err")"; exit 1; }
+  wt="$(printf '%s\n' "$out" | sed -n 's|^WORKTREE=||p')"
+  [ -n "$wt" ] || { echo "expected WORKTREE= in output; out: $out"; exit 1; }
+  [ "$(git -C "$wt" rev-parse HEAD)" = "$(git rev-parse origin/main)" ] \
+    || { echo "worktree forked from local main, not origin/main"; exit 1; }
+  [ ! -e "$wt/landed.txt" ] || { echo "worktree carries the integrated ticket's landed.txt"; exit 1; }
+) && ok "worktree-cuts-from-origin" || fail "worktree-cuts-from-origin"
 rm -rf "$T"
 
 # ── developer-no-confirm-for-worktree ─────────────────────────────────

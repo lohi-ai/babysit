@@ -106,6 +106,11 @@
 #                                        tests the change; locks the shared git
 #                                        dir so parallel runs serialize; conflict
 #                                        → abort + BLOCKED (fix in the worktree).
+#   refresh [--base <branch>]            bring the ticket branch up to date:
+#                                        fetch + merge origin/<base> into it
+#                                        (never local <base> — it may carry
+#                                        other tickets' merges); conflict →
+#                                        abort + BLOCKED (resolve in place).
 #   reset-base [--base <branch>]         reset the primary checkout's base branch
 #                                        to origin/<base> after tickets land
 #                                        upstream (drops local merge-base merges);
@@ -202,6 +207,9 @@ Subcommands:
   merge-base [--base BRANCH]     from a ticket worktree: merge the ticket branch
                                  into the primary checkout (dev-server tree);
                                  BLOCKs on dirty/diverged state or conflict
+  refresh [--base BRANCH]        bring the ticket branch up to date: fetch +
+                                 merge origin/<base> into it (never local base);
+                                 BLOCKs on dirty tree or conflict
   reset-base [--base BRANCH]     reset the primary checkout's base branch to
                                  origin/<base> (drops local integration merges);
                                  BLOCKs on dirty/off-base/non-merge local commits
@@ -1817,6 +1825,17 @@ EOF
       [ -x "$AUTOPILOT_BIN" ] || AUTOPILOT_BIN="$(command -v bbs-autopilot 2>/dev/null || echo "$HOME/.claude/bbs-autopilot")"
       BASE_BRANCH="$("$AUTOPILOT_BIN" base-branch 2>/dev/null || true)"
       [ -z "$BASE_BRANCH" ] && BASE_BRANCH="main"
+      # Cut from origin/<base>, not local base: local base may carry other
+      # tickets' integration merges (worktree mode piles them there via
+      # merge-base), and a branch cut from it drags those commits into this
+      # ticket's PR. Fall back to local base only when origin has no <base>.
+      if git remote get-url origin >/dev/null 2>&1; then
+        git fetch origin "$BASE_BRANCH" >/dev/null 2>&1 \
+          || echo "ensure: warning — fetch failed, using the last-known origin/$BASE_BRANCH" >&2
+      fi
+      SRC_REF=""
+      git show-ref --verify --quiet "refs/remotes/origin/$BASE_BRANCH" && SRC_REF="origin/$BASE_BRANCH"
+      [ -z "$SRC_REF" ] && git show-ref --verify --quiet "refs/heads/$BASE_BRANCH" && SRC_REF="$BASE_BRANCH"
       # Worktree mode never cuts in place: the primary checkout stays parked
       # on base as the shared test surface, even when it's clean.
       SAFE_CUT=0
@@ -1834,15 +1853,18 @@ EOF
         _ENS_ROLE="${AGENT_ROLE:-${GT_ROLE:-developer}}"
         if [ "$_ENS_ROLE" = "developer" ] && [ "$FORCE_CUT" != "1" ]; then
           echo "STATUS: NEEDS_CONFIRM" >&2
-          echo "REASON: creating this ticket cuts a new branch '$NEW_BRANCH' off '$CUR_BRANCH' and checks it out." >&2
+          echo "REASON: creating this ticket cuts a new branch '$NEW_BRANCH' off '$SRC_REF' and checks it out." >&2
           echo "OPTIONS: re-run with --cut-branch to cut the branch," >&2
           echo "         or --no-branch to stay on '$CUR_BRANCH' (identity carried by BABYSIT_TICKET)." >&2
           exit 3
         fi
 
-        # Cut the branch (checkout -b will fail loudly if it already exists)
-        if ! git checkout -b "$NEW_BRANCH" >/dev/null 2>&1; then
-          echo "ensure: git checkout -b '$NEW_BRANCH' failed" >&2
+        # Cut the branch from SRC_REF (checkout -b will fail loudly if it
+        # already exists). The checkout is clean and on base, so moving it to
+        # origin/<base> loses nothing. --no-track: without it git would set
+        # the new branch's upstream to origin/<base>, breaking plain `git push`.
+        if ! git checkout --no-track -b "$NEW_BRANCH" "$SRC_REF" >/dev/null 2>&1; then
+          echo "ensure: git checkout -b '$NEW_BRANCH' '$SRC_REF' failed" >&2
           exit 2
         fi
 
@@ -1858,9 +1880,6 @@ EOF
         else
           echo "ensure: '$CUR_BRANCH' has uncommitted changes — diverting the cut to a worktree" >&2
         fi
-        SRC_REF=""
-        git show-ref --verify --quiet "refs/heads/$BASE_BRANCH" && SRC_REF="$BASE_BRANCH"
-        [ -z "$SRC_REF" ] && git show-ref --verify --quiet "refs/remotes/origin/$BASE_BRANCH" && SRC_REF="origin/$BASE_BRANCH"
         if [ -z "$SRC_REF" ]; then
           echo "ensure: base branch '$BASE_BRANCH' not found (local or origin) — cannot cut safely from '$CUR_BRANCH'." >&2
           echo "  Fix: fetch/create '$BASE_BRANCH', or re-run with --no-branch to ride the current branch." >&2
@@ -1887,7 +1906,7 @@ EOF
         fi
         TICKET="$NEW_TICKET"
         BRANCH="$NEW_BRANCH"
-        echo "ensure: worktree ready at $ENSURE_WORKTREE (branch $NEW_BRANCH off $BASE_BRANCH)" >&2
+        echo "ensure: worktree ready at $ENSURE_WORKTREE (branch $NEW_BRANCH off $SRC_REF)" >&2
         echo "ensure: current checkout untouched — cd into the worktree before doing any work" >&2
       fi
     fi
@@ -2033,7 +2052,8 @@ EOF
       bbs_lock_release "$MB_LOCK"
       echo "STATUS: BLOCKED" >&2
       echo "REASON: merge conflict landing '$MB_BRANCH' on '$MB_BASE' ($MB_PRIMARY); merge aborted, primary untouched." >&2
-      echo "RECOMMENDATION: in the worktree, merge '$MB_BASE' into '$MB_BRANCH', resolve, commit, re-run merge-base." >&2
+      echo "RECOMMENDATION: in the worktree, merge 'origin/$MB_BASE' into '$MB_BRANCH' (never local '$MB_BASE' — it carries other tickets), resolve, commit, re-run merge-base." >&2
+      echo "  If origin/$MB_BASE merges clean, the conflict is with another in-flight ticket — QA solo via 'bbs-ticket switch $TICKET' and land the PRs in sequence." >&2
       exit 2
     fi
     MB_POST="$(git -C "$MB_PRIMARY" rev-parse HEAD)"
@@ -2048,6 +2068,74 @@ EOF
     echo "HEAD=$MB_POST"
     echo "merge-base: primary checkout now includes '$MB_BRANCH' — test against the server there;" >&2
     echo "  fix in this worktree, commit, and re-run merge-base after every QA fix." >&2
+    ;;
+
+  # refresh — bring the ticket branch up to date with origin/<base>.
+  #
+  # The one sanctioned way to pull latest base into a ticket branch: fetch,
+  # then merge origin/<base>. Merge, not rebase — the branch may be pushed.
+  # Never references local <base>: under worktree mode it is a pile of other
+  # tickets' integration merges, and merging it in drags them into this
+  # ticket's PR ancestry. Touches only the current checkout's branch — no
+  # shared state, no lock.
+  refresh)
+    RF_BASE=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --base) RF_BASE="$2"; shift 2 ;;
+        *) shift ;;
+      esac
+    done
+    command -v git >/dev/null 2>&1 || { echo "refresh: git not found" >&2; exit 2; }
+    if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+      echo "refresh: not in a git work tree" >&2; exit 2
+    fi
+    RF_BRANCH="$(git branch --show-current 2>/dev/null || echo "")"
+    if [ -z "$RF_BRANCH" ]; then
+      echo "refresh: detached HEAD — checkout the ticket branch first" >&2; exit 2
+    fi
+    if [ -z "$RF_BASE" ]; then
+      AUTOPILOT_BIN="$SCRIPT_DIR/bbs-autopilot"
+      [ -x "$AUTOPILOT_BIN" ] || AUTOPILOT_BIN="$(command -v bbs-autopilot 2>/dev/null || echo "$HOME/.claude/bbs-autopilot")"
+      RF_BASE="$("$AUTOPILOT_BIN" base-branch 2>/dev/null || true)"
+      [ -z "$RF_BASE" ] && RF_BASE="main"
+    fi
+    if [ "$RF_BRANCH" = "$RF_BASE" ]; then
+      echo "refresh: on the base branch '$RF_BASE' — nothing to refresh (reset-base maintains the primary)" >&2; exit 2
+    fi
+    if [ -n "$(git status --porcelain 2>/dev/null)" ]; then
+      echo "STATUS: BLOCKED" >&2
+      echo "REASON: '$RF_BRANCH' has uncommitted changes — the merge needs a clean tree." >&2
+      echo "RECOMMENDATION: commit (or stash) them, then re-run refresh." >&2
+      exit 2
+    fi
+    git fetch origin "$RF_BASE" >/dev/null 2>&1 \
+      || echo "refresh: warning — fetch failed, using the last-known origin/$RF_BASE" >&2
+    if ! git rev-parse --verify -q "origin/$RF_BASE" >/dev/null 2>&1; then
+      echo "STATUS: BLOCKED" >&2
+      echo "REASON: origin/$RF_BASE not found — nothing safe to refresh from (local '$RF_BASE' may carry other tickets' merges)." >&2
+      echo "RECOMMENDATION: add an 'origin' remote tracking '$RF_BASE' (or fetch it), then re-run." >&2
+      exit 2
+    fi
+    if git merge-base --is-ancestor "origin/$RF_BASE" HEAD 2>/dev/null; then
+      echo "UPDATED=0"
+      echo "BASE=$RF_BASE"
+      echo "refresh: '$RF_BRANCH' already contains origin/$RF_BASE" >&2
+      exit 0
+    fi
+    if ! git merge --no-edit "origin/$RF_BASE" >/dev/null 2>&1; then
+      git merge --abort >/dev/null 2>&1
+      echo "STATUS: BLOCKED" >&2
+      echo "REASON: merge conflict bringing origin/$RF_BASE into '$RF_BRANCH'; merge aborted, branch untouched." >&2
+      echo "RECOMMENDATION: run 'git merge origin/$RF_BASE' here, resolve, commit; then re-run merge-base/switch if this ticket is on the test surface." >&2
+      exit 2
+    fi
+    [ -n "$TICKET" ] && history_append "refresh" "${AGENT_ROLE:-${GT_ROLE:-developer}}" \
+      "$(printf '{"base":"%s","head":"%s"}' "$RF_BASE" "$(git rev-parse HEAD)")"
+    echo "UPDATED=1"
+    echo "BASE=$RF_BASE"
+    echo "HEAD=$(git rev-parse HEAD)"
+    echo "refresh: merged origin/$RF_BASE into '$RF_BRANCH' — if this ticket is on the test surface, re-run merge-base/switch." >&2
     ;;
 
   # reset-base — restore the primary checkout's base branch to origin/<base>.
@@ -2218,7 +2306,8 @@ EOF
         bbs_lock_release "$SW_LOCK"
         echo "STATUS: BLOCKED" >&2
         echo "REASON: merge conflict landing '$sw_b' on '$SW_BASE' — that merge aborted; earlier tickets in this switch are already on the surface." >&2
-        echo "RECOMMENDATION: in that ticket's worktree, merge '$SW_BASE' in, resolve, commit, re-run switch." >&2
+        echo "RECOMMENDATION: in that ticket's worktree, merge 'origin/$SW_BASE' in (never local '$SW_BASE'), resolve, commit, re-run switch." >&2
+        echo "  If origin/$SW_BASE merges clean, it conflicts with an earlier ticket in this switch — switch them separately or resolve the pair together." >&2
         exit 2
       fi
     done

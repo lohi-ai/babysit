@@ -21,6 +21,35 @@ For a **single ticket**, drive autopilot directly (this is also exactly what eac
 
 *babysit is what you do when you don't need a babysitter.* It prefers decisions Claude can make and verify alone over decisions that need a human in the loop — built for scheduled runs, orchestrated pipelines, and anything you want to walk away from.
 
+## The easy way to taste it
+
+If you're the main dev on a small team, this is the whole loop — it does the grind, you own the gate. Read it top to bottom like a program:
+
+```bash
+/bbs:setup-project                        # once per repo — branch + QA defaults
+/bbs:autopilot "add dark-mode toggle"     # any change: it plans → codes → reviews → QAs
+#   → read tickets/<id>/plan.md, then paste the printed /goal block and walk away
+#   → autopilot writes the code, reviews it, runs QA, pushes the branch
+#   → you review the evidence, then:
+/bbs:create-pr                            # you open the PR — autopilot never does
+```
+
+Step by step:
+
+- **`/bbs:setup-project`** once — teaches autopilot your branch naming + QA defaults, so everything downstream is deterministic.
+- **`/bbs:autopilot "<one-line requirement>"`** for any multi-step work. It checkpoints to disk (survives crashes and context compaction), then plans → implements → reviews → QAs, and stops at the PR checkpoint so you review before anything merges.
+
+**The human checkpoints — where you stay in control.** Autopilot only pauses at the moments that are actually yours to own; pick which one by flag:
+
+- `--stop-after=plan` — approve the approach before any code is written.
+- *default* — stops QA-ready, you review the evidence.
+- **`/bbs:create-pr`** — you invoke it; autopilot never opens PRs itself.
+
+**Add as you need it:**
+
+- **`/bbs:review-pr`** (a.k.a. `/code-review`) — a gate before merge, since there's no second reviewer on a small team. Your safety net.
+- **`/bbs:foreman`** — the parallel-batch flow this README leads with: one visible tmux worker per ticket, several independent tickets at once. Reach for it when you want that; overkill for solo, serial work.
+
 ## Why it works
 
 - **It finishes.** `/bbs:autopilot` is a **goal proxy**: init seeds durable state — ticket, requirement, plan, checkpoint — then hands the work to [`/goal`](#3-run-it), Claude Code's session-scoped Stop hook that blocks the session from stopping until the QA and review verdicts are persisted. Inside the loop the model works free-form with full context, the way it would for a direct ask; checkpoints on disk let a fresh session resume where the last one stopped.
@@ -122,6 +151,17 @@ The wizard writes the smallest useful `.babysit/` config: `git-flow.yaml` with `
 | `worktree` | every ticket gets its own worktree; the primary checkout stays pinned to base as the shared test surface | team/enterprise repos: parallel tickets, one clean PR each |
 
 In `worktree` mode, QA lands a ticket on the shared surface with `bbs-ticket merge-base` (from the worktree), or hops the surface between tickets with `bbs-ticket switch <ticket>...` (from the primary — resets to base, then merges exactly the named tickets). After PRs merge upstream, `bbs-ticket reset-base` snaps local base back to origin. All three refuse loudly instead of losing work. The human-facing layer on top — `board`, `serve`, `/bbs:fix-pr` — is covered in [Working tickets in parallel](#working-tickets-in-parallel-worktree-mode). Details: [`references/git-flow.md`](.claude/skills/references/git-flow.md).
+
+#### Solo dev or small team: trunk or worktree?
+
+Head count is the wrong axis. What decides it is **how you're working right now — watching, or walking away:**
+
+- **You're at the keyboard, course-correcting every run** (pair-programming on your own project): pick **`trunk`**. Tickets ride the current branch — no cut, no worktree, no PR ceremony. It's the fastest path precisely because a human is live to catch a wrong turn.
+- **You want work to happen while you're not watching** — several tickets at once, or one you kick off and leave: pick **`worktree`**. Each ticket builds in its own worktree; the primary checkout stays pinned to base as the one dev server you review against. This is a *solo* flow too — one person running a batch in the background is a background worker, team or not.
+
+That second case is exactly what **`/bbs:foreman`** turns on. Hand it a few requests; it spawns one visible worker per ticket, gates each design before any code is written, and — under `land: local` (the default in `worktree` mode) — merges every finished ticket onto your local base so you review the whole batch in one browser, then open the PRs yourself.
+
+**Rule of thumb:** start on `trunk` while you're pairing. The day you want to hand off a batch and step away, re-run `/bbs:setup-project`, switch to `worktree`, and drive it with `/bbs:foreman`.
 
 ### 3. Run it
 
