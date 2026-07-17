@@ -8,11 +8,11 @@ on `argv[0]` (`bbs-config` → `bbs config`, etc.). The bins ported to Go —
 `bbs-config`, `bbs-env`, `bbs-slug`, `bbs-ticket`, `bbs-update-check`,
 `bbs-upgrade`, `bbs-learnings-log`, `bbs-learnings-search`, `bbs-qa-config`,
 `bbs-telemetry-log`, `bbs-codex-competitive`, `bbs-analytics-cron`,
-`bbs-secrets`, `bbs-design` — behave identically to the bash they replaced
-(guarded by the differential harnesses in `tests/`). `bbs-ticket` is a
-strangler: its Go core owns identity/verdict/session/board and delegates the
-remaining subcommands to a `bbs-ticket.bash` sibling. Still pure bash:
-`bbs-autopilot`, `bbs-dashboard`.
+`bbs-secrets`, `bbs-design`, `bbs-dashboard` — behave identically to the bash
+they replaced (guarded by the differential harnesses in `tests/`). `bbs-ticket`
+is a strangler: its Go core owns identity/verdict/session/board and delegates
+the remaining subcommands to a `bbs-ticket.bash` sibling. Still pure bash:
+`bbs-autopilot`.
 
 | Bin | Purpose |
 |-----|---------|
