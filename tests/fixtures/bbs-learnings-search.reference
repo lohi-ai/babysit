@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+# bbs-learnings-search — query decisions.jsonl for prior Auto-Decision
+# Framework entries. Complements bbs-learnings-log (write) with a read path.
+#
+# Usage:
+#   bbs-learnings-search [QUERY] [--limit N] [--cross-project]
+#   bbs-learnings-search --limit 10
+#   bbs-learnings-search "pipeline" --limit 5 --cross-project
+#
+# QUERY is an optional positional arg — case-insensitive grep over the raw
+# JSON line (matches any field). Omit to return the most recent decisions.
+#
+# Flags:
+#   --limit N          max results (default 10)
+#   --cross-project    search across all projects (default: current slug only)
+#
+# Output: one JSON object per line (the matching rows from decisions.jsonl).
+#
+# Env overrides (for testing):
+#   BABYSIT_STATE_DIR     override ~/.babysit
+#   BABYSIT_ANALYTICS_DIR override analytics dir only
+#
+# NOTE: set -uo pipefail (no -e) — search must never fail the caller.
+set -uo pipefail
+
+STATE_DIR="${BABYSIT_STATE_DIR:-$HOME/.babysit}"
+ANALYTICS_DIR="${BABYSIT_ANALYTICS_DIR:-$STATE_DIR/analytics}"
+FILE="$ANALYTICS_DIR/decisions.jsonl"
+
+LIMIT=10
+CROSS_PROJECT=""
+QUERY=""
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --limit)         LIMIT="$2"; shift 2 ;;
+    --cross-project) CROSS_PROJECT="1"; shift ;;
+    -*)              echo "bbs-learnings-search: unknown flag '$1'" >&2; exit 2 ;;
+    *)               QUERY="$1"; shift ;;
+  esac
+done
+
+[ ! -f "$FILE" ] && exit 0
+
+# Derive current slug for project-scoped filtering.
+SLUG=""
+if [ -z "$CROSS_PROJECT" ]; then
+  SLUG="$(git remote get-url origin 2>/dev/null | sed 's|.*[:/]||;s|\.git$||;s|/|-|g')" || true
+fi
+
+# Build the filter pipeline.
+# 1. If QUERY, grep case-insensitive for it.
+# 2. If project-scoped, filter to rows whose state field contains the slug
+#    (or whose ticket field starts with the slug's project prefix).
+# 3. Tail to LIMIT.
+RESULT=$(cat "$FILE")
+
+if [ -n "$QUERY" ]; then
+  RESULT=$(printf '%s' "$RESULT" | grep -i "$QUERY" 2>/dev/null) || exit 0
+fi
+
+if [ -n "$SLUG" ]; then
+  # Match state or ticket fields containing project-relevant identifiers.
+  RESULT=$(printf '%s' "$RESULT" | grep -i "$SLUG" 2>/dev/null) || exit 0
+fi
+
+if [ -n "$RESULT" ]; then
+  printf '%s' "$RESULT" | tail -n "$LIMIT"
+fi
+
+exit 0
