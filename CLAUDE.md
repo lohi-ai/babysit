@@ -222,7 +222,6 @@ Rules of thumb when wiring a workflow:
 babysit/
 ├── bin/
 │   ├── bbs-env        # env resolve / is-set / list-prefix / prompt (auto-loads .env.base)
-│   ├── bbs-db         # postgres snapshot / restore / list (per-rig rotation)
 │   ├── bbs-config     # read/write ~/.babysit/config.yaml
 │   ├── bbs-slug       # derive slug / ticket / branch from git remote + branch
 │   ├── bbs-autopilot  # checkpoint + timeline runner behind the autopilot skill

@@ -38,9 +38,9 @@ brew-only `bbs ticket <delegated-sub>` will not find it. Use the skill-pack
 install for full ticket operations.
 
 Still bash and **not** in the brew/tarball artifact at all: `bbs-autopilot`,
-`bbs-dashboard`, `bbs-db`, `bbs-design`, `bbs-secrets`. Those install with the
-skill pack via `bin/setup-skills`. `brew install bbs` does not, and is not meant
-to, give you the whole toolkit.
+`bbs-dashboard`, `bbs-design`, `bbs-secrets`. Those install with the skill pack
+via `bin/setup-skills`. `brew install bbs` does not, and is not meant to, give
+you the whole toolkit.
 
 There is no `bbs --version` yet.
 

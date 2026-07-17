@@ -11,8 +11,8 @@ on `argv[0]` (`bbs-config` → `bbs config`, etc.). The bins ported to Go —
 identically to the bash they replaced (guarded by the differential harnesses in
 `tests/`). `bbs-ticket` is a strangler: its Go core owns identity/verdict/
 session/board and delegates the remaining subcommands to a `bbs-ticket.bash`
-sibling. Still pure bash: `bbs-autopilot`, `bbs-dashboard`, `bbs-db`,
-`bbs-design`, `bbs-secrets`.
+sibling. Still pure bash: `bbs-autopilot`, `bbs-dashboard`, `bbs-design`,
+`bbs-secrets`.
 
 | Bin | Purpose |
 |-----|---------|
@@ -21,7 +21,6 @@ sibling. Still pure bash: `bbs-autopilot`, `bbs-dashboard`, `bbs-db`,
 | `bbs-learnings-log` | `decision --type mechanical\|taste …` appends routing/taste decisions to `~/.babysit/analytics/decisions.jsonl` — autopilot's Dispatch phase logs every route here |
 | `bbs-slug` | Derives `<slug>` / `<ticket>` / `<branch>` from git remote + current branch — the branch-as-anchor mechanism `/bbs:autopilot` relies on for resume |
 | `bbs-env` | `resolve` / `is-set` / `list-prefix` / `prompt` — env resolution with `.env.base` auto-load |
-| `bbs-db` | `snapshot` / `restore` / `list` — postgres snapshots per rig |
 | `bbs-config` | `get` / `set` / `list` in `~/.babysit/config.yaml` |
 | `bbs-update-check` | Prints `UPGRADE_AVAILABLE <old> <new>` when a new release exists (cached) |
 | `bbs-upgrade` | `git pull` + `setup-skills`; writes a `JUST_UPGRADED` marker |

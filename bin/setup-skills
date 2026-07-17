@@ -90,7 +90,7 @@ if [ "$UNINSTALL" -eq 1 ]; then
   fi
 
   # Remove bbs-* bins (include legacy names from pre-rename installs: bbs-formula, bbs-pipeline, babysit)
-  for BIN in bbs babysit bbs-config bbs-dashboard bbs-db bbs-design bbs-env bbs-learnings-log bbs-learnings-search bbs-autopilot bbs-pipeline bbs-formula bbs-run bbs-slug bbs-telemetry-log bbs-ticket bbs-qa-config bbs-secrets bbs-update-check bbs-upgrade bbs-codex-competitive; do
+  for BIN in bbs babysit bbs-config bbs-dashboard bbs-design bbs-env bbs-learnings-log bbs-learnings-search bbs-autopilot bbs-pipeline bbs-formula bbs-run bbs-slug bbs-telemetry-log bbs-ticket bbs-qa-config bbs-secrets bbs-update-check bbs-upgrade bbs-codex-competitive; do
     if [ -L "$GLOBAL_CLAUDE/$BIN" ]; then
       run rm "$GLOBAL_CLAUDE/$BIN"
       ok "Removed $BIN"
@@ -228,7 +228,7 @@ link_bin() {
   INSTALLED_BINS+=("$name")
 }
 
-for BIN in bbs bbs-config bbs-dashboard bbs-db bbs-design bbs-env bbs-learnings-log bbs-learnings-search bbs-autopilot bbs-slug bbs-telemetry-log bbs-ticket bbs-qa-config bbs-secrets bbs-update-check bbs-upgrade bbs-codex-competitive bbs-analytics-cron; do
+for BIN in bbs bbs-config bbs-dashboard bbs-design bbs-env bbs-learnings-log bbs-learnings-search bbs-autopilot bbs-slug bbs-telemetry-log bbs-ticket bbs-qa-config bbs-secrets bbs-update-check bbs-upgrade bbs-codex-competitive bbs-analytics-cron; do
   link_bin "$BIN"
 done
 

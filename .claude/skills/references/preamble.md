@@ -96,7 +96,6 @@ BBS_CONFIG_BIN=$(_bbs_resolve bbs-config)
 BBS_UPDATE_CHECK_BIN=$(_bbs_resolve bbs-update-check)
 BBS_UPGRADE_BIN=$(_bbs_resolve bbs-upgrade)
 BBS_TELEMETRY_LOG_BIN=$(_bbs_resolve bbs-telemetry-log)
-BBS_DB_BIN=$(_bbs_resolve bbs-db)
 BBS_ENV_BIN=$(_bbs_resolve bbs-env)
 BBS_BUILDER_PROFILE_BIN=$(_bbs_resolve bbs-builder-profile)
 BBS_GLOBAL_DISCOVER_BIN=$(_bbs_resolve bbs-global-discover)
@@ -104,7 +103,7 @@ BBS_LEARNINGS_LOG_BIN=$(_bbs_resolve bbs-learnings-log)
 BBS_LEARNINGS_SEARCH_BIN=$(_bbs_resolve bbs-learnings-search)
 export BBS_SLUG_BIN BBS_TICKET_BIN BBS_AUTOPILOT_BIN BBS_CONFIG_BIN \
        BBS_UPDATE_CHECK_BIN BBS_UPGRADE_BIN BBS_TELEMETRY_LOG_BIN \
-       BBS_DB_BIN BBS_ENV_BIN BBS_BUILDER_PROFILE_BIN \
+       BBS_ENV_BIN BBS_BUILDER_PROFILE_BIN \
        BBS_GLOBAL_DISCOVER_BIN BBS_LEARNINGS_LOG_BIN BBS_LEARNINGS_SEARCH_BIN
 
 # Auto-update check — cache-friendly, silent when up-to-date.

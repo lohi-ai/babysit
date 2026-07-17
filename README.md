@@ -147,8 +147,8 @@ babysit's core bins are now Go — reachable as `bbs <sub>` (e.g. `bbs config`,
 `upgrade`, `learnings-log`, `learnings-search`, `qa-config`, `telemetry-log`,
 `codex-competitive`, `analytics-cron`. The formula also drops `bbs-config` /
 `bbs-env` argv0 aliases. It does **not** install the skill pack, and the bins
-still in bash (`bbs-autopilot`, `bbs-dashboard`, `bbs-db`, `bbs-design`,
-`bbs-secrets`) — plus the un-ported half of `bbs-ticket`, which the Go `ticket`
+still in bash (`bbs-autopilot`, `bbs-dashboard`, `bbs-design`, `bbs-secrets`)
+— plus the un-ported half of `bbs-ticket`, which the Go `ticket`
 command delegates to a `bbs-ticket.bash` sibling — come only from the clone +
 `bin/setup-skills` above. Linux users use the tarball instead. Full platform
 matrix and the linux path: [docs/install.md](docs/install.md).
