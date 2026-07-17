@@ -140,7 +140,9 @@ diff_case() {
     if [ "$impl" = bash ]; then r="$rb"; else r="$rg"; fi
     out="$T/$CASE/$impl.out"; err="$T/$CASE/$impl.err"
     (
-      cd "${RUN_CWD:-$r}" || exit 99
+      # RUN_SUBDIR is relative to the per-impl root, so a case can run each
+      # impl inside its own private git repo ("$r/repo") with one hook.
+      cd "$r/${RUN_SUBDIR:-.}" || exit 99
       export HOME="$r/home" BABYSIT_STATE_DIR="$r/state"
       # BABYSIT_DIR pinned by default so a case's state is contained. Cases that
       # exercise the argv0-derivation branch of ResolveDirs set NO_BABYSIT_DIR=1
@@ -191,7 +193,7 @@ diff_case() {
 # reset_hooks — clear per-case customization.
 reset_hooks() {
   unset -f prep_root with_env 2>/dev/null
-  unset RUN_CWD NO_BABYSIT_DIR RUN_BIN 2>/dev/null
+  unset RUN_SUBDIR NO_BABYSIT_DIR RUN_BIN 2>/dev/null
 }
 
 echo "bbs-telemetry-log — differential vs frozen bash oracle"
@@ -410,69 +412,41 @@ mk_repo() { # $1 = dir, $2 = origin url ("" for none)
   return 0
 }
 
-# diff_case_git — like diff_case, but runs each impl inside its own real git
-# repo (cwd differs per impl, so the shared RUN_CWD hook cannot express it).
-diff_case_git() { # $1 = name; rest = args
-  local name="$1"; shift
-  local rb rg
-  rb="$(mk_root bash)"; rg="$(mk_root go)"
-  prep_root "$rb"; prep_root "$rg"
-  local win_start win_end
-  win_start="$(now_ts)"
-  local impl r
-  for impl in bash go; do
-    if [ "$impl" = bash ]; then r="$rb"; else r="$rg"; fi
-    (
-      cd "$r/repo" || exit 99
-      export HOME="$r/home" BABYSIT_STATE_DIR="$r/state" BABYSIT_DIR="$r/root"
-      if declare -F git_env >/dev/null; then git_env; fi
-      "$r/root/bin/bbs-telemetry-log" "$@"
-    ) >"$T/$CASE/$impl.out" 2>"$T/$CASE/$impl.err"
-    echo "$?" > "$T/$CASE/$impl.code"
-  done
-  win_end="$(now_ts)"
-  local cb cg
-  cb="$(cat "$T/$CASE/bash.code")"; cg="$(cat "$T/$CASE/go.code")"
-  [ "$cb" = "$cg" ] || { fail "$name" "exit: bash=$cb go=$cg"; return; }
-  normalize_pair "$rb/state/analytics/skill-usage.jsonl" \
-                 "$rg/state/analytics/skill-usage.jsonl" "$win_start" "$win_end" \
-    || { fail "$name" "$TS_ERR"; return; }
-  [ "$NB" = "$NG" ] || { fail "$name" "jsonl differs:
-        bash: $NB
-        go:   $NG"; return; }
-  ok "$name"
-}
+# The git cases run through the same diff_case as everything else (via
+# RUN_SUBDIR=repo). They used to have a private copy of the runner that
+# compared only the exit code and the JSONL — so a stray diagnostic on the git
+# path, which is exactly where one would appear, went unasserted.
 
 CASE=git_ssh; reset_hooks
 prep_root() { mk_repo "$1/repo" "git@github.com:foo/bar.git"; }
-diff_case_git "git ssh remote -> foo-bar" --skill qa
+RUN_SUBDIR=repo; diff_case "git ssh remote -> foo-bar" --skill qa
 
 CASE=git_https; reset_hooks
 prep_root() { mk_repo "$1/repo" "https://github.com/foo/bar.git"; }
-diff_case_git "git https remote -> foo-bar" --skill qa
+RUN_SUBDIR=repo; diff_case "git https remote -> foo-bar" --skill qa
 
 CASE=git_nodotgit; reset_hooks
 prep_root() { mk_repo "$1/repo" "https://github.com/foo/bar"; }
-diff_case_git "https remote without .git" --skill qa
+RUN_SUBDIR=repo; diff_case "https remote without .git" --skill qa
 
 CASE=git_multiseg; reset_hooks
 prep_root() { mk_repo "$1/repo" "git@github.com:a/b/c.git"; }
-diff_case_git "multi-segment remote -> b-c" --skill qa
+RUN_SUBDIR=repo; diff_case "multi-segment remote -> b-c" --skill qa
 
 CASE=git_localpath; reset_hooks
 prep_root() { mk_repo "$1/repo" "/local/path/repo"; }
-diff_case_git "bare path remote -> path-repo" --skill qa
+RUN_SUBDIR=repo; diff_case "bare path remote -> path-repo" --skill qa
 
 CASE=git_noorigin; reset_hooks
 prep_root() { mk_repo "$1/repo" ""; }
-diff_case_git "repo with no origin remote" --skill qa
+RUN_SUBDIR=repo; diff_case "repo with no origin remote" --skill qa
 
 CASE=git_detached; reset_hooks
 prep_root() {
   mk_repo "$1/repo" "git@github.com:foo/bar.git"
   git -C "$1/repo" checkout -q --detach HEAD
 }
-diff_case_git "detached HEAD -> literal HEAD" --skill qa
+RUN_SUBDIR=repo; diff_case "detached HEAD -> literal HEAD" --skill qa
 
 CASE=git_nopath; reset_hooks
 # git uninstalled: PATH keeps the tools the bash needs but drops git, so both
@@ -494,14 +468,14 @@ prep_root() {
   done
   return 0
 }
-git_env() { export PATH="$r/nogit"; }
-diff_case_git "git absent from PATH" --skill qa
-unset -f git_env
+with_env() { export PATH="$r/nogit"; }
+RUN_SUBDIR=repo; diff_case "git absent from PATH" --skill qa
+unset -f with_env
 
 CASE=git_outside; reset_hooks
 # Not a repo at all: both git calls fail, slug and branch stay empty.
 prep_root() { mkdir -p "$1/repo"; }
-diff_case_git "outside any repo" --skill qa
+RUN_SUBDIR=repo; diff_case "outside any repo" --skill qa
 
 # ── stale .pending markers ───────────────────────────────────
 CASE=pend_stale; reset_hooks
@@ -532,6 +506,19 @@ prep_root() {
   printf '{"skill":"b","ts":"2026-01-02T00:00:00Z","session_id":"s2","babysit_version":"2.0.0"}' > "$1/state/analytics/.pending-s2"
 }
 diff_case "multiple stale markers finalized" --skill qa --session-id mine
+
+CASE=pend_symlink; reset_hooks
+# `[ -f "$PFILE" ]` FOLLOWS symlinks (unlike the `find -type f` used for the
+# session count), so a marker that is a symlink to a regular file IS finalized.
+# The dangling link fails the same test and is skipped.
+prep_root() {
+  mkdir -p "$1/state/analytics"
+  printf '{"skill":"c","ts":"2026-01-03T00:00:00Z","session_id":"s3","babysit_version":"3.0.0"}' \
+    > "$1/state/analytics/target"
+  ln -sf target "$1/state/analytics/.pending-s3"
+  ln -sf nowhere "$1/state/analytics/.pending-dangling"
+}
+diff_case "symlinked pending marker finalized" --skill qa --session-id mine
 
 CASE=pend_garbage; reset_hooks
 prep_root() { mkdir -p "$1/state/analytics"; printf 'not json at all' > "$1/state/analytics/.pending-g1"; }
@@ -567,6 +554,54 @@ if diff -q "$T/$CASE/bash.ls" "$T/$CASE/go.ls" >/dev/null; then
 else
   fail "tier off: pending dir state matches" "$(diff "$T/$CASE/bash.ls" "$T/$CASE/go.ls" | tr '\n' ' ')"
 fi
+
+# ── HOME: the line-22 abort ──────────────────────────────────
+# Every case above pins HOME, so none of them reach `STATE_DIR=
+# "${BABYSIT_STATE_DIR:-$HOME/.babysit}"` with HOME absent. Unsetting it here is
+# still leak-safe precisely because it is unset: nothing expands to the real
+# home, and both impls aim at the read-only "/.babysit". with_env runs after
+# diff_case's pinning exports, so it can take them back off.
+
+CASE=home_unset; reset_hooks
+# `set -u` + `:-` deref => exit 1 before a single flag is parsed.
+with_env() { unset HOME BABYSIT_STATE_DIR; }
+diff_case "unset HOME aborts before flag parsing" --skill qa
+
+# No case pins line 22 *ahead of* BUG 2: mutation-testing showed the ordering is
+# unobservable — both abort with exit 1, empty stdout, non-empty stderr and no
+# row, so a case asserting it can never go RED. ResolveDirs still runs first in
+# the port, to mirror the oracle's shape, but nothing here depends on that.
+
+CASE=state_empty_home_unset; reset_hooks
+# `:-` (not `-`) fires on set-but-empty too, so this still derefs HOME.
+with_env() { unset HOME; export BABYSIT_STATE_DIR=""; }
+diff_case "empty BABYSIT_STATE_DIR still derefs HOME" --skill qa
+
+CASE=home_empty; reset_hooks
+# HOME="" is set, so `set -u` stays quiet: STATE_DIR becomes the absolute
+# "/.babysit" and only the mkdir fails. Exit stays 0. This is what pins the
+# concatenation in ResolveDirs — filepath.Join would clean "" + "/.babysit"
+# into a relative ".babysit" and write the log under $PWD.
+with_env() { export HOME=""; unset BABYSIT_STATE_DIR; }
+diff_case "empty HOME -> /.babysit, no abort" --skill qa
+
+CASE=mkdir_blocked; reset_hooks
+# `mkdir -p "$ANALYTICS_DIR"` carries no `|| true`, so it is the one write in
+# the script whose failure reaches stderr. Exit is still 0 (-e is off).
+prep_root() { : > "$1/state/analytics"; }
+diff_case "blocked analytics mkdir warns, exit 0" --skill qa
+
+CASE=config_no_owner_x; reset_hooks
+# 0645: an exec bit is set (other), but not one that applies to the owner
+# running the test, so the bash's shell-out fails with EACCES and the tier
+# collapses to local — the event is written despite `telemetry: off`. Pins
+# isExecutable to Access(2) rather than a Perm()&0o111 bit test.
+prep_root() {
+  printf 'telemetry: off\n' > "$1/state/config.yaml"
+  printf '#!/bin/sh\necho off\n' > "$1/root/bin/bbs-config"
+  chmod 0645 "$1/root/bin/bbs-config"
+}
+diff_case "bbs-config without owner-x -> local" --skill qa
 
 echo
 if [ "$FAIL" -eq 0 ]; then

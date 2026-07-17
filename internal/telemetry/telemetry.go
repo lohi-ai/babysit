@@ -9,6 +9,7 @@
 package telemetry
 
 import (
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -17,10 +18,18 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/reallongnguyen/babysit/internal/config"
 )
+
+// ErrHomeUnset reports the abort at oracle line 22,
+// `STATE_DIR="${BABYSIT_STATE_DIR:-$HOME/.babysit}"`: `:-` dereferences $HOME
+// whenever BABYSIT_STATE_DIR is unset *or* empty, and under `set -u` an unset
+// HOME kills the script (exit 1) before a single flag is parsed. An
+// empty-but-set HOME does not abort — it yields "/.babysit".
+var ErrHomeUnset = errors.New("HOME: unbound variable")
 
 // maxFieldBytes mirrors `head -c 200` in the bash json_safe: a byte budget,
 // not a rune budget, so a multi-byte rune can be split mid-sequence.
@@ -63,7 +72,7 @@ type Dirs struct {
 //
 // `cd`+`pwd` is logical (-L), so ".." is applied lexically — which is exactly
 // what filepath.Abs's Clean does.
-func ResolveDirs(argv0 string) Dirs {
+func ResolveDirs(argv0 string) (Dirs, error) {
 	babysit := os.Getenv("BABYSIT_DIR")
 	if babysit == "" {
 		abs, err := filepath.Abs(argv0)
@@ -74,9 +83,18 @@ func ResolveDirs(argv0 string) Dirs {
 
 	state := os.Getenv("BABYSIT_STATE_DIR")
 	if state == "" {
-		// The bash uses $HOME directly; read it directly too, rather than
-		// os.UserHomeDir, so a pinned HOME behaves identically.
-		state = filepath.Join(os.Getenv("HOME"), ".babysit")
+		// LookupEnv, not Getenv: `set -u` distinguishes unset from empty (see
+		// ErrHomeUnset). Not config.Dir() either — it reads HOME via
+		// os.UserHomeDir and cannot tell those two apart, so it would answer
+		// "/.babysit" where the bash exits 1.
+		home, ok := os.LookupEnv("HOME")
+		if !ok {
+			return Dirs{}, ErrHomeUnset
+		}
+		// Concatenate rather than filepath.Join: the bash expands "$HOME/.babysit"
+		// literally, so HOME="" gives the absolute "/.babysit". Join would clean
+		// that to the *relative* ".babysit" and write the log under $PWD.
+		state = home + "/.babysit"
 	}
 
 	analytics := filepath.Join(state, "analytics")
@@ -85,7 +103,7 @@ func ResolveDirs(argv0 string) Dirs {
 		State:     state,
 		Analytics: analytics,
 		JSONL:     filepath.Join(analytics, "skill-usage.jsonl"),
-	}
+	}, nil
 }
 
 // Tier reports the configured telemetry tier: "off" or "local".
@@ -122,7 +140,17 @@ func isExecutable(path string) bool {
 	if err != nil || fi.IsDir() {
 		return false
 	}
-	return fi.Mode().Perm()&0o111 != 0
+	// Ask the kernel the question the bash's shell-out asks — "can *we* exec
+	// it" — not "does anyone hold an exec bit". `Perm()&0o111 != 0` answers the
+	// latter and diverges: a 0645 file owned by the invoker is EACCES to exec
+	// (no owner-x) yet matches on other-x, so the bit test reads the config and
+	// honors `telemetry: off` where the bash's exec fails and TIER falls back
+	// to "local", writing the event anyway.
+	//
+	// Access(2) tests the real uid while exec tests the effective uid; equal
+	// here, since nothing runs this setuid.
+	const xOK = 0x01
+	return syscall.Access(path, xOK) == nil
 }
 
 // jsonSafe ports the bash helper:
@@ -397,8 +425,12 @@ func pendingField(data, key string) string {
 func FinalizePending(d Dirs, sessionID string) {
 	matches, _ := filepath.Glob(filepath.Join(d.Analytics, ".pending-*"))
 	for _, pfile := range matches {
-		fi, err := os.Lstat(pfile)
-		if err != nil || !fi.Mode().IsRegular() { // `[ -f "$PFILE" ] || continue`
+		// `[ -f "$PFILE" ] || continue` — test -f FOLLOWS symlinks, so a marker
+		// symlinked to a regular file is finalized (and the link itself is what
+		// gets removed below). Note this is the opposite of the session count,
+		// where `find -type f` tests the link itself: os.Stat here, Lstat there.
+		fi, err := os.Stat(pfile)
+		if err != nil || !fi.Mode().IsRegular() {
 			continue
 		}
 		if strings.TrimPrefix(filepath.Base(pfile), ".pending-") == sessionID {
@@ -412,6 +444,9 @@ func FinalizePending(d Dirs, sessionID string) {
 			continue
 		}
 
+		// The oracle's line-92 mkdir, which unlike line 120 cannot fail: PENDING_DIR
+		// *is* ANALYTICS_DIR, so finding a marker here proves the dir exists. No
+		// stderr plumbing, because there is no reachable diagnostic to plumb.
 		_ = os.MkdirAll(d.Analytics, 0o755)
 		line := fmt.Sprintf(
 			`{"v":1,"ts":"%s","event_type":"skill_run","skill":"%s","session_id":"%s",`+
@@ -452,10 +487,25 @@ func appendLine(path, line string) {
 	_, _ = f.WriteString(line)
 }
 
+// mkdirAll ports the unguarded `mkdir -p "$ANALYTICS_DIR"` at oracle line 120.
+// Unlike every write below it, that line carries no `|| true`, so a failure
+// (something already occupying the path, a read-only parent) reaches stderr —
+// while the run still exits 0, since -e is off. The oracle's wording is
+// platform-specific ("File exists" on macOS, "cannot create directory …" on
+// GNU), so only the presence of a diagnostic is contracted, as with BUGs 2 & 3.
+func mkdirAll(dir string) string {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Sprintf("mkdir: %v\n", err)
+	}
+	return ""
+}
+
 // Append writes one event row.
 func Append(d Dirs, e Event, now time.Time) (stderr string) {
-	_ = os.MkdirAll(d.Analytics, 0o755)
-	line, stderr := Render(d, e, now)
+	// mkdir precedes the duration check in the bash (line 120 vs 141), so its
+	// diagnostic comes first when both fire.
+	stderr = mkdirAll(d.Analytics)
+	line, renderErr := Render(d, e, now)
 	appendLine(d.JSONL, line)
-	return stderr
+	return stderr + renderErr
 }

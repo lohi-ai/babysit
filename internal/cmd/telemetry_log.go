@@ -39,6 +39,17 @@ func firstNonEmptyEnv(names ...string) string {
 }
 
 func runTelemetryLog(args []string) error {
+	// Resolved first, mirroring the bash's header (line 22), where an unset HOME
+	// aborts under `set -u` before any flag is read. Only the abort is load-
+	// bearing, not its position: it and BUG 2 both exit 1 with empty stdout,
+	// non-empty stderr and no row, so their order is unobservable (mutation-
+	// tested). Same documented stderr caveat as BUG 2.
+	dirs, err := telemetry.ResolveDirs(os.Args[0])
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "bbs-telemetry-log: %v\n", err)
+		return errSilent
+	}
+
 	e := telemetry.Event{
 		// Defaults as assigned at the top of the bash.
 		Outcome:    "unknown",
@@ -66,7 +77,6 @@ func runTelemetryLog(args []string) error {
 		return rest[1], rest[2:], nil
 	}
 
-	var err error
 	var v string
 	for len(args) > 0 {
 		switch args[0] {
@@ -114,8 +124,6 @@ func runTelemetryLog(args []string) error {
 	if e.Invoker == "" {
 		e.Invoker = "developer"
 	}
-
-	dirs := telemetry.ResolveDirs(os.Args[0])
 
 	if telemetry.Tier(dirs) == "off" {
 		telemetry.RemovePending(dirs, e.SessionID)
