@@ -43,8 +43,9 @@ install for full ticket operations.
 but its CSV/DESIGN.md data files live in the skill pack, so a brew-only
 `bbs design suggest` needs `--data <dir>` pointed at a skill-pack checkout.
 
-Still bash and **not** in the brew/tarball artifact at all: `bbs-autopilot`.
-That installs with the skill pack via `bin/setup-skills`.
+Every standalone bin is now Go. The only bash left is the `bbs-ticket.bash`
+sibling the Go `ticket` command delegates its un-ported half to; it installs
+with the skill pack via `bin/setup-skills`.
 `brew install bbs` does not, and is not meant to, give you the whole toolkit.
 
 There is no `bbs --version` yet.

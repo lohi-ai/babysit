@@ -145,12 +145,11 @@ brew install bbs
 babysit's core bins are now Go — reachable as `bbs <sub>` (e.g. `bbs config`,
 `bbs ticket resolve`): `config`, `env`, `slug`, `ticket`, `update-check`,
 `upgrade`, `learnings-log`, `learnings-search`, `qa-config`, `telemetry-log`,
-`codex-competitive`, `analytics-cron`, `secrets`, `design`, `dashboard`. The formula also drops `bbs-config` /
-`bbs-env` argv0 aliases. It does **not** install the skill pack, and the bins
-still in bash (`bbs-autopilot`)
-— plus the un-ported half of `bbs-ticket`, which the Go `ticket`
-command delegates to a `bbs-ticket.bash` sibling — come only from the clone +
-`bin/setup-skills` above. Linux users use the tarball instead. Full platform
+`codex-competitive`, `analytics-cron`, `secrets`, `design`, `dashboard`, `autopilot`. The formula also drops `bbs-config` /
+`bbs-env` argv0 aliases. It does **not** install the skill pack, and the one
+remaining bit of bash — the un-ported half of `bbs-ticket`, which the Go
+`ticket` command delegates to a `bbs-ticket.bash` sibling — comes only from the
+clone + `bin/setup-skills` above. Linux users use the tarball instead. Full platform
 matrix and the linux path: [docs/install.md](docs/install.md).
 
 ### 2. Configure your project
