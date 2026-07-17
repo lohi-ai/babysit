@@ -1,0 +1,73 @@
+name: Release
+
+# Fires when a human pushes a version tag (v*). The pipeline is built but never
+# fired by babysit: cutting the release is the human's action.
+#
+#   1. bump VERSION (+ the two marketplace.json mirrors — CLAUDE.md 3-place rule)
+#   2. git tag v$(cat VERSION) && git push origin v$(cat VERSION)
+#
+# goreleaser builds the 4 archives + checksums and publishes a DRAFT GitHub
+# Release; the human reviews and publishes it. The sync-formula step then
+# rewrites Formula/bbs.rb on the default branch with the real checksums.
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # The tag is the release version; VERSION is babysit's source of truth.
+      # Refuse a tag that disagrees rather than mislabel the release.
+      - name: Guard tag matches VERSION
+        run: |
+          want="v$(cat VERSION)"
+          got="${GITHUB_REF_NAME}"
+          if [ "$got" != "$want" ]; then
+            echo "::error::tag $got != v\$(cat VERSION) ($want) — bump VERSION and its marketplace.json mirrors first"
+            exit 1
+          fi
+          echo "tag matches VERSION: $got"
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: goreleaser release (draft)
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          version: '~> v2'
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Rewrite the in-repo tap formula with the real per-platform checksums
+      # goreleaser just computed, and commit it to the default branch.
+      - name: Sync Formula/bbs.rb with release checksums
+        run: |
+          set -euo pipefail
+          version="$(cat VERSION)"
+          scripts/gen-formula.sh "$version" dist/checksums.txt > Formula/bbs.rb
+          if git diff --quiet -- Formula/bbs.rb; then
+            echo "Formula already current — nothing to commit"
+            exit 0
+          fi
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          default="${GITHUB_EVENT_REPOSITORY_DEFAULT_BRANCH:-main}"
+          git fetch origin "$default"
+          git checkout "$default"
+          scripts/gen-formula.sh "$version" dist/checksums.txt > Formula/bbs.rb
+          git add Formula/bbs.rb
+          git commit -m "chore(release): sync Formula/bbs.rb checksums for v$version"
+          git push origin "$default"
+        env:
+          GITHUB_EVENT_REPOSITORY_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}

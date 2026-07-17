@@ -130,6 +130,24 @@ Then inside Claude Code:
 
 Requirements: Claude Code with plugin support, Git.
 
+#### Optional: the standalone `bbs` CLI via Homebrew
+
+The steps above install the full skill pack. If you *also* want the compiled
+`bbs` command on your `PATH` independent of any repo checkout, mac users get it
+from Homebrew:
+
+```bash
+brew tap lohi-ai/babysit https://github.com/lohi-ai/babysit
+brew install bbs
+```
+
+**What `brew install bbs` gives you today:** the `bbs` binary with the `config`
+and `env` subcommands, plus the `bbs-config` / `bbs-env` aliases — the two bins
+ported to Go so far. It does **not** install the skill pack, `bbs-autopilot`,
+`bbs-ticket`, or the other bash bins; those still come from the clone +
+`bin/setup-skills` above. Linux users use the tarball instead. Full platform
+matrix and the linux path: [docs/install.md](docs/install.md).
+
 ### 2. Configure your project
 
 Inside any repo you want autopilot to ship from:
