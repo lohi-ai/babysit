@@ -109,11 +109,10 @@ func runQAConfigProbe(args []string) error {
 		}
 		return val
 	}
-	url := last("url")
-	source := ""
+	url, source := "", ""
 	for _, r := range rows {
 		if qaconfig.Field(r, 1) == envName && qaconfig.Field(r, 2) == "url" {
-			source = qaconfig.Field(r, 4)
+			url, source = qaconfig.Field(r, 3), qaconfig.Field(r, 4)
 		}
 	}
 
@@ -161,8 +160,7 @@ func runQAConfigCheck() error {
 	repo := qaconfig.RepoToplevel()
 	errs := 0
 	for _, f := range []string{repo + "/.babysit/qa.yaml", repo + "/.babysit/qa.local.yaml"} {
-		st, err := os.Stat(f)
-		if err != nil || !st.Mode().IsRegular() {
+		if !qaconfig.FileExists(f) {
 			continue
 		}
 		both := append(qaconfig.EnvironmentRows(f), qaconfig.SimpleLocalRows(f)...)
@@ -174,7 +172,7 @@ func runQAConfigCheck() error {
 			}
 		}
 		urlSet := map[string]bool{}
-		for _, e := range qaconfig.SortU(seenURLs) {
+		for _, e := range seenURLs {
 			urlSet[e] = true
 		}
 		for _, e := range qaconfig.SortU(envsSeen) {
@@ -198,8 +196,7 @@ func runQAConfigCheck() error {
 
 // qaConfigLeakCheck ports cmd_leak_check, returning its status (0/1/2).
 func qaConfigLeakCheck(file string) int {
-	st, err := os.Stat(file)
-	if file == "" || err != nil || !st.Mode().IsRegular() {
+	if file == "" || !qaconfig.FileExists(file) {
 		fmt.Fprintln(os.Stderr, "bbs-qa-config leak-check: file required")
 		return 2
 	}

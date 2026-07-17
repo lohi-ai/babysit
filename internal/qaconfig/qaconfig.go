@@ -229,18 +229,28 @@ func SimpleLocalRows(path string) []string {
 			passEnv = stripQuotes(m.ReplaceAllString(line, ""))
 			continue
 		}
-		matched := false
-		for key, dst := range map[string]*string{
-			"url": &url, "runtime": &runtime, "guideline": &guideline,
-			"start": &start, "check": &check, "flows": &flows,
-		} {
-			if m := reFieldTop[key]; m.MatchString(line) {
-				*dst = stripQuotes(m.ReplaceAllString(line, ""))
-				matched = true
-				break
-			}
+		if m := reFieldTop["url"]; m.MatchString(line) {
+			url = stripQuotes(m.ReplaceAllString(line, ""))
+			continue
 		}
-		if matched {
+		if m := reFieldTop["runtime"]; m.MatchString(line) {
+			runtime = stripQuotes(m.ReplaceAllString(line, ""))
+			continue
+		}
+		if m := reFieldTop["guideline"]; m.MatchString(line) {
+			guideline = stripQuotes(m.ReplaceAllString(line, ""))
+			continue
+		}
+		if m := reFieldTop["start"]; m.MatchString(line) {
+			start = stripQuotes(m.ReplaceAllString(line, ""))
+			continue
+		}
+		if m := reFieldTop["check"]; m.MatchString(line) {
+			check = stripQuotes(m.ReplaceAllString(line, ""))
+			continue
+		}
+		if m := reFieldTop["flows"]; m.MatchString(line) {
+			flows = stripQuotes(m.ReplaceAllString(line, ""))
 			continue
 		}
 	}
@@ -304,7 +314,8 @@ func TopScalar(path, key string) string {
 	return ""
 }
 
-func fileExists(path string) bool {
+// FileExists reports whether path is a regular file (the port of `[ -f ]`).
+func FileExists(path string) bool {
 	st, err := os.Stat(path)
 	return err == nil && st.Mode().IsRegular()
 }
@@ -315,7 +326,7 @@ func CollectRows() []string {
 	repo := RepoToplevel()
 	var rows []string
 	add := func(file, source string, parse func(string) []string) {
-		if repo == "" || !fileExists(file) {
+		if repo == "" || !FileExists(file) {
 			return
 		}
 		for _, r := range parse(file) {
@@ -337,7 +348,7 @@ func CollectRows() []string {
 func CollectDefaultEnv() string {
 	repo := RepoToplevel()
 	for _, f := range []string{repo + "/.babysit/qa.local.yaml", repo + "/.babysit/qa.yaml"} {
-		if !fileExists(f) {
+		if !FileExists(f) {
 			continue
 		}
 		if v := TopScalar(f, "default_env"); v != "" {
@@ -361,7 +372,7 @@ func CollectTopScalar(key string) string {
 		return ""
 	}
 	for _, f := range []string{repo + "/.babysit/qa.local.yaml", repo + "/.babysit/qa.yaml"} {
-		if !fileExists(f) {
+		if !FileExists(f) {
 			continue
 		}
 		if v := TopScalar(f, key); v != "" {
