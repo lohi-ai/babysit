@@ -313,16 +313,6 @@ func writeCache(path, line string) error {
 	return os.WriteFile(path, []byte(line+"\n"), 0o644)
 }
 
-// readFile returns the file's contents, or "" on any error — mirroring the
-// bash's `cat … 2>/dev/null || true`.
-func readFile(path string) string {
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return ""
-	}
-	return string(b)
-}
-
 // isRegularFile mirrors `[ -f "$path" ]`: follows symlinks, false for a dir.
 func isRegularFile(path string) bool {
 	fi, err := os.Stat(path)
