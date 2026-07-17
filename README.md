@@ -145,9 +145,9 @@ brew install bbs
 babysit's core bins are now Go — reachable as `bbs <sub>` (e.g. `bbs config`,
 `bbs ticket resolve`): `config`, `env`, `slug`, `ticket`, `update-check`,
 `upgrade`, `learnings-log`, `learnings-search`, `qa-config`, `telemetry-log`,
-`codex-competitive`, `analytics-cron`. The formula also drops `bbs-config` /
+`codex-competitive`, `analytics-cron`, `secrets`. The formula also drops `bbs-config` /
 `bbs-env` argv0 aliases. It does **not** install the skill pack, and the bins
-still in bash (`bbs-autopilot`, `bbs-dashboard`, `bbs-design`, `bbs-secrets`)
+still in bash (`bbs-autopilot`, `bbs-dashboard`, `bbs-design`)
 — plus the un-ported half of `bbs-ticket`, which the Go `ticket`
 command delegates to a `bbs-ticket.bash` sibling — come only from the clone +
 `bin/setup-skills` above. Linux users use the tarball instead. Full platform

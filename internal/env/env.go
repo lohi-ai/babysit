@@ -23,18 +23,23 @@ var prefixes = []string{"LOCAL_", "STG_", ""}
 // lib/load-env-file.sh. Lines that don't match are skipped.
 var envLineRe = regexp.MustCompile(`^([A-Za-z_][A-Za-z0-9_]*)=(.*)$`)
 
-// LoadFile parses a .env file and sets only the variables that are not already
-// present in the process environment. It is a port of _load_env_file in
-// lib/load-env-file.sh and must keep its semantics: comments, blank lines, and
-// any line containing `${` are skipped; one layer of matching single or double
-// quotes is stripped, and only on an unquoted value is an inline ` #` comment
-// trimmed; a trailing CR (CRLF files) is dropped. A missing or unreadable file
-// is a no-op.
-func LoadFile(path string) {
+// KV is one parsed key/value pair from a .env file, in file order.
+type KV struct{ Key, Val string }
+
+// ParseFile parses a .env file into ordered key/value pairs, applying the
+// syntax rules of _load_env_file in lib/load-env-file.sh — the single parser
+// the bash sourced from both bbs-env and bbs-secrets. Comments, blank lines,
+// and any line containing `${` are skipped; one layer of matching single or
+// double quotes is stripped, and only on an unquoted value is an inline ` #`
+// comment trimmed; a trailing CR (CRLF files) is dropped. A missing or
+// unreadable file yields no pairs. The env-shadow rule (shell wins) is applied
+// by callers, not here.
+func ParseFile(path string) []KV {
 	b, err := os.ReadFile(path)
 	if err != nil {
-		return
+		return nil
 	}
+	var pairs []KV
 	for _, line := range strings.Split(string(b), "\n") {
 		if strings.HasPrefix(strings.TrimLeft(line, " \t\r\v\f"), "#") {
 			continue
@@ -57,12 +62,22 @@ func LoadFile(path string) {
 				val = val[:i]
 			}
 		}
-		val = strings.TrimSuffix(val, "\r")
+		pairs = append(pairs, KV{key, strings.TrimSuffix(val, "\r")})
+	}
+	return pairs
+}
+
+// LoadFile parses a .env file and sets only the variables that are not already
+// present in the process environment. It is a port of _load_env_file in
+// lib/load-env-file.sh.
+func LoadFile(path string) {
+	for _, kv := range ParseFile(path) {
 		// Shell env takes priority; LookupEnv (not Getenv) so a var that is
 		// set-but-empty still shadows the file value, as printenv's exit code
-		// does in bash.
-		if _, ok := os.LookupEnv(key); !ok {
-			os.Setenv(key, val)
+		// does in bash. Sequential Setenv also makes a repeated key keep its
+		// first value, matching the bash loop.
+		if _, ok := os.LookupEnv(kv.Key); !ok {
+			os.Setenv(kv.Key, kv.Val)
 		}
 	}
 }

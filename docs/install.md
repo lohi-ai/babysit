@@ -28,6 +28,7 @@ core bins are now Go and ship inside this one binary, reachable as `bbs <sub>`:
 | `bbs telemetry-log …` | `telemetry-log` | append skill-usage telemetry rows |
 | `bbs codex-competitive …` | `codex-competitive` | competitive-analysis helper |
 | `bbs analytics-cron …` | `analytics-cron` | install/uninstall/run the weekly `/bbs:analytics-review` schedule |
+| `bbs secrets …` | `secrets` | project-local `.babysit/.env` credential loader (`load` / `seed` / `ensure-gitignore`) |
 
 **Strangler note on `ticket`:** the Go `ticket` command owns the identity core
 (resolve, verdicts, session, board) and **delegates every other subcommand**
@@ -38,7 +39,7 @@ brew-only `bbs ticket <delegated-sub>` will not find it. Use the skill-pack
 install for full ticket operations.
 
 Still bash and **not** in the brew/tarball artifact at all: `bbs-autopilot`,
-`bbs-dashboard`, `bbs-design`, `bbs-secrets`. Those install with the skill pack
+`bbs-dashboard`, `bbs-design`. Those install with the skill pack
 via `bin/setup-skills`. `brew install bbs` does not, and is not meant to, give
 you the whole toolkit.
 
