@@ -72,6 +72,9 @@ T="$(mktemp -d)"
   printf '%s\n' "$out" | grep -q "^$TK_B " || { echo "B row missing: $out"; exit 1; }
   printf '%s' "$row_a" | grep -q "DONE" || { echo "A's qa verdict not shown: $row_a"; exit 1; }
   printf '%s' "$row_a" | grep -q "feat/${TK_A}_tick-a" || { echo "A's branch not shown: $row_a"; exit 1; }
+  # PUSHED renders the manifest bool through Python's repr — "False", not "false".
+  [ "$(printf '%s' "$row_a" | awk '{print $5}')" = "False" ] \
+    || { echo "A's PUSHED column should be False: $row_a"; exit 1; }
   printf '%s\n' "$out" | grep -q "^QA-LEASE: FREE$" || { echo "expected free lease: $out"; exit 1; }
   printf '%s\n' "$out" | grep -q "^SERVING: (base only)$" || { echo "expected base-only serving: $out"; exit 1; }
 ) && ok "board-rows-and-verdicts" || fail "board-rows-and-verdicts"
