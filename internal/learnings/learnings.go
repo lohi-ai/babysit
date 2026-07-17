@@ -6,24 +6,26 @@
 package learnings
 
 import (
+	"errors"
+	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/reallongnguyen/babysit/internal/config"
 )
 
 // AnalyticsDir mirrors the bins' env ladder:
 // BABYSIT_ANALYTICS_DIR > BABYSIT_STATE_DIR/analytics > $HOME/.babysit/analytics.
+// The state-dir fallback is config.Dir() — the one place that resolves it.
 func AnalyticsDir() string {
 	if d := os.Getenv("BABYSIT_ANALYTICS_DIR"); d != "" {
 		return d
 	}
-	state := os.Getenv("BABYSIT_STATE_DIR")
-	if state == "" {
-		state = filepath.Join(os.Getenv("HOME"), ".babysit")
-	}
-	return filepath.Join(state, "analytics")
+	return filepath.Join(config.Dir(), "analytics")
 }
 
 // JSONSafe is bash json_safe: tr -d '"\\' | tr -d '[:cntrl:]' | head -c 500.
@@ -87,7 +89,8 @@ func ProjectSlug() string {
 
 // ReadStore returns dir/decisions.jsonl as $(cat file) would: trailing
 // newlines stripped. ok=false when the file is missing or not a regular file
-// (bash `[ ! -f ]` → exit 0).
+// (bash `[ ! -f ]` → exit 0). An existing-but-unreadable file reproduces
+// cat's stderr line and yields empty content, like the shell pipeline.
 func ReadStore(dir string) (content string, ok bool) {
 	path := filepath.Join(dir, "decisions.jsonl")
 	st, err := os.Stat(path)
@@ -96,7 +99,19 @@ func ReadStore(dir string) (content string, ok bool) {
 	}
 	b, err := os.ReadFile(path)
 	if err != nil {
-		return "", false
+		// Exists but unreadable (e.g. permission): bash's RESULT=$(cat "$FILE")
+		// has no stderr suppression and no set -e, so cat's error prints and
+		// the script carries on with an empty RESULT, still exiting 0.
+		msg := err.Error()
+		var pe *fs.PathError
+		if errors.As(err, &pe) {
+			msg = pe.Err.Error()
+		}
+		if msg != "" {
+			msg = strings.ToUpper(msg[:1]) + msg[1:] // strerror capitalizes: "Permission denied"
+		}
+		fmt.Fprintf(os.Stderr, "cat: %s: %s\n", path, msg)
+		return "", true
 	}
 	return strings.TrimRight(string(b), "\n"), true
 }

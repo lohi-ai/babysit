@@ -104,6 +104,17 @@ diff_search "middle-caret-is-literal" "a^b"
 diff_search "middle-dollar-is-literal" "a\$b"
 diff_search "invalid-regex-unmatched-bracket" "["
 diff_search "invalid-regex-trailing-backslash" "\\"
+diff_search "bre-alternation" 'first\|second'
+diff_search "bre-alternation-anchored-arm" 'zzz\|^{"v":1'
+diff_search "bre-group-caret-anchor" '\(^{"v":1\)'
+diff_search "bre-group-dollar-anchor" '\(proj-x"}$\)'
+diff_search "bre-dollar-literal-before-alt" 'x"}$\|qqq'
+diff_search "bre-escaped-plus-quantifier" 'as\+ess'
+diff_search "bre-escaped-question-quantifier" 'firs\?t'
+diff_search "bre-leading-plus-is-literal" '\+b'
+diff_search "bre-word-class" '\wifth'
+diff_search "bre-space-class" 'fifth\sassess'
+diff_search "bre-word-boundary" '\bfirst\b'
 
 echo "learnings-search / limit:"
 CASE_CWD="$T/proj"
@@ -116,6 +127,11 @@ diff_search "limit-nonnumeric-tail-error" --limit abc
 diff_search "limit-nonnumeric-empty-result-no-tail" --limit abc nosuchquery
 diff_search "limit-overflow-alloc-error" --limit 9999999999999999999
 diff_search "limit-overflow-from-start-silent" --limit +9999999999999999999
+diff_search "limit-uint64-max-alloc-error" --limit 18446744073709551615
+diff_search "limit-from-start-uint64-max-silent" --limit +18446744073709551615
+diff_search "limit-past-uint64-illegal-offset" --limit 18446744073709551616
+diff_search "limit-past-uint64-from-start-illegal-offset" --limit +99999999999999999999
+diff_search "limit-past-uint64-negative-illegal-offset" --limit -99999999999999999999
 DIFF_STDERR=0 diff_search "limit-missing-value-set-u-death" --limit
 
 echo "learnings-search / flags + store edge cases:"
@@ -130,6 +146,9 @@ HOME2="$T/home2"; seed_store "$HOME2/.babysit"
 CASE_ENV=(); CASE_HOME="$HOME2"; CASE_CWD="$T/norepo"
 diff_search "home-dot-babysit-fallback" alpha --cross-project
 CASE_HOME=""
+UNREAD="$T/unread"; seed_store "$UNREAD"; chmod 000 "$UNREAD/analytics/decisions.jsonl"
+CASE_ENV=(BABYSIT_STATE_DIR="$UNREAD"); diff_search "unreadable-store-cat-stderr-exit-0"
+chmod 644 "$UNREAD/analytics/decisions.jsonl"
 CASE_ENV=(BABYSIT_STATE_DIR="$STATE")
 
 # ── log: diff stdout+stderr+exit AND the written store (ts normalized) ─
