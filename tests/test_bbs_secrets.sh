@@ -23,6 +23,8 @@ set -u
 SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 BBS_SECRETS="$SCRIPT_DIR/bin/bbs-secrets"
 BBS_QA_CONFIG="$SCRIPT_DIR/bin/bbs-qa-config"
+# bbs-qa-config symlinks to the gitignored Go binary; build it if absent.
+[ -x "$BBS_QA_CONFIG" ] || (cd "$SCRIPT_DIR" && go build -o bin/bbs ./cmd/bbs) 2>/dev/null || true
 [ -x "$BBS_SECRETS" ] || { echo "FAIL: $BBS_SECRETS not executable" >&2; exit 1; }
 
 PASS=0
