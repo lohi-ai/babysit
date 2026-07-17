@@ -1,0 +1,157 @@
+#!/usr/bin/env bash
+# bbs-telemetry-log — append a telemetry event to local JSONL
+#
+# Data flow:
+#   preamble (start) ──▶ .pending-$SESSION_ID marker
+#   preamble (epilogue) ──▶ bbs-telemetry-log ──▶ skill-usage.jsonl
+#
+# Usage:
+#   bbs-telemetry-log --skill qa --duration 142 --outcome success \
+#     --used-browse true --session-id "12345-1710756600"
+#
+# Env overrides (for testing):
+#   BABYSIT_STATE_DIR  — override ~/.babysit state directory
+#   BABYSIT_DIR        — override auto-detected babysit root
+#
+# Telemetry stays local. Config key `telemetry` = off | local.
+#
+# NOTE: Uses set -uo pipefail (no -e) — telemetry must never exit non-zero
+set -uo pipefail
+
+BABYSIT_DIR="${BABYSIT_DIR:-$(cd "$(dirname "$0")/.." && pwd)}"
+STATE_DIR="${BABYSIT_STATE_DIR:-$HOME/.babysit}"
+ANALYTICS_DIR="$STATE_DIR/analytics"
+JSONL_FILE="$ANALYTICS_DIR/skill-usage.jsonl"
+PENDING_DIR="$ANALYTICS_DIR"
+CONFIG_CMD="$BABYSIT_DIR/bin/bbs-config"
+VERSION_FILE="$BABYSIT_DIR/VERSION"
+
+# ─── Parse flags ─────────────────────────────────────────────
+SKILL=""
+DURATION=""
+OUTCOME="unknown"
+USED_BROWSE="false"
+SESSION_ID=""
+ERROR_CLASS=""
+ERROR_MESSAGE=""
+FAILED_STEP=""
+EVENT_TYPE="skill_run"
+INVOKER=""
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --skill)         SKILL="$2"; shift 2 ;;
+    --duration)      DURATION="$2"; shift 2 ;;
+    --outcome)       OUTCOME="$2"; shift 2 ;;
+    --used-browse)   USED_BROWSE="$2"; shift 2 ;;
+    --session-id)    SESSION_ID="$2"; shift 2 ;;
+    --error-class)   ERROR_CLASS="$2"; shift 2 ;;
+    --error-message) ERROR_MESSAGE="$2"; shift 2 ;;
+    --failed-step)   FAILED_STEP="$2"; shift 2 ;;
+    --event-type)    EVENT_TYPE="$2"; shift 2 ;;
+    --invoker)       INVOKER="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+
+INVOKER="${INVOKER:-${AGENT_ROLE:-${GT_ROLE:-${INVOKER_ENV:-${BABYSIT_INVOKER:-developer}}}}}"
+
+# ─── Read telemetry tier ─────────────────────────────────────
+TIER="$("$CONFIG_CMD" get telemetry 2>/dev/null || true)"
+TIER="${TIER:-local}"
+
+case "$TIER" in
+  off|local) ;;
+  *) TIER="local" ;;
+esac
+
+if [ "$TIER" = "off" ]; then
+  [ -n "$SESSION_ID" ] && rm -f "$PENDING_DIR/.pending-$SESSION_ID" 2>/dev/null || true
+  exit 0
+fi
+
+# ─── Finalize stale .pending markers ────────────────────────
+# Each session gets its own .pending-$SESSION_ID file to avoid races
+# between concurrent sessions. Finalize any that don't match our session.
+for PFILE in "$PENDING_DIR"/.pending-*; do
+  [ -f "$PFILE" ] || continue
+  PFILE_BASE="$(basename "$PFILE")"
+  PFILE_SID="${PFILE_BASE#.pending-}"
+  [ "$PFILE_SID" = "$SESSION_ID" ] && continue
+
+  PENDING_DATA="$(cat "$PFILE" 2>/dev/null || true)"
+  rm -f "$PFILE" 2>/dev/null || true
+  if [ -n "$PENDING_DATA" ]; then
+    P_SKILL="$(echo "$PENDING_DATA" | grep -o '"skill":"[^"]*"' | head -1 | awk -F'"' '{print $4}')"
+    P_TS="$(echo "$PENDING_DATA" | grep -o '"ts":"[^"]*"' | head -1 | awk -F'"' '{print $4}')"
+    P_SID="$(echo "$PENDING_DATA" | grep -o '"session_id":"[^"]*"' | head -1 | awk -F'"' '{print $4}')"
+    P_VER="$(echo "$PENDING_DATA" | grep -o '"babysit_version":"[^"]*"' | head -1 | awk -F'"' '{print $4}')"
+    P_OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
+    P_ARCH="$(uname -m)"
+
+    mkdir -p "$ANALYTICS_DIR"
+    printf '{"v":1,"ts":"%s","event_type":"skill_run","skill":"%s","session_id":"%s","babysit_version":"%s","os":"%s","arch":"%s","duration_s":null,"outcome":"unknown","error_class":null,"used_browse":false,"sessions":1,"invoker":"unknown"}\n' \
+      "$P_TS" "$P_SKILL" "$P_SID" "$P_VER" "$P_OS" "$P_ARCH" >> "$JSONL_FILE" 2>/dev/null || true
+  fi
+done
+
+[ -n "$SESSION_ID" ] && rm -f "$PENDING_DIR/.pending-$SESSION_ID" 2>/dev/null || true
+
+# ─── Collect metadata ────────────────────────────────────────
+TS="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u +%Y-%m-%dT%H:%M:%S 2>/dev/null || echo "")"
+BABYSIT_VERSION="$(cat "$VERSION_FILE" 2>/dev/null | tr -d '[:space:]' || echo "unknown")"
+OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
+ARCH="$(uname -m)"
+SESSIONS="1"
+if [ -d "$STATE_DIR/sessions" ]; then
+  _SC="$(find "$STATE_DIR/sessions" -mmin -120 -type f 2>/dev/null | wc -l | tr -d ' \n\r\t')"
+  [ -n "$_SC" ] && [ "$_SC" -gt 0 ] 2>/dev/null && SESSIONS="$_SC"
+fi
+
+# Local-only fields (repo slug + branch aid offline analytics)
+REPO_SLUG=""
+BRANCH=""
+if command -v git >/dev/null 2>&1; then
+  REPO_SLUG="$(git remote get-url origin 2>/dev/null | sed 's|.*[:/]\([^/]*/[^/]*\)\.git$|\1|;s|.*[:/]\([^/]*/[^/]*\)$|\1|' | tr '/' '-' 2>/dev/null || true)"
+  BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+fi
+
+# ─── Construct and append JSON ───────────────────────────────
+mkdir -p "$ANALYTICS_DIR"
+
+json_safe() { printf '%s' "$1" | tr -d '"\\' | tr -d '[:cntrl:]' | head -c 200; }
+SKILL="$(json_safe "$SKILL")"
+OUTCOME="$(json_safe "$OUTCOME")"
+SESSION_ID="$(json_safe "$SESSION_ID")"
+EVENT_TYPE="$(json_safe "$EVENT_TYPE")"
+INVOKER="$(json_safe "$INVOKER")"
+REPO_SLUG="$(json_safe "$REPO_SLUG")"
+BRANCH="$(json_safe "$BRANCH")"
+
+ERR_FIELD="null"
+[ -n "$ERROR_CLASS" ] && ERR_FIELD="\"$(json_safe "$ERROR_CLASS")\""
+
+ERR_MSG_FIELD="null"
+[ -n "$ERROR_MESSAGE" ] && ERR_MSG_FIELD="\"$(json_safe "$ERROR_MESSAGE")\""
+
+STEP_FIELD="null"
+[ -n "$FAILED_STEP" ] && STEP_FIELD="\"$(json_safe "$FAILED_STEP")\""
+
+case "$DURATION" in
+  ''|*[!0-9]*) DURATION="" ;;
+  *) [ "$DURATION" -gt 86400 ] && DURATION="" ;;
+esac
+
+DUR_FIELD="null"
+[ -n "$DURATION" ] && DUR_FIELD="$DURATION"
+
+BROWSE_BOOL="false"
+[ "$USED_BROWSE" = "true" ] && BROWSE_BOOL="true"
+
+printf '{"v":1,"ts":"%s","event_type":"%s","skill":"%s","session_id":"%s","babysit_version":"%s","os":"%s","arch":"%s","duration_s":%s,"outcome":"%s","error_class":%s,"error_message":%s,"failed_step":%s,"used_browse":%s,"sessions":%s,"invoker":"%s","_repo_slug":"%s","_branch":"%s"}\n' \
+  "$TS" "$EVENT_TYPE" "$SKILL" "$SESSION_ID" "$BABYSIT_VERSION" "$OS" "$ARCH" \
+  "$DUR_FIELD" "$OUTCOME" "$ERR_FIELD" "$ERR_MSG_FIELD" "$STEP_FIELD" \
+  "$BROWSE_BOOL" "${SESSIONS:-1}" "$INVOKER" \
+  "$REPO_SLUG" "$BRANCH" >> "$JSONL_FILE" 2>/dev/null || true
+
+exit 0
