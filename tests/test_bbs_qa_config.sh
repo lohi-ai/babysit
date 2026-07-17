@@ -328,9 +328,17 @@ printf 'url: http://from-worktree\n' > "$T/wt-linked/.babysit/qa.yaml"
 CASE_CWD="$T/wt-linked"
 diff_case "toplevel-linked-worktree" probe --env local
 
-# (b) symlinked path to the repo (PWD carries the logical path)
+# (b) symlinked path to the repo (PWD carries the logical path). The config
+# also declares an env without a url so `check` emits a diagnostic embedding
+# the resolved toplevel path — git prints the physical path there, and a
+# resolver that returns the logical PWD path would diverge visibly.
 mk_repo "$T/real-repo"
-printf 'url: http://via-symlink\n' > "$T/real-repo/.babysit/qa.yaml"
+cat > "$T/real-repo/.babysit/qa.yaml" <<'EOF'
+url: http://via-symlink
+environments:
+  - name: no-url-env
+    runtime: chromium
+EOF
 ln -s "$T/real-repo" "$T/repo-link"
 CASE_CWD="$T/repo-link"; CASE_ENV=(PWD="$T/repo-link")
 diff_case "toplevel-symlinked-path" probe --env local
