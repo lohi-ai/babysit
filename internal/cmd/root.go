@@ -23,5 +23,7 @@ func NewRootCmd() *cobra.Command {
 		SilenceErrors: true,
 	}
 	root.AddCommand(newConfigCmd())
+	root.AddCommand(newLearningsLogCmd())
+	root.AddCommand(newLearningsSearchCmd())
 	return root
 }

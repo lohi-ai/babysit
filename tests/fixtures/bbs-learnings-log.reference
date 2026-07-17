@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+# bbs-learnings-log — append a structured "decision" or "learning" event to
+# local JSONL for the Auto-Decision Framework's audit trail.
+#
+# Subcommands:
+#   decision --skill <s> --type <mechanical|taste|user_challenge>
+#            --choice <s> [--rationale <s>] [--ticket <t>]
+#            [--workflow <w>] [--state <json-or-str>]
+#
+# Output file: ~/.babysit/analytics/decisions.jsonl (one JSON object per line).
+# Autopilot routing decisions log here with --type mechanical per the
+# orchestrator-no-task-work rule: routing reads state, not prose, so the
+# decision's provenance is fully auditable from the `choice` + `state` fields.
+#
+# Env:
+#   BABYSIT_STATE_DIR     override ~/.babysit (for testing)
+#   BABYSIT_ANALYTICS_DIR override analytics dir only (keeps ticket state under ~/.babysit)
+#
+# NOTE: set -uo pipefail (no -e) — logging must never fail the caller.
+set -uo pipefail
+
+SUB="${1:-}"
+[ -z "$SUB" ] && {
+  echo "usage: bbs-learnings-log decision --skill S --type T --choice C [--rationale R] [--ticket T] [--workflow W] [--state JSON]" >&2
+  exit 2
+}
+shift
+
+STATE_DIR="${BABYSIT_STATE_DIR:-$HOME/.babysit}"
+ANALYTICS_DIR="${BABYSIT_ANALYTICS_DIR:-$STATE_DIR/analytics}"
+
+json_safe() {
+  printf '%s' "${1:-}" | tr -d '"\\' | tr -d '[:cntrl:]' | head -c 500
+}
+
+case "$SUB" in
+  decision)
+    SKILL="" DTYPE="" CHOICE="" RATIONALE="" TICKET="" WORKFLOW="" STATE=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --skill)     SKILL="$2"; shift 2 ;;
+        --type)      DTYPE="$2"; shift 2 ;;
+        --choice)    CHOICE="$2"; shift 2 ;;
+        --rationale) RATIONALE="$2"; shift 2 ;;
+        --ticket)    TICKET="$2"; shift 2 ;;
+        --workflow)  WORKFLOW="$2"; shift 2 ;;
+        --state)     STATE="$2"; shift 2 ;;
+        *) shift ;;
+      esac
+    done
+    [ -z "$SKILL" ] || [ -z "$DTYPE" ] || [ -z "$CHOICE" ] && {
+      echo "decision: --skill, --type, --choice required" >&2
+      exit 2
+    }
+    case "$DTYPE" in
+      mechanical|taste|user_challenge) ;;
+      *) echo "decision: --type must be mechanical|taste|user_challenge" >&2; exit 2 ;;
+    esac
+
+    mkdir -p "$ANALYTICS_DIR" 2>/dev/null || true
+    TS="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u +%Y-%m-%dT%H:%M:%S)"
+
+    printf '{"v":1,"ts":"%s","skill":"%s","type":"%s","choice":"%s","rationale":"%s","ticket":"%s","workflow":"%s","state":"%s"}\n' \
+      "$TS" \
+      "$(json_safe "$SKILL")" \
+      "$(json_safe "$DTYPE")" \
+      "$(json_safe "$CHOICE")" \
+      "$(json_safe "$RATIONALE")" \
+      "$(json_safe "$TICKET")" \
+      "$(json_safe "$WORKFLOW")" \
+      "$(json_safe "$STATE")" \
+      >> "$ANALYTICS_DIR/decisions.jsonl" 2>/dev/null || true
+    ;;
+
+  *)
+    echo "bbs-learnings-log: unknown subcommand '$SUB'" >&2
+    exit 2
+    ;;
+esac
+
+exit 0
