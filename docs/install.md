@@ -32,9 +32,13 @@ core bins are now Go and ship inside this one binary, reachable as `bbs <sub>`:
 | `bbs design …` | `design` | design-intelligence broker (`tokens` / `suggest` / `components` / `ux-check`) — the CSV/DESIGN.md data files ship with the skill pack |
 
 **Strangler note on `ticket`:** the Go `ticket` command owns the identity core
-(resolve, verdicts, session, board) and **delegates every other subcommand**
-(`merge-base`, `switch`, `reset-base`, `qa-lease`, `safe-cut`, `serve`,
-`refresh`, `manifest`, …) to a `bbs-ticket.bash` sitting next to the binary.
+(resolve, verdicts, session, board) and the index.json state-accessors
+(`env`, `get`, `set-status`, `set-phase`, `set-parent`, `add-child`,
+`add-relation`, `set-sibling`, `add-label`, `set-pointer`, `get-pointer`,
+`ensure-size`, `append-history`). It still **delegates** the base-ops family
+(`merge-base`, `switch`, `reset-base`, `qa-lease`, `serve`, `refresh`), the
+manifest.yaml ops (`init`, `ensure`, `get-manifest`, `set-branch`), and
+`path`/`list`/`reconcile` to a `bbs-ticket.bash` sitting next to the binary.
 That bash sibling ships **only** with the skill pack (`bin/setup-skills`), so a
 brew-only `bbs ticket <delegated-sub>` will not find it. Use the skill-pack
 install for full ticket operations.

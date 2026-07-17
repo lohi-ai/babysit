@@ -11,7 +11,9 @@ on `argv[0]` (`bbs-config` → `bbs config`, etc.). The bins ported to Go —
 `bbs-secrets`, `bbs-design`, `bbs-dashboard`, `bbs-autopilot` — behave
 identically to the bash they replaced (guarded by the differential harnesses in
 `tests/`). `bbs-ticket` is a strangler: its Go core owns
-identity/verdict/session/board and delegates the remaining subcommands to a
+identity/verdict/session/board plus the index.json state-accessors
+(`get`/`set-*`/`add-*`/`ensure-size`/`append-history`/`env`) and delegates the
+remaining subcommands (base-ops, manifest.yaml ops, path/list/reconcile) to a
 `bbs-ticket.bash` sibling — the only bash left.
 
 | Bin | Purpose |

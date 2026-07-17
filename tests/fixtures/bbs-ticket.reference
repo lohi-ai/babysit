@@ -1,0 +1,3413 @@
+#!/usr/bin/env bash
+# bbs-ticket — manage the Layout C per-ticket manifest.
+#
+# Every ticket has a directory under
+#   $BABYSIT_PROJECT_HOME/tickets/<ticket>/
+# containing:
+#
+#   index.json                  metadata + relations + pointers (authoritative)
+#   requirement.md              office-hours output (optional)
+#   design.md                   design-ui snapshot (optional)
+#   plan.md                     plan-feature output (optional)
+#   manifest.md                 decompose output (optional)
+#   handoffs/<NNN>-<skill>-<status>.md  append-only change-briefs, numbered
+#   handoffs/LATEST             plain text file holding the latest filename
+#   verdicts/<skill>.md         per-skill latest verdict (overwrite, name-partitioned)
+#   reviews/<skill>.md          review-family skills (review-pr)
+#   history.jsonl               append-only timeline
+#   evidence/<skill>/...        name-partitioned blobs
+#   sub-tickets/<N>-<slug>.md   decompose seeds (pre-promotion)
+#   .index.lock/                mkdir-based lock for index.json mutations
+#
+# index.json schema (all fields optional unless noted):
+#   {
+#     "id": "<ticket>",              required
+#     "title": "...",
+#     "status": "triage|backlog|planned|decomposed|in_progress|in_review|blocked|done|cancelled|duplicate",
+#     "phase": "<skill>",            which skill currently owns this ticket
+#     "parent": "<ticket>|null",
+#     "children": ["..."],
+#     "relations": {
+#       "blocks": [], "blocked_by": [], "duplicate_of": null, "related": []
+#     },
+#     "siblings": [                   cross-repo same-feature tickets
+#       {"role": "fe|be|shared", "repo": "org/repo", "ticket": "<id>"}
+#     ],
+#     "labels": [],
+#     "assignee": "<invoker>",
+#     "origin": {
+#       "type": "standalone|sub_ticket|hotfix|design-initiated",
+#       "parent": "<ticket>|null",
+#       "seed":   "<abs path to seed md>|null",
+#       "plan":   "<abs path to parent plan>|null",
+#       "position": <int>|null,
+#       "design_doc": "<abs path>|null"
+#     },
+#     "pointers": {
+#       "branch": "...", "pr": "...",
+#       "plan": "plan.md", "design": "design.md", "requirement": "requirement.md",
+#       "manifest": "manifest.md"
+#     },
+#     "created_at": "...", "updated_at": "..."
+#   }
+#
+# Subcommands:
+#   ensure [--from-input <text>|--from-input-file <path>] [--slug-hint <s>] [--type feat|fix|chore|bug|refactor]
+#          [--cut-branch|--no-branch] [--mode trunk|branch|worktree]
+#                                        idempotent bootstrap: if already on
+#                                        a feat/<t>_<s> branch → no-op; else
+#                                        generate id, cut branch, init, seed.
+#                                        Mode (--mode > git-flow.yaml mode: >
+#                                        legacy ticket_branch: > branch):
+#                                          trunk    no cut; identity rides
+#                                                   BABYSIT_TICKET env.
+#                                          branch   safe-cut gate: in-place
+#                                                   cut only from a clean
+#                                                   base checkout; anywhere
+#                                                   unsafe diverts to a
+#                                                   worktree off base and
+#                                                   prints WORKTREE=<path>.
+#                                          worktree always divert — primary
+#                                                   checkout stays pinned to
+#                                                   base (shared dev server);
+#                                                   land via merge-base.
+#                                        Developer role + no --cut-branch →
+#                                        exit 3 NEEDS_CONFIRM before an
+#                                        in-place cut (worktree diverts don't
+#                                        move the checkout, so they don't ask).
+#                                        Prints KEY=VALUE for eval.
+#   init [--parent <id>] [--origin-type <type>] [--seed <path>] [--plan <path>]
+#   get <dotted.path>                    e.g. get status, get relations.blocks
+#   set-status <enum>
+#   set-phase <skill>
+#   set-parent <ticket>
+#   add-child <ticket>
+#   add-relation <type> <target>         type ∈ blocks|blocked_by|duplicate_of|related
+#   set-sibling --role <r> --repo <repo> --ticket <t>
+#   add-label <label>
+#   set-pointer <key> <value>            e.g. set-pointer pr https://...
+#   get-pointer <key>                    e.g. get-pointer ticket_size (empty if unset)
+#   ensure-size                          resolve ticket_size pointer (XS|S|M|L); estimate
+#                                        from PR diff + persist if unset. Rubric:
+#                                        .claude/skills/references/ticket-size-rubric.md
+#   add-handoff --skill <s> --status <s> [--body-file <path>] [--body <md>]
+#   latest-handoff [--skill <s>]         print filename of the latest handoff
+#                                        (--skill filters to <NNN>-<skill>-*.md)
+#   set-verdict --skill <s> [--body-file <path>] [--body <md>]
+#   verdict-status --skill <s>           print one of {none|DONE|DONE_WITH_CONCERNS|BLOCKED|NEEDS_CONTEXT}
+#   set-review  --skill <s> [--body-file <path>] [--body <md>]
+#   set-evidence --kind <k> (--json <str> | --json-file <path>)
+#                                        k ∈ verification|risk-gate|adversarial; validated on write
+#   evidence-status --kind <k>           print one of {none|valid|malformed}
+#   append-history --event <e> [--actor <a>] [--extra-json '{...}']
+#   merge-base [--base <branch>]         from a ticket worktree: merge the ticket
+#                                        branch into the primary checkout (where
+#                                        the long-lived dev server runs) so QA
+#                                        tests the change; locks the shared git
+#                                        dir so parallel runs serialize; conflict
+#                                        → abort + BLOCKED (fix in the worktree).
+#   refresh [--base <branch>]            bring the ticket branch up to date:
+#                                        fetch + merge origin/<base> into it
+#                                        (never local <base> — it may carry
+#                                        other tickets' merges); conflict →
+#                                        abort + BLOCKED (resolve in place).
+#   reset-base [--base <branch>]         reset the primary checkout's base branch
+#                                        to origin/<base> after tickets land
+#                                        upstream (drops local merge-base merges);
+#                                        BLOCKs on dirty tree, off-base, or
+#                                        non-merge local-only commits.
+#   switch <ticket>... [--base <branch>] point the test surface at exactly the
+#                                        named ticket(s): reset-base, then merge
+#                                        each ticket's branch into the primary.
+#                                        Fast QA hop between worktree tickets;
+#                                        runnable from anywhere in the repo.
+#   qa-lease <acquire|release|status> [--ticket <id>] [--ttl-min <n>] [--force]
+#                                        exclusive QA-session lease on the shared
+#                                        test surface: while held, merge-base /
+#                                        switch / reset-base from other tickets
+#                                        BLOCK. Reentrant for the owner; stale
+#                                        (age > ttl, default 60min) is stolen.
+#   serve [<ticket>...] [--ttl-min <n>]  THE human-review command: qa-lease
+#                                        acquire (long ttl, default 240min) +
+#                                        composed switch, in this repo AND each
+#                                        sibling repo of a cross-repo pair.
+#                                        Bare = the finished batch (every open
+#                                        ticket with qa + review-pr DONE); args
+#                                        = exactly those tickets. Reentrant —
+#                                        re-run after each fix to refresh lease
+#                                        + re-switch. serve --release frees the
+#                                        lease(s), tree untouched.
+#   board [--all] [--pr]                 read-only view of every ticket: status,
+#                                        branch, qa/review verdicts, session,
+#                                        PR pointer, siblings, plus qa-lease and
+#                                        what the primary is serving. --all adds
+#                                        done/cancelled tickets; --pr asks gh
+#                                        for each PR's merge state.
+#   session <list|attach|end>            inspect/rehydrate ~/.babysit/sessions/;
+#                                        attach echoes export lines for eval.
+#   env                                  print TICKET_HOME, INDEX, etc. for eval
+#
+# All mutations acquire .index.lock via `mkdir` (atomic on POSIX). Readers
+# don't need the lock — JSON files are rewritten atomically via mktemp+mv.
+#
+# Env:
+#   BABYSIT_HOME    default: $HOME/.babysit
+#   BBS_TICKET      override ticket derivation (for init on an empty branch)
+set -uo pipefail
+
+# Resolve real script path (follow the setup-skills symlink) to locate lib/.
+# SCRIPT_DIR below uses $0 directly and is fine for sibling bins; lib/ needs the
+# symlink-resolved dir. BBS_LIB override keeps tests hermetic.
+_BBS_SELF="$0"
+while [ -L "$_BBS_SELF" ]; do _BBS_SELF="$(readlink "$_BBS_SELF")"; done
+BBS_LIB="${BBS_LIB:-$(cd "$(dirname "$_BBS_SELF")/lib" 2>/dev/null && pwd)}"
+[ -f "$BBS_LIB/lock.sh" ] || { echo "bbs-ticket: cannot find lib/ (set BBS_LIB)" >&2; exit 1; }
+# shellcheck source=lib/lock.sh
+. "$BBS_LIB/lock.sh"
+
+SUB="${1:-}"
+case "$SUB" in -h|--help|help) SUB="__help__" ;; esac
+[ -z "$SUB" ] || [ "$SUB" = "__help__" ] && {
+  cat >&2 <<EOF
+usage: bbs-ticket <subcommand> [args...]
+
+Subcommands:
+  ensure            idempotent: no-op on ticket branch, else cut one + init
+                    mode trunk|branch|worktree (--mode > git-flow.yaml mode:):
+                    trunk = no cut; branch = in-place from clean base else
+                    worktree divert; worktree = always divert, primary stays
+                    on base; diverts print WORKTREE=<path>; developer role
+                    asks before in-place — exit 3; --cut-branch/--no-branch
+  init              initialize index.json + manifest.yaml for the current ticket
+  resolve [--explain]   print ticket id (env → manifest cwd-match → branch);
+                        exit 0 resolved, 1 no resolution, 2 conflict-BLOCKED
+  get-manifest <ticket> emit manifest.yaml as JSON
+  set-branch <ticket> <repo> <branch>
+                        rewrite manifest.yaml — update branch on the named repo row
+  get <path>        print a field (dotted path)
+  set-status <s>    set ticket status
+  set-phase <s>     set current owning skill
+  set-parent <t>    set parent ticket
+  add-child <t>     append a child ticket id
+  add-relation <type> <target>
+  set-sibling --role R --repo REPO --ticket T
+  add-label <label>
+  set-pointer <key> <value>
+  get-pointer <key>             print pointers.<key> ("" if unset)
+  ensure-size                   resolve ticket_size (XS|S|M|L); estimate from diff if unset
+  add-handoff --skill S --status STATUS [--body MD | --body-file FILE]
+  latest-handoff [--skill S]    print latest handoff filename (optionally filtered by skill)
+  set-verdict --skill S [--body MD | --body-file FILE]
+  verdict-status --skill S       print {none|DONE|DONE_WITH_CONCERNS|BLOCKED|NEEDS_CONTEXT}
+  set-review  --skill S [--body MD | --body-file FILE]
+  set-evidence --kind K (--json STR | --json-file FILE)   K ∈ verification|risk-gate|adversarial
+  evidence-status --kind K       print {none|valid|malformed}
+  qa-evidence                    audit qa verdict body: {none|ok|contradiction:<d>|thin:<d>|unexplained}
+  append-history --event E [--actor A] [--extra-json JSON]
+  merge-base [--base BRANCH]     from a ticket worktree: merge the ticket branch
+                                 into the primary checkout (dev-server tree);
+                                 BLOCKs on dirty/diverged state or conflict
+  refresh [--base BRANCH]        bring the ticket branch up to date: fetch +
+                                 merge origin/<base> into it (never local base);
+                                 BLOCKs on dirty tree or conflict
+  reset-base [--base BRANCH]     reset the primary checkout's base branch to
+                                 origin/<base> (drops local integration merges);
+                                 BLOCKs on dirty/off-base/non-merge local commits
+  switch <ticket>... [--base BRANCH]
+                                 test surface = base + exactly these tickets:
+                                 reset-base then merge each ticket branch in;
+                                 the fast QA hop between worktree tickets
+  qa-lease <acquire|release|status> [--ticket ID] [--ttl-min N] [--force]
+                                 exclusive QA-session lease on the test surface;
+                                 other tickets' merge-base/switch/reset-base
+                                 BLOCK while held; stale (> ttl) is stolen
+  serve [<ticket>...] [--ttl-min N]
+                                 human review: long qa-lease (240min) + switch,
+                                 here and in each sibling repo; bare = every
+                                 finished ticket (qa + review-pr DONE); re-run
+                                 after each fix; serve --release frees leases
+  board [--all] [--pr]           read-only ticket board: status, branch, qa/
+                                 review verdicts, session, PR, qa-lease, serving
+  path <kind> [selectors] --read|--write   resolve a ticket file path (canonical → legacy)
+  list <kind> [selectors]                  list ticket files of a kind
+  reconcile [--ticket <id> | --all] [--dry-run] [--quiet]
+                    advance index.json.status from observable filesystem state
+  session <list|attach|end>      inspect/rehydrate ~/.babysit/sessions/
+  env               print TICKET / TICKET_HOME / INDEX for eval
+EOF
+  [ "$SUB" = "__help__" ] && exit 0
+  exit 2
+}
+shift
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SLUG_BIN="$SCRIPT_DIR/bbs-slug"
+[ -x "$SLUG_BIN" ] || SLUG_BIN="$(command -v bbs-slug 2>/dev/null || echo "$HOME/.claude/bbs-slug")"
+
+# shellcheck disable=SC1090
+eval "$("$SLUG_BIN" env 2>/dev/null || true)"
+SLUG="${SLUG:-unknown}"
+BRANCH="${BRANCH:-unknown}"
+DERIVED_TICKET="${TICKET:-}"
+# Env-first identity: BABYSIT_TICKET (canonical) > BBS_TICKET (legacy alias) >
+# branch derivation. bbs-slug already applied this ladder; this line is the
+# defense-in-depth pass for callers that import bbs-ticket without a fresh
+# bbs-slug eval.
+TICKET="${BABYSIT_TICKET:-${BBS_TICKET:-$DERIVED_TICKET}}"
+PROJECT_HOME="${BABYSIT_PROJECT_HOME:-${BABYSIT_HOME:-$HOME/.babysit}/projects/$SLUG}"
+
+safe() { printf '%s' "${1:-}" | tr -cd 'a-zA-Z0-9._/:-' | head -c 256; }
+iso_now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
+
+need_ticket() {
+  [ -n "$TICKET" ] && return 0
+  echo "bbs-ticket: no ticket in scope (branch='$BRANCH'; set BBS_TICKET to override)" >&2
+  exit 2
+}
+
+ticket_home() { printf '%s/tickets/%s' "$PROJECT_HOME" "$(safe "$TICKET")"; }
+index_path()  { printf '%s/index.json' "$(ticket_home)"; }
+
+ensure_dirs() {
+  local th; th="$(ticket_home)"
+  mkdir -p "$th/handoffs" "$th/verdicts" "$th/reviews" "$th/evidence" "$th/sub-tickets" 2>/dev/null || true
+}
+
+# Lock via mkdir — atomic on POSIX. Release with rmdir via EXIT trap.
+# _LOCK_PATH is intentionally a global: the trap body is evaluated at EXIT
+# time, by which point any function-local would be unbound under `set -u`.
+_LOCK_PATH=""
+_release_lock() { [ -n "$_LOCK_PATH" ] && rmdir "$_LOCK_PATH" 2>/dev/null || true; }
+trap _release_lock EXIT
+
+acquire_lock() {
+  local th
+  th="$(ticket_home)"; mkdir -p "$th" 2>/dev/null || true
+  _LOCK_PATH="$th/.index.lock"
+  if ! bbs_lock_acquire "$_LOCK_PATH" 50; then
+    echo "bbs-ticket: failed to acquire lock after 5s — stale?" >&2
+    echo "bbs-ticket: remove $_LOCK_PATH if no writer is active" >&2
+    _LOCK_PATH=""
+    return 1
+  fi
+}
+
+# JSON helpers via python3 (stdlib only — macOS default ok).
+_py() { python3 "$@"; }
+
+# manifest.yaml writer — hand-rolled because the schema is fixed and we don't
+# want a pyyaml dependency. Schema: see docs/identity.md.
+#
+# Args:
+#   $1 = absolute path to manifest.yaml
+#   $2 = ticket id
+#   $3 = title (may be empty)
+#   $4 = repos JSON: [{"name":"…","branch":"…","canonical":"…","worktree":"…","base":"…","pushed":false}, …]
+manifest_write() {
+  local path="$1" ticket="$2" title="$3" repos_json="$4" now
+  now="$(iso_now)"
+  mkdir -p "$(dirname "$path")" 2>/dev/null || true
+  local tmp; tmp="$(mktemp "${path}.XXXXXX")" || return 1
+  _py - "$tmp" "$ticket" "$title" "$now" "$repos_json" <<'EOF'
+import json, sys
+
+tmp, ticket, title, now, repos_json = sys.argv[1:6]
+repos = json.loads(repos_json) if repos_json else []
+
+def yval(v):
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if v is None:
+        return ""
+    s = str(v)
+    # quote if contains anything yaml-significant; our values rarely do
+    if any(c in s for c in [":", "#", "'", '"', "\n"]) or s.startswith(" ") or s.endswith(" "):
+        return "'" + s.replace("'", "''") + "'"
+    return s
+
+with open(tmp, "w") as fh:
+    fh.write("version: 1\n")
+    fh.write(f"ticket: {yval(ticket)}\n")
+    fh.write(f"title: {yval(title)}\n")
+    fh.write(f"created_at: {yval(now)}\n")
+    fh.write(f"updated_at: {yval(now)}\n")
+    fh.write("repos:\n")
+    for r in repos:
+        fh.write(f"  - name: {yval(r.get('name',''))}\n")
+        fh.write(f"    branch: {yval(r.get('branch',''))}\n")
+        fh.write(f"    canonical: {yval(r.get('canonical','.'))}\n")
+        fh.write(f"    worktree: {yval(r.get('worktree','.'))}\n")
+        fh.write(f"    base: {yval(r.get('base','main'))}\n")
+        pushed = r.get('pushed', False)
+        fh.write(f"    pushed: {yval(bool(pushed))}\n")
+EOF
+  # Preserve created_at if file already exists
+  if [ -f "$path" ]; then
+    local prev_created
+    prev_created="$(awk -F': ' '$1=="created_at"{print $2; exit}' "$path" 2>/dev/null || true)"
+    if [ -n "$prev_created" ]; then
+      sed -i.bak -e "s|^created_at: .*|created_at: $prev_created|" "$tmp" && rm -f "$tmp.bak"
+    fi
+  fi
+  mv "$tmp" "$path"
+}
+
+# manifest_read — parse a fixed-schema manifest.yaml. Prints stable JSON to stdout
+# for downstream consumption. Validates version: 1 (BLOCK on mismatch via exit 2).
+# Args: $1 = path
+manifest_read() {
+  local path="$1"
+  [ -f "$path" ] || { echo "manifest_read: $path not found" >&2; return 1; }
+  _py - "$path" <<'EOF'
+import json, sys, re
+
+path = sys.argv[1]
+with open(path) as fh:
+    lines = fh.read().splitlines()
+
+top = {}
+repos = []
+cur = None
+i = 0
+while i < len(lines):
+    ln = lines[i]
+    s = ln.strip()
+    if not s or s.startswith("#"):
+        i += 1; continue
+    if ln.startswith("  - "):
+        # New repo entry
+        cur = {}
+        repos.append(cur)
+        kv = ln[4:].strip()
+        if ":" in kv:
+            k, v = kv.split(":", 1)
+            cur[k.strip()] = v.strip()
+        i += 1; continue
+    if ln.startswith("    ") and cur is not None:
+        kv = ln.strip()
+        if ":" in kv:
+            k, v = kv.split(":", 1)
+            cur[k.strip()] = v.strip()
+        i += 1; continue
+    if ":" in ln and not ln.startswith(" "):
+        k, v = ln.split(":", 1)
+        k = k.strip(); v = v.strip()
+        if k == "repos":
+            i += 1; continue
+        top[k] = v
+    i += 1
+
+ver = str(top.get("version", "")).strip()
+if ver != "1":
+    print(f"manifest version '{ver}' != 1 (BLOCK)", file=sys.stderr)
+    sys.exit(2)
+
+def coerce(v):
+    if v == "true": return True
+    if v == "false": return False
+    if v.startswith("'") and v.endswith("'"): return v[1:-1].replace("''", "'")
+    if v.startswith('"') and v.endswith('"'): return v[1:-1]
+    return v
+
+out = {
+    "version": 1,
+    "ticket": coerce(top.get("ticket", "")),
+    "title": coerce(top.get("title", "")),
+    "created_at": coerce(top.get("created_at", "")),
+    "updated_at": coerce(top.get("updated_at", "")),
+    "repos": [{k: coerce(v) for k, v in r.items()} for r in repos],
+}
+json.dump(out, sys.stdout)
+EOF
+}
+
+# manifest_path — print canonical manifest.yaml path for a ticket
+manifest_path() { printf '%s/manifest.yaml' "$(ticket_home)"; }
+
+# Build a one-entry repos JSON for single-repo / fallback mode.
+single_repo_json() {
+  local repo_name="$1" branch="$2" base="${3:-main}" worktree="${4:-.}"
+  _py - "$repo_name" "$branch" "$base" "$worktree" <<'EOF'
+import json, sys
+print(json.dumps([{
+    "name": sys.argv[1], "branch": sys.argv[2],
+    "canonical": ".", "worktree": sys.argv[4], "base": sys.argv[3], "pushed": False,
+}]))
+EOF
+}
+
+json_read() {
+  local f="$1" path="$2"
+  [ -f "$f" ] || { echo ""; return 0; }
+  _py - "$f" "$path" <<'EOF'
+import json, sys
+with open(sys.argv[1]) as fh:
+    d = json.load(fh)
+parts = sys.argv[2].split('.') if sys.argv[2] else []
+cur = d
+for p in parts:
+    if isinstance(cur, dict) and p in cur:
+        cur = cur[p]
+    else:
+        cur = None
+        break
+if cur is None:
+    sys.exit(0)
+if isinstance(cur, (dict, list)):
+    json.dump(cur, sys.stdout)
+else:
+    sys.stdout.write(str(cur))
+EOF
+}
+
+# atomic write of index.json; caller holds the lock
+json_mutate() {
+  local f="$1"; shift
+  local tmp
+  tmp="$(mktemp "${f}.XXXXXX")" || return 1
+  if [ -f "$f" ]; then cp "$f" "$tmp"; else echo '{}' > "$tmp"; fi
+  _py - "$tmp" "$@" <<'EOF'
+import json, sys
+path = sys.argv[1]
+with open(path) as fh:
+    d = json.load(fh)
+
+def touch_ts(d):
+    from datetime import datetime, timezone
+    d["updated_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+def walk(d, parts, create=True):
+    cur = d
+    for p in parts[:-1]:
+        if p not in cur or not isinstance(cur.get(p), dict):
+            if not create:
+                return None, None
+            cur[p] = {}
+        cur = cur[p]
+    return cur, parts[-1]
+
+op = sys.argv[2]
+rest = sys.argv[3:]
+
+if op == "set":
+    dotted, value = rest
+    # Only coerce explicit null/true/false sentinels — everything else stays a
+    # string. Auto-coercing numeric strings to int silently broke ticket ids
+    # like "42"; callers that need an int should pick a typed field or parse
+    # at read time.
+    if value == "null": v = None
+    elif value == "true": v = True
+    elif value == "false": v = False
+    else: v = value
+    parts = dotted.split(".")
+    parent, key = walk(d, parts)
+    parent[key] = v
+elif op == "append":
+    dotted, value = rest
+    parts = dotted.split(".")
+    parent, key = walk(d, parts)
+    lst = parent.setdefault(key, [])
+    if not isinstance(lst, list):
+        raise SystemExit(f"{dotted} is not a list")
+    if value not in lst:
+        lst.append(value)
+elif op == "append_obj":
+    dotted, obj_json = rest
+    parts = dotted.split(".")
+    parent, key = walk(d, parts)
+    lst = parent.setdefault(key, [])
+    if not isinstance(lst, list):
+        raise SystemExit(f"{dotted} is not a list")
+    obj = json.loads(obj_json)
+    # dedupe by full equality
+    if obj not in lst:
+        lst.append(obj)
+elif op == "ensure_defaults":
+    d.setdefault("id", rest[0] if rest else "")
+    d.setdefault("status", "triage")
+    d.setdefault("phase", None)
+    d.setdefault("parent", None)
+    d.setdefault("children", [])
+    d.setdefault("relations", {"blocks": [], "blocked_by": [], "duplicate_of": None, "related": []})
+    d.setdefault("siblings", [])
+    d.setdefault("labels", [])
+    d.setdefault("assignee", None)
+    d.setdefault("origin", {"type": "standalone", "parent": None, "seed": None,
+                            "plan": None, "position": None, "design_doc": None})
+    d.setdefault("pointers", {})
+    if "created_at" not in d:
+        from datetime import datetime, timezone
+        d["created_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+else:
+    raise SystemExit(f"unknown op: {op}")
+
+touch_ts(d)
+with open(path, "w") as fh:
+    json.dump(d, fh, indent=2, sort_keys=True)
+    fh.write("\n")
+EOF
+  mv "$tmp" "$f"
+}
+
+# Append one event to history.jsonl (atomic on short writes — POSIX write() < PIPE_BUF).
+history_append() {
+  local th; th="$(ticket_home)"; mkdir -p "$th" 2>/dev/null || true
+  local event="$1" actor="${2:-}" extra="${3:-}" ts
+  ts="$(iso_now)"
+  local line
+  line="$(_py - "$ts" "$TICKET" "$BRANCH" "$event" "$actor" "$extra" <<'EOF'
+import json, sys
+ts, ticket, branch, event, actor, extra = sys.argv[1:7]
+row = {"ts": ts, "ticket": ticket, "branch": branch, "event": event}
+if actor: row["actor"] = actor
+if extra:
+    try:
+        parsed = json.loads(extra)
+        # protect core fields from being overridden by caller payload
+        for k in ("ts", "ticket", "branch", "event", "actor"):
+            parsed.pop(k, None)
+        row.update(parsed)
+    except Exception:
+        row["extra"] = extra
+print(json.dumps(row))
+EOF
+  )"
+  printf '%s\n' "$line" >> "$th/history.jsonl" 2>/dev/null || true
+}
+
+# qa_lease_guard <gitdir> <cmd> — BLOCK (return 2) when the shared test
+# surface is qa-leased by a different owner than the caller's ticket. FREE,
+# own lease, or a stale lease (age > ttl: holder presumed dead — cleared with
+# a warning) pass through. See the qa-lease subcommand.
+qa_lease_guard() {
+  local gitdir="$1" cmd="$2" dir owner since ttl now age
+  dir="$gitdir/bbs-qa-lease"
+  [ -d "$dir" ] || return 0
+  owner="$(sed -n 's/^owner=//p' "$dir/owner" 2>/dev/null | head -1)"
+  if [ -n "$TICKET" ] && [ "$owner" = "$TICKET" ]; then return 0; fi
+  since="$(sed -n 's/^since_epoch=//p' "$dir/owner" 2>/dev/null | head -1)"
+  ttl="$(sed -n 's/^ttl_min=//p' "$dir/owner" 2>/dev/null | head -1)"
+  now="$(date +%s)"; age=$(( (now - ${since:-$now}) / 60 ))
+  if [ -z "$owner" ] || [ "$age" -gt "${ttl:-60}" ]; then
+    echo "$cmd: warning — cleared stale qa-lease from '${owner:-unknown}' (${age}min > ${ttl:-60}min ttl)." >&2
+    rm -rf "$dir" 2>/dev/null
+    return 0
+  fi
+  echo "STATUS: BLOCKED" >&2
+  echo "REASON: shared test surface is qa-leased by '$owner' (${age}min into a ${ttl:-60}min lease) — $cmd would change it mid-QA." >&2
+  echo "RECOMMENDATION: wait for '$owner' to run 'bbs-ticket qa-lease release', or 'bbs-ticket qa-lease release --force' if that run is dead." >&2
+  return 2
+}
+
+# _serving_write <gitdir> <set|append> [ticket...] — persist what the primary
+# checkout currently serves as a comma list in <gitdir>/bbs-serving. Callers
+# hold bbs-merge-base.lock. set = exactly these tickets (none = base only);
+# append = add to the existing list (dedup, order preserved).
+_serving_write() {
+  local gitdir="$1" mode="$2"; shift 2
+  local f="$gitdir/bbs-serving" cur=""
+  if [ "$mode" = "append" ] && [ -f "$f" ]; then cur="$(cat "$f" 2>/dev/null)"; fi
+  printf '%s\n%s\n' "$cur" "$*" | tr ' ,' '\n\n' | sed '/^$/d' \
+    | awk '!seen[$0]++' | paste -sd, - > "$f" 2>/dev/null || true
+}
+
+# _related_repo_env <role> — map a sibling role to its .babysit/.env path var.
+# Roles follow set-sibling's vocabulary: fe|be|shared (RELATED_MOBILE_REPO has
+# no convention — unmapped roles return 1 and callers report, never guess).
+_related_repo_env() {
+  case "$1" in
+    fe|frontend) echo "RELATED_FRONTEND_REPO" ;;
+    be|backend)  echo "RELATED_BACKEND_REPO" ;;
+    shared)      echo "RELATED_SHARED_REPO" ;;
+    *) return 1 ;;
+  esac
+}
+
+# _related_repo_path <role> <repo-toplevel> — resolve a sibling repo's local
+# path from <toplevel>/.babysit/.env. Empty/unset → return 1.
+_related_repo_path() {
+  local var envf="$2/.babysit/.env" val
+  var="$(_related_repo_env "$1")" || return 1
+  [ -f "$envf" ] || return 1
+  val="$(sed -n "s/^${var}=//p" "$envf" | head -1 \
+    | sed -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'\$//")"
+  [ -n "$val" ] || return 1
+  printf '%s' "$val"
+}
+
+# Top-level scalar from a fixed-schema session yaml (flat, no nesting).
+# Shared by `session list` and `board`.
+ss_field() {
+  awk -v k="$2" '
+    /^[[:space:]]*#/ { next }
+    $0 ~ "^" k ":" {
+      sub("^" k ":[[:space:]]*", "")
+      gsub(/^["'\'']|["'\'']$/, "")
+      print
+      exit
+    }
+  ' "$1" 2>/dev/null || true
+}
+
+# Read the next handoff sequence number (0-padded 3 digits).
+next_handoff_seq() {
+  local th; th="$(ticket_home)"
+  local max=0
+  for f in "$th"/handoffs/[0-9][0-9][0-9]-*.md; do
+    [ -e "$f" ] || continue
+    local base n
+    base="$(basename "$f")"
+    n="${base%%-*}"
+    n="${n#0}"; n="${n#0}"
+    [ -z "$n" ] && n=0
+    if [ "$n" -gt "$max" ]; then max="$n"; fi
+  done
+  printf '%03d' "$((max + 1))"
+}
+
+# ── path broker (bs-z5p7mvru) ─────────────────────────────────────────
+# Sole interface for the ticket filesystem layout. Skills/workflows call
+# `bbs-ticket path <kind> ...` instead of constructing $TH/x.md inline.
+# Legacy fallback knowledge lives ONLY in _legacy_paths below.
+
+# Sunset bookkeeping for legacy fallbacks. After _LEGACY_SUNSET, --read emits
+# a stderr WARNING on each fallback hit (not just opt-in telemetry). 14 days
+# before _LEGACY_HARDFAIL, --read emits an escalating BBS_PATH_HARDFAIL_IN
+# warning. After _LEGACY_HARDFAIL, the resolver refuses to consult the
+# legacy entry (treated as "nothing resolves" → exit 1).
+_LEGACY_SUNSET="${BBS_LEGACY_SUNSET:-2026-07-01}"
+_LEGACY_HARDFAIL="${BBS_LEGACY_HARDFAIL:-2026-09-29}"
+_date_minus_days() {
+  date -j -v-"$2"d -f %Y-%m-%d "$1" +%Y-%m-%d 2>/dev/null \
+    || date -d "$1 - $2 days" +%Y-%m-%d 2>/dev/null \
+    || printf '%s' "$1"
+}
+_LEGACY_HARDFAIL_WARN_FROM="$(_date_minus_days "$_LEGACY_HARDFAIL" 14)"
+
+# Validate a free-form path component (--name / --skill / --slug). Path
+# traversal exits 3 (security); other validation failures exit 2 (usage).
+# Echoes the (unchanged) value on success so callers can `X="$(_safe_... ...)"`.
+_safe_path_component() {
+  local label="$1" value="$2" kind="${_PATH_KIND:-?}"
+  if [ -z "$value" ]; then
+    echo "bbs-ticket path: $kind: --$label is empty (try: bbs-ticket path)" >&2
+    return 2
+  fi
+  case "$value" in
+    */*|*..*|/*)
+      echo "bbs-ticket path: $kind: --$label '$value' rejected (path traversal)" >&2
+      return 3 ;;
+  esac
+  local cleaned
+  cleaned="$(printf '%s' "$value" | LC_ALL=C tr -cd 'a-zA-Z0-9._-')"
+  if [ "$cleaned" != "$value" ]; then
+    echo "bbs-ticket path: $kind: --$label '$value' contains forbidden characters (allowed: a-zA-Z0-9._-)" >&2
+    return 2
+  fi
+  printf '%s' "$value"
+}
+
+_safe_seq() {
+  local value="$1" kind="${_PATH_KIND:-?}"
+  if ! [[ "$value" =~ ^[0-9]+$ ]]; then
+    echo "bbs-ticket path: $kind: --seq '$value' rejected (must be numeric)" >&2
+    return 2
+  fi
+  printf '%s' "$value"
+}
+
+# Single source of truth for legacy fallback paths. Returns one path per line.
+# Selector args are passed positionally as KIND SKILL LATEST.
+_legacy_paths() {
+  local kind="$1" skill="${2:-}" latest="${3:-0}" seq="${4:-}" slug="${5:-}"
+  local th today f
+  th="$(ticket_home)"
+  today="$(date +%Y-%m-%d)"
+  # After hard-fail: silently drop the entry (callers see exit 1, same as
+  # never-existed). The single source of truth for which legacy entries are
+  # alive lives here — to retire one, delete its case branch.
+  if [[ "$today" > "$_LEGACY_HARDFAIL" ]]; then
+    return 0
+  fi
+  case "$kind" in
+    plan)
+      printf '%s\n' "$th/plan-feature/plan.md"
+      ;;
+    verdict)
+      [ "$skill" = "autoplan" ] && printf '%s\n' "$th/autoplan/verdict.md"
+      ;;
+    handoff)
+      [ "$latest" = "1" ] || return 0
+      case "$skill" in
+        build)     printf '%s\n' "$th/build/change-brief.md" ;;
+        implement) printf '%s\n' "$th/implement/change-brief.md" ;;
+      esac
+      ;;
+    sub-ticket)
+      # Old decompose layout wrote seeds under decompose/sub-tickets/ with
+      # both zero-padded and bare prefixes depending on author convention.
+      if [ -n "$seq" ] && [ -n "$slug" ]; then
+        printf '%s\n' "$th/decompose/sub-tickets/$(printf '%03d' "$seq")-$slug.md"
+        printf '%s\n' "$th/decompose/sub-tickets/$seq-$slug.md"
+      elif [ -n "$seq" ]; then
+        for f in "$th"/decompose/sub-tickets/"$(printf '%03d' "$seq")"-*.md \
+                 "$th"/decompose/sub-tickets/"$seq"-*.md; do
+          [ -e "$f" ] && printf '%s\n' "$f"
+        done
+      elif [ -n "$slug" ]; then
+        for f in "$th"/decompose/sub-tickets/[0-9]*-"$slug".md; do
+          [ -e "$f" ] && printf '%s\n' "$f"
+        done
+      fi
+      ;;
+  esac
+}
+
+# Append one telemetry record to ~/.babysit/analytics/path-fallbacks.jsonl.
+# Best-effort; never fails the resolve.
+_path_telemetry_append() {
+  local kind="$1" event="$2" canonical="$3" legacy="$4"
+  local dir="${BABYSIT_HOME:-$HOME/.babysit}/analytics"
+  local file="$dir/path-fallbacks.jsonl"
+  local ts caller
+  ts="$(iso_now)"
+  caller="${SKILL_NAME:-${AGENT_ROLE:-${GT_ROLE:-unknown}}}"
+  mkdir -p "$dir" 2>/dev/null || return 0
+  printf '{"ts":"%s","event":"%s","kind":"%s","canonical":"%s","legacy":"%s","caller":"%s","ticket":"%s"}\n' \
+    "$ts" "$event" "$kind" "$canonical" "$legacy" "$caller" "$TICKET" \
+    >> "$file" 2>/dev/null || true
+}
+
+_print_path_help() {
+  cat >&2 <<'EOF'
+usage: bbs-ticket path <kind> [selectors] --read|--write
+       bbs-ticket list <kind> [selectors]
+
+Kinds (canonical Layout C path under <TH> = $BABYSIT_PROJECT_HOME/tickets/$TICKET):
+
+  KIND          CANONICAL PATH                          SELECTORS              LIST
+  home          <TH>/                                   —                      no
+  index         <TH>/index.json                         —                      no
+  requirement   <TH>/requirement.md                     —                      no
+  design        <TH>/design.md                          —                      no
+  plan          <TH>/plan.md                            —                      no
+  manifest      <TH>/manifest.md                        —                      no
+  handoff       <TH>/handoffs/<NNN>-<skill>-<status>.md --skill --latest --seq yes (--skill)
+  verdict       <TH>/verdicts/<skill>.md                --skill (required)     yes
+  review        <TH>/reviews/<skill>.md                 --skill (required)     yes
+  history       <TH>/history.jsonl                      —                      no
+  evidence      <TH>/evidence/<skill>/<name>            --skill (req) --name   yes (--skill)
+  sub-ticket    <TH>/sub-tickets/<NNN>-<slug>.md        --seq --slug           yes
+  checkpoint    <TH>/checkpoint.json                    —                      no
+  worktree      <manifest.yaml repos[].worktree>        —                      no (--read only)
+
+Mode:
+  --read   walk canonical → legacy fallbacks; print first hit; exit 1 if none
+  --write  print canonical (mkdir -p parent); rejected for handoff/verdict/review
+
+Examples:
+  bbs-ticket path plan --read
+  PLAN_OUT="$(bbs-ticket path plan --write)" && cp draft.md "$PLAN_OUT"
+  bbs-ticket path handoff --skill build --latest --read
+  bbs-ticket list handoff --skill build
+EOF
+}
+
+_print_path_kind_help() {
+  local kind="$1" canonical=""
+  case "$kind" in
+    home)        canonical="<TH>/" ;;
+    index)       canonical="<TH>/index.json" ;;
+    requirement) canonical="<TH>/requirement.md" ;;
+    design)      canonical="<TH>/design.md" ;;
+    plan)        canonical="<TH>/plan.md" ;;
+    manifest)    canonical="<TH>/manifest.md" ;;
+    history)     canonical="<TH>/history.jsonl" ;;
+    checkpoint)  canonical="<TH>/checkpoint.json" ;;
+    worktree)    canonical="<manifest.yaml repos[].worktree>" ;;
+  esac
+  case "$kind" in
+    home|index|requirement|design|plan|manifest|history|checkpoint)
+      cat >&2 <<EOF
+usage: bbs-ticket path $kind --read|--write
+
+Canonical: $canonical
+Selectors: (none)
+
+Examples:
+  bbs-ticket path $kind --read
+  bbs-ticket path $kind --write
+EOF
+      ;;
+    worktree)
+      cat >&2 <<'EOF'
+usage: bbs-ticket path worktree --read
+
+Prints the ticket worktree path from manifest.yaml for the current repo.
+(Matches the repo entry whose name == current repo basename; falls back to first.)
+Empty if manifest.yaml does not exist — not an error.
+Selectors: (none). --write is rejected.
+
+Examples:
+  WT="$(bbs-ticket path worktree --read)"
+EOF
+      ;;
+    handoff)
+      cat >&2 <<'EOF'
+usage: bbs-ticket path handoff [--skill S] [--latest | --seq N] --read
+
+Canonical: <TH>/handoffs/<NNN>-<skill>-<status>.md
+Selectors: --skill S, --latest, --seq N
+Note: handoff --write is rejected — use `bbs-ticket add-handoff --skill S --status X` instead.
+
+Examples:
+  bbs-ticket path handoff --skill build --latest --read
+  bbs-ticket path handoff --seq 3 --read
+EOF
+      ;;
+    verdict|review)
+      cat >&2 <<EOF
+usage: bbs-ticket path $kind --skill S --read
+
+Canonical: <TH>/${kind}s/<skill>.md
+Selectors: --skill S (required)
+Note: $kind --write is rejected — use \`bbs-ticket set-$kind --skill S\` instead.
+
+Examples:
+  bbs-ticket path $kind --skill autoplan --read
+  bbs-ticket list $kind
+EOF
+      ;;
+    evidence)
+      cat >&2 <<'EOF'
+usage: bbs-ticket path evidence --skill S [--name N] --read|--write
+
+Canonical: <TH>/evidence/<skill>/<name>
+Selectors: --skill S (required), --name N (required for --write)
+
+Examples:
+  EVD="$(bbs-ticket path evidence --skill quality --name summary.md --write)"
+  bbs-ticket path evidence --skill quality --name summary.md --read
+  bbs-ticket list evidence --skill quality
+EOF
+      ;;
+    sub-ticket)
+      cat >&2 <<'EOF'
+usage: bbs-ticket path sub-ticket --seq N --slug S --read|--write
+
+Canonical: <TH>/sub-tickets/<NNN>-<slug>.md
+Selectors: --seq N (numeric), --slug S
+
+Examples:
+  ST="$(bbs-ticket path sub-ticket --seq 1 --slug user-flow --write)"
+  bbs-ticket path sub-ticket --seq 1 --slug user-flow --read
+  bbs-ticket list sub-ticket
+EOF
+      ;;
+    *)
+      echo "bbs-ticket path: $kind: unknown kind (try: bbs-ticket path)" >&2
+      return 2
+      ;;
+  esac
+}
+
+case "$SUB" in
+  env)
+    need_ticket
+    echo "TICKET=$TICKET"
+    echo "TICKET_HOME=$(ticket_home)"
+    echo "INDEX=$(index_path)"
+    ;;
+
+  resolve)
+    # Single identity entry point — the contract documented in docs/identity.md.
+    # Resolution ladder: env → manifest.yaml cwd match → branch regex.
+    # Exit codes: 0 resolved (echo ticket id), 1 no resolution, 2 conflict (BLOCK).
+    EXPLAIN=0
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --explain) EXPLAIN=1; shift ;;
+        *) shift ;;
+      esac
+    done
+
+    explain() { [ "$EXPLAIN" = "1" ] && echo "resolve: $*" >&2 || true; }
+
+    # ─── Step 1: env ────────────────────────────────────────────────────
+    if [ -n "${BABYSIT_TICKET:-}" ] && [ -n "${BBS_TICKET:-}" ] \
+       && [ "$BABYSIT_TICKET" != "$BBS_TICKET" ]; then
+      echo "STATUS: BLOCKED" >&2
+      echo "REASON: env conflict — BABYSIT_TICKET=$BABYSIT_TICKET, BBS_TICKET=$BBS_TICKET" >&2
+      echo "ATTEMPTED: env (both set, disagree)" >&2
+      echo "RECOMMENDATION: unset one of them, e.g. \`unset BBS_TICKET\` to use the BABYSIT_TICKET value." >&2
+      exit 2
+    fi
+    if [ -n "${BABYSIT_TICKET:-}" ]; then
+      explain "matched env BABYSIT_TICKET=$BABYSIT_TICKET"
+      printf '%s\n' "$BABYSIT_TICKET"
+      exit 0
+    fi
+    if [ -n "${BBS_TICKET:-}" ]; then
+      explain "matched env BBS_TICKET=$BBS_TICKET (legacy alias)"
+      printf '%s\n' "$BBS_TICKET"
+      exit 0
+    fi
+
+    # ─── Bootstrap PROJECT_HOME for steps 2+ ────────────────────────────
+    BS_PRODUCT_ROOT=""
+    RESOLVE_HOME="$PROJECT_HOME"
+    explain "bootstrap bbs-slug SLUG=$SLUG → $RESOLVE_HOME"
+
+    # ─── Step 2: manifest.yaml cwd match ────────────────────────────────
+    TDIR="$RESOLVE_HOME/tickets"
+    if [ -d "$TDIR" ]; then
+      MATCHES="$(_py - "$TDIR" "$PWD" "$BS_PRODUCT_ROOT" <<'EOF'
+import os, sys, re
+
+tdir, pwd, product_root = sys.argv[1], sys.argv[2], sys.argv[3]
+pwd_real = os.path.realpath(pwd)
+
+def _read_manifest(path):
+    try:
+        with open(path) as fh:
+            return fh.read().splitlines()
+    except OSError:
+        return None
+
+def _ticket_id(lines):
+    for ln in lines:
+        if ln.startswith("ticket:"):
+            return ln.split(":", 1)[1].strip().strip("'").strip('"')
+    return None
+
+def _worktrees(lines):
+    out = []
+    for ln in lines:
+        s = ln.strip()
+        if s.startswith("worktree:"):
+            v = s.split(":", 1)[1].strip().strip("'").strip('"')
+            out.append(v)
+    return out
+
+matches = []
+try:
+    entries = sorted(os.listdir(tdir))
+except OSError:
+    sys.exit(0)
+
+for tid in entries:
+    mpath = os.path.join(tdir, tid, "manifest.yaml")
+    if not os.path.isfile(mpath): continue
+    lines = _read_manifest(mpath)
+    if lines is None: continue
+    mid = _ticket_id(lines) or tid
+    for w in _worktrees(lines):
+        # Resolve worktree relative to product_root (or tdir's grandparent for single mode)
+        if os.path.isabs(w):
+            wabs = w
+        elif product_root:
+            wabs = os.path.normpath(os.path.join(product_root, w))
+        else:
+            # Single-repo: worktree is "." relative to repo root; we don't know repo root
+            # from here, so skip cwd matching for "." (single-mode branch fallback handles this).
+            if w in (".", "./"): continue
+            wabs = os.path.normpath(w)
+        wreal = os.path.realpath(wabs)
+        if wreal == pwd_real or pwd_real.startswith(wreal + os.sep):
+            matches.append(mid)
+            break
+
+# Dedup preserving order
+seen = set(); uniq = []
+for m in matches:
+    if m not in seen: seen.add(m); uniq.append(m)
+print("\n".join(uniq))
+EOF
+)"
+      if [ -n "$MATCHES" ]; then
+        N="$(printf '%s\n' "$MATCHES" | wc -l | tr -d ' ')"
+        if [ "$N" = "1" ]; then
+          explain "matched manifest.yaml cwd → $MATCHES"
+          printf '%s\n' "$MATCHES"
+          exit 0
+        fi
+        echo "STATUS: BLOCKED" >&2
+        echo "REASON: multiple manifest.yaml worktrees claim cwd $PWD" >&2
+        echo "ATTEMPTED: step 2 — manifest.yaml cwd walk" >&2
+        printf 'CANDIDATES: %s\n' "$(printf '%s' "$MATCHES" | tr '\n' ' ')" >&2
+        echo "RECOMMENDATION: cd into a more specific worktree, or set BABYSIT_TICKET explicitly." >&2
+        exit 2
+      fi
+    fi
+
+    # ─── Step 3: branch fallback ────────────────────────────────────────
+    if [ -n "$DERIVED_TICKET" ]; then
+      explain "matched branch regex → $DERIVED_TICKET"
+      printf '%s\n' "$DERIVED_TICKET"
+      exit 0
+    fi
+    explain "no resolution"
+    exit 1
+    ;;
+
+  get-manifest)
+    # Read canonical manifest.yaml; print as JSON. Validates version: 1.
+    EXPLICIT_TICKET="${1:-}"
+    if [ -n "$EXPLICIT_TICKET" ]; then
+      TICKET="$EXPLICIT_TICKET"
+    fi
+    need_ticket
+    M="$(manifest_path)"
+    if [ ! -f "$M" ]; then
+      echo "get-manifest: no manifest at $M" >&2
+      exit 1
+    fi
+    manifest_read "$M"
+    echo
+    ;;
+
+  set-branch)
+    # Update repos[name=<repo>].branch in manifest.yaml.
+    # Args: <ticket> <repo> <branch>
+    STICKET="${1:-}"; SREPO="${2:-}"; SBRANCH="${3:-}"
+    [ -z "$STICKET" ] || [ -z "$SREPO" ] || [ -z "$SBRANCH" ] && {
+      echo "set-branch: usage: bbs-ticket set-branch <ticket> <repo> <branch>" >&2; exit 2; }
+    TICKET="$STICKET"
+    M="$(manifest_path)"
+    if [ ! -f "$M" ]; then
+      echo "set-branch: no manifest at $M (ticket may not exist; run 'bbs-ticket ensure' first)" >&2
+      exit 1
+    fi
+    acquire_lock || exit 1
+    # Read, mutate, write atomically.
+    CUR_JSON="$(manifest_read "$M")" || { echo "set-branch: manifest_read failed" >&2; exit 2; }
+    UPDATED_JSON="$(_py - "$CUR_JSON" "$SREPO" "$SBRANCH" <<'EOF'
+import json, sys
+data = json.loads(sys.argv[1])
+repo, branch = sys.argv[2], sys.argv[3]
+hit = False
+for r in data.get("repos", []):
+    if r.get("name") == repo:
+        r["branch"] = branch
+        hit = True
+        break
+if not hit:
+    print(f"repo '{repo}' not in manifest", file=sys.stderr)
+    sys.exit(2)
+print(json.dumps(data))
+EOF
+)" || exit 2
+    # Re-emit manifest.yaml from updated json
+    REPOS_JSON="$(_py - "$UPDATED_JSON" <<'EOF'
+import json, sys
+print(json.dumps(json.loads(sys.argv[1]).get("repos", [])))
+EOF
+)"
+    TITLE_VAL="$(_py - "$UPDATED_JSON" <<'EOF'
+import json, sys
+print(json.loads(sys.argv[1]).get("title", ""))
+EOF
+)"
+    manifest_write "$M" "$TICKET" "$TITLE_VAL" "$REPOS_JSON" || { echo "set-branch: manifest_write failed" >&2; exit 2; }
+    _release_lock; _LOCK_PATH=""
+    ;;
+
+  init)
+    need_ticket
+    PARENT="" OTYPE="" SEED="" PPLAN="" DDOC="" POS="" REPO="" WORKTREE=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --parent)       PARENT="$2"; shift 2 ;;
+        --origin-type)  OTYPE="$2"; shift 2 ;;
+        --seed)         SEED="$2"; shift 2 ;;
+        --plan)         PPLAN="$2"; shift 2 ;;
+        --design-doc)   DDOC="$2"; shift 2 ;;
+        --position)     POS="$2"; shift 2 ;;
+        --repo)         REPO="$2"; shift 2 ;;
+        --worktree)     WORKTREE="$2"; shift 2 ;;
+        *) shift ;;
+      esac
+    done
+
+    ensure_dirs
+    acquire_lock || exit 1
+    F="$(index_path)"
+    FRESH=0
+    [ ! -f "$F" ] && FRESH=1
+    json_mutate "$F" ensure_defaults "$TICKET"
+    json_mutate "$F" set id "$TICKET"
+    json_mutate "$F" set pointers.branch "$BRANCH"
+    [ -n "$PARENT" ]  && json_mutate "$F" set parent "$PARENT"
+    [ -n "$OTYPE" ]   && json_mutate "$F" set origin.type "$OTYPE"
+    [ -n "$PARENT" ]  && json_mutate "$F" set origin.parent "$PARENT"
+    [ -n "$SEED" ]    && json_mutate "$F" set origin.seed "$SEED"
+    [ -n "$PPLAN" ]   && json_mutate "$F" set origin.plan "$PPLAN"
+    [ -n "$DDOC" ]    && json_mutate "$F" set origin.design_doc "$DDOC"
+    [ -n "$POS" ]     && json_mutate "$F" set origin.position "$POS"
+    [ -n "$REPO" ]    && json_mutate "$F" set pointers.repo "$REPO"
+    [ -n "$WORKTREE" ] && json_mutate "$F" set pointers.worktree "$WORKTREE"
+    [ "$FRESH" = 1 ] && history_append "ticket_initialized" "${AGENT_ROLE:-${GT_ROLE:-developer}}" ""
+
+    # Seed manifest.yaml on fresh init. Sub-tickets pre-seeded by plan-draft
+    # pass --repo (and possibly --worktree) — use those for a single-entry
+    # manifest. Standalone fresh init falls back to single_repo_json with SLUG.
+    if [ "$FRESH" = 1 ]; then
+      M="$(manifest_path)"
+      if [ ! -f "$M" ]; then
+        if [ -n "$REPO" ]; then
+          INIT_REPOS_JSON="$(_py - "$REPO" "$BRANCH" "${WORKTREE:-.}" <<'EOF'
+import json, sys
+name, branch, worktree = sys.argv[1:4]
+print(json.dumps([{
+    "name": name, "branch": branch,
+    "canonical": ".", "worktree": worktree,
+    "base": "main", "pushed": False,
+}]))
+EOF
+)"
+        else
+          INIT_REPOS_JSON="$(single_repo_json "${SLUG:-repo}" "$BRANCH" "main")"
+        fi
+        manifest_write "$M" "$TICKET" "" "$INIT_REPOS_JSON" || \
+          echo "init: warning — manifest.yaml seed failed (continuing)" >&2
+      fi
+    fi
+
+    printf '%s\n' "$F"
+    ;;
+
+  get)
+    need_ticket
+    PATH_ARG="${1:-}"
+    [ -z "$PATH_ARG" ] && { echo "get: field path required" >&2; exit 2; }
+    json_read "$(index_path)" "$PATH_ARG"
+    echo
+    ;;
+
+  set-status)
+    need_ticket
+    STATUS="${1:-}"
+    case "$STATUS" in
+      triage|backlog|planned|decomposed|in_progress|in_review|blocked|done|cancelled|duplicate) ;;
+      *) echo "set-status: invalid status '$STATUS'" >&2
+         echo "valid: triage backlog planned decomposed in_progress in_review blocked done cancelled duplicate" >&2
+         exit 2 ;;
+    esac
+    acquire_lock || exit 1
+    F="$(index_path)"; [ -f "$F" ] || json_mutate "$F" ensure_defaults "$TICKET"
+    OLD="$(json_read "$F" status)"
+    json_mutate "$F" set status "$STATUS"
+    history_append "status_changed" "${AGENT_ROLE:-${GT_ROLE:-developer}}" "$(printf '{"from":"%s","to":"%s"}' "$OLD" "$STATUS")"
+    ;;
+
+  set-phase)
+    need_ticket
+    PHASE="${1:-}"
+    [ -z "$PHASE" ] && { echo "set-phase: skill name required" >&2; exit 2; }
+    acquire_lock || exit 1
+    F="$(index_path)"; [ -f "$F" ] || json_mutate "$F" ensure_defaults "$TICKET"
+    json_mutate "$F" set phase "$PHASE"
+    history_append "phase_changed" "${AGENT_ROLE:-${GT_ROLE:-developer}}" "$(printf '{"phase":"%s"}' "$PHASE")"
+    ;;
+
+  set-parent)
+    need_ticket
+    P="${1:-}"
+    [ -z "$P" ] && { echo "set-parent: parent ticket id required" >&2; exit 2; }
+    acquire_lock || exit 1
+    F="$(index_path)"; [ -f "$F" ] || json_mutate "$F" ensure_defaults "$TICKET"
+    json_mutate "$F" set parent "$P"
+    json_mutate "$F" set origin.parent "$P"
+    history_append "parent_set" "${AGENT_ROLE:-${GT_ROLE:-developer}}" "$(printf '{"parent":"%s"}' "$P")"
+    ;;
+
+  add-child)
+    need_ticket
+    C="${1:-}"
+    [ -z "$C" ] && { echo "add-child: child ticket id required" >&2; exit 2; }
+    acquire_lock || exit 1
+    F="$(index_path)"; [ -f "$F" ] || json_mutate "$F" ensure_defaults "$TICKET"
+    json_mutate "$F" append children "$C"
+    history_append "child_added" "${AGENT_ROLE:-${GT_ROLE:-developer}}" "$(printf '{"child":"%s"}' "$C")"
+    ;;
+
+  add-relation)
+    need_ticket
+    TYPE="${1:-}"; TARGET="${2:-}"
+    case "$TYPE" in
+      blocks|blocked_by|duplicate_of|related) ;;
+      *) echo "add-relation: type must be blocks|blocked_by|duplicate_of|related" >&2; exit 2 ;;
+    esac
+    [ -z "$TARGET" ] && { echo "add-relation: target ticket id required" >&2; exit 2; }
+    acquire_lock || exit 1
+    F="$(index_path)"; [ -f "$F" ] || json_mutate "$F" ensure_defaults "$TICKET"
+    if [ "$TYPE" = "duplicate_of" ]; then
+      json_mutate "$F" set "relations.duplicate_of" "$TARGET"
+    else
+      json_mutate "$F" append "relations.$TYPE" "$TARGET"
+    fi
+    history_append "relation_added" "${AGENT_ROLE:-${GT_ROLE:-developer}}" "$(printf '{"type":"%s","target":"%s"}' "$TYPE" "$TARGET")"
+    ;;
+
+  set-sibling)
+    need_ticket
+    ROLE="" REPO="" STICKET=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --role)   ROLE="$2"; shift 2 ;;
+        --repo)   REPO="$2"; shift 2 ;;
+        --ticket) STICKET="$2"; shift 2 ;;
+        *) shift ;;
+      esac
+    done
+    [ -z "$ROLE" ] || [ -z "$REPO" ] || [ -z "$STICKET" ] && {
+      echo "set-sibling: --role, --repo, --ticket required" >&2; exit 2; }
+    acquire_lock || exit 1
+    F="$(index_path)"; [ -f "$F" ] || json_mutate "$F" ensure_defaults "$TICKET"
+    OBJ="$(printf '{"role":"%s","repo":"%s","ticket":"%s"}' "$ROLE" "$REPO" "$STICKET")"
+    json_mutate "$F" append_obj siblings "$OBJ"
+    history_append "sibling_added" "${AGENT_ROLE:-${GT_ROLE:-developer}}" "$OBJ"
+    ;;
+
+  add-label)
+    need_ticket
+    L="${1:-}"; [ -z "$L" ] && { echo "add-label: label required" >&2; exit 2; }
+    acquire_lock || exit 1
+    F="$(index_path)"; [ -f "$F" ] || json_mutate "$F" ensure_defaults "$TICKET"
+    json_mutate "$F" append labels "$L"
+    ;;
+
+  set-pointer)
+    need_ticket
+    K="${1:-}"; V="${2:-}"
+    [ -z "$K" ] && { echo "set-pointer: key required" >&2; exit 2; }
+    acquire_lock || exit 1
+    F="$(index_path)"; [ -f "$F" ] || json_mutate "$F" ensure_defaults "$TICKET"
+    json_mutate "$F" set "pointers.$K" "$V"
+    ;;
+
+  get-pointer)
+    need_ticket
+    K="${1:-}"
+    [ -z "$K" ] && { echo "get-pointer: key required" >&2; exit 2; }
+    json_read "$(index_path)" "pointers.$K"
+    echo
+    ;;
+
+  ensure-size)
+    # Resolve the ticket_size pointer (XS|S|M|L). Return it if set; otherwise
+    # estimate from the PR diff using the rubric documented at
+    # .claude/skills/references/ticket-size-rubric.md, persist via
+    # set-pointer, and print the resolved size. When the thresholds change,
+    # update that rubric and this case together.
+    need_ticket
+    EXISTING="$(json_read "$(index_path)" pointers.ticket_size)"
+    if [ -n "$EXISTING" ]; then
+      echo "$EXISTING"
+      exit 0
+    fi
+    BASE="$(git merge-base HEAD origin/main 2>/dev/null \
+            || git merge-base HEAD main 2>/dev/null \
+            || echo HEAD~1)"
+    FILES=$(git diff --name-only "$BASE"...HEAD 2>/dev/null | wc -l | tr -d ' ')
+    LOC=$(git diff --shortstat "$BASE"...HEAD 2>/dev/null \
+          | awk '{for(i=1;i<=NF;i++) if ($i ~ /insertion|deletion/) s+=$(i-1)} END {print s+0}')
+    MODULES=$(git diff --name-only "$BASE"...HEAD 2>/dev/null \
+              | awk -F/ 'NF>1{print $1}' | sort -u | wc -l | tr -d ' ')
+    MIGRATIONS=$(git diff --name-only "$BASE"...HEAD 2>/dev/null \
+                 | grep -Ec '(^|/)(migrations?|alembic)/|(^|/)schema\.|\.sql$' || true)
+    DEPS=$(git diff --name-only "$BASE"...HEAD 2>/dev/null \
+           | grep -Ec '(^|/)(package\.json|package-lock|requirements\.txt|go\.(mod|sum)|Gemfile|pyproject\.toml|Cargo\.(toml|lock))$' || true)
+    if   [ "$FILES" -le 1 ]  && [ "$LOC" -le 20 ]  && [ "$MODULES" -le 1 ] \
+      && [ "$MIGRATIONS" -eq 0 ] && [ "$DEPS" -eq 0 ]; then
+      SIZE=XS
+    elif [ "$FILES" -le 3 ]  && [ "$LOC" -le 50 ]  && [ "$MODULES" -le 1 ] \
+      && [ "$MIGRATIONS" -eq 0 ] && [ "$DEPS" -eq 0 ]; then
+      SIZE=S
+    elif [ "$FILES" -le 10 ] && [ "$LOC" -le 300 ] && [ "$MODULES" -le 3 ] \
+      && [ "$DEPS" -le 1 ]; then
+      SIZE=M
+    else
+      SIZE=L
+    fi
+    echo "estimated ticket_size=$SIZE (files=$FILES loc=$LOC modules=$MODULES migrations=$MIGRATIONS deps=$DEPS)" >&2
+    acquire_lock || exit 1
+    F="$(index_path)"; [ -f "$F" ] || json_mutate "$F" ensure_defaults "$TICKET"
+    json_mutate "$F" set "pointers.ticket_size" "$SIZE"
+    echo "$SIZE"
+    ;;
+
+  add-handoff)
+    need_ticket
+    SKILL="" STATUS="" BODY="" BODYFILE=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --skill)     SKILL="$2"; shift 2 ;;
+        --status)    STATUS="$2"; shift 2 ;;
+        --body)      BODY="$2"; shift 2 ;;
+        --body-file) BODYFILE="$2"; shift 2 ;;
+        *) shift ;;
+      esac
+    done
+    [ -z "$SKILL" ] || [ -z "$STATUS" ] && {
+      echo "add-handoff: --skill and --status required" >&2; exit 2; }
+    _PATH_KIND="handoff"
+    SKILL="$(_safe_path_component skill "$SKILL")" || exit $?
+    ensure_dirs
+    acquire_lock || exit 1
+    TH="$(ticket_home)"
+    SEQ="$(next_handoff_seq)"
+    STATUS_SLUG="$(echo "$STATUS" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9_-')"
+    [ -z "$STATUS_SLUG" ] && {
+      echo "add-handoff: --status '$STATUS' has no a-z0-9_- characters" >&2; exit 2; }
+    FN="$SEQ-$SKILL-$STATUS_SLUG.md"
+    HP="$TH/handoffs/$FN"
+    if [ -n "$BODYFILE" ] && [ -f "$BODYFILE" ]; then
+      cp "$BODYFILE" "$HP"
+    else
+      printf '%s\n' "${BODY:-<no body>}" > "$HP"
+    fi
+    # Symlinks are unreliable on some filesystems; use a plain file holding the
+    # latest filename. Readers do: cat handoffs/LATEST, then read that file.
+    printf '%s\n' "$FN" > "$TH/handoffs/LATEST"
+    history_append "handoff" "$SKILL" "$(printf '{"status":"%s","file":"%s"}' "$STATUS" "$FN")"
+    printf '%s\n' "$HP"
+    ;;
+
+  latest-handoff)
+    need_ticket
+    FILTER_SKILL=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --skill) FILTER_SKILL="$2"; shift 2 ;;
+        *) shift ;;
+      esac
+    done
+    TH="$(ticket_home)"
+    if [ -n "$FILTER_SKILL" ]; then
+      # Highest-NNN file matching <NNN>-<skill>-*.md
+      LAST=""
+      for f in "$TH"/handoffs/[0-9][0-9][0-9]-"$FILTER_SKILL"-*.md; do
+        [ -e "$f" ] && LAST="$f"
+      done
+      [ -n "$LAST" ] && printf '%s\n' "$LAST"
+    else
+      L="$TH/handoffs/LATEST"
+      if [ -f "$L" ]; then
+        _LATEST_NAME="$(cat "$L")"
+        # LATEST is plain text on disk — validate before using it as a path
+        # component so a poisoned LATEST cannot escape the handoffs dir.
+        case "$_LATEST_NAME" in
+          ""|*/*|*..*|.*)
+            echo "bbs-ticket list handoff: LATEST contains invalid name '$_LATEST_NAME'" >&2
+            exit 3 ;;
+          *)
+            printf '%s/handoffs/%s\n' "$TH" "$_LATEST_NAME" ;;
+        esac
+      fi
+    fi
+    ;;
+
+  set-verdict)
+    need_ticket
+    SKILL="" BODY="" BODYFILE=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --skill)     SKILL="$2"; shift 2 ;;
+        --body)      BODY="$2"; shift 2 ;;
+        --body-file) BODYFILE="$2"; shift 2 ;;
+        # Unknown args must fail loud: silently shifting them let callers run
+        # `--verdict PASS --note ...` and persist a `<no verdict>` body that
+        # verdict-status reads as none — a hollow verdict downstream gates
+        # then re-ask about, hiding the real bug.
+        *) echo "set-verdict: unknown arg '$1' (usage: set-verdict --skill S [--body MD | --body-file FILE])" >&2; exit 2 ;;
+      esac
+    done
+    [ -z "$SKILL" ] && { echo "set-verdict: --skill required" >&2; exit 2; }
+    _PATH_KIND="verdict"
+    SKILL="$(_safe_path_component skill "$SKILL")" || exit $?
+    ensure_dirs
+    TH="$(ticket_home)"
+    VP="$TH/verdicts/$SKILL.md"
+    if [ -n "$BODYFILE" ]; then
+      [ -f "$BODYFILE" ] || { echo "set-verdict: --body-file '$BODYFILE' not found" >&2; exit 2; }
+      cp "$BODYFILE" "$VP"
+    else
+      printf '%s\n' "${BODY:-<no verdict>}" > "$VP"
+    fi
+    history_append "verdict" "$SKILL" ""
+    printf '%s\n' "$VP"
+    ;;
+
+  # verdict-status — emit one of {none|DONE|DONE_WITH_CONCERNS|BLOCKED|NEEDS_CONTEXT}
+  # for the ticket's latest verdict from <skill>. Replaces lexical `grep -q
+  # '^STATUS: DONE'` in autopilot probes; callers now branch on a small fixed
+  # alphabet instead of parsing prose.
+  verdict-status)
+    need_ticket
+    SKILL=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --skill) SKILL="$2"; shift 2 ;;
+        *) shift ;;
+      esac
+    done
+    [ -z "$SKILL" ] && { echo "verdict-status: --skill required" >&2; exit 2; }
+    _PATH_KIND="verdict"
+    SKILL="$(_safe_path_component skill "$SKILL")" || exit $?
+    TH="$(ticket_home)"
+    VP="$TH/verdicts/$SKILL.md"
+    if [ ! -f "$VP" ]; then
+      echo "none"
+      exit 0
+    fi
+    # First STATUS: line wins. Upstream verdict files are append-once-overwrite,
+    # so a later duplicate would be a bug; still, taking the first is stable.
+    LINE="$(grep -m1 -E '^STATUS:[[:space:]]*(DONE|DONE_WITH_CONCERNS|BLOCKED|NEEDS_CONTEXT)\b' "$VP" 2>/dev/null || true)"
+    if [ -z "$LINE" ]; then
+      echo "none"
+      exit 0
+    fi
+    # Extract the token. Print exactly what the spec promises.
+    printf '%s\n' "$LINE" | sed -E 's/^STATUS:[[:space:]]*([A-Z_]+).*/\1/'
+    ;;
+
+  set-review)
+    need_ticket
+    SKILL="" BODY="" BODYFILE=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --skill)     SKILL="$2"; shift 2 ;;
+        --body)      BODY="$2"; shift 2 ;;
+        --body-file) BODYFILE="$2"; shift 2 ;;
+        *) echo "set-review: unknown arg '$1' (usage: set-review --skill S [--body MD | --body-file FILE])" >&2; exit 2 ;;
+      esac
+    done
+    [ -z "$SKILL" ] && { echo "set-review: --skill required" >&2; exit 2; }
+    _PATH_KIND="review"
+    SKILL="$(_safe_path_component skill "$SKILL")" || exit $?
+    ensure_dirs
+    TH="$(ticket_home)"
+    RP="$TH/reviews/$SKILL.md"
+    if [ -n "$BODYFILE" ]; then
+      [ -f "$BODYFILE" ] || { echo "set-review: --body-file '$BODYFILE' not found" >&2; exit 2; }
+      cp "$BODYFILE" "$RP"
+    else
+      printf '%s\n' "${BODY:-<no review>}" > "$RP"
+    fi
+    history_append "review" "$SKILL" ""
+    printf '%s\n' "$RP"
+    ;;
+
+  # set-evidence — persist a typed, structured evidence artifact (mid-tier gate).
+  # Three kinds, each validated on write so a malformed blob never lands silently
+  # (producer can retry-once-then-escalate on exit 2). Canonical path:
+  # <TH>/evidence/<kind>/result.json. Schemas: references/handoff-contracts.md.
+  set-evidence)
+    need_ticket
+    KIND="" JSON="" JSONFILE=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --kind)      KIND="$2"; shift 2 ;;
+        --json)      JSON="$2"; shift 2 ;;
+        --json-file) JSONFILE="$2"; shift 2 ;;
+        *) shift ;;
+      esac
+    done
+    case "$KIND" in
+      verification|risk-gate|adversarial) ;;
+      *) echo "set-evidence: --kind must be verification|risk-gate|adversarial" >&2; exit 2 ;;
+    esac
+    if [ -n "$JSONFILE" ] && [ -f "$JSONFILE" ]; then JSON="$(cat "$JSONFILE")"; fi
+    [ -n "$JSON" ] || { echo "set-evidence: --json or --json-file required" >&2; exit 2; }
+    _py - "$KIND" "$JSON" <<'EOF' || exit 2
+import sys, json
+kind = sys.argv[1]
+try:
+    d = json.loads(sys.argv[2])
+except Exception as e:
+    sys.stderr.write("set-evidence: not valid JSON: %s\n" % e); sys.exit(2)
+if not isinstance(d, dict):
+    sys.stderr.write("set-evidence: top-level JSON must be an object\n"); sys.exit(2)
+req = {"verification": ["result"], "risk-gate": ["high_risk"],
+       "adversarial": ["disproven", "unverified"]}[kind]
+missing = [k for k in req if k not in d]
+if missing:
+    sys.stderr.write("set-evidence: %s missing field(s): %s\n" % (kind, ", ".join(missing))); sys.exit(2)
+if kind == "verification" and str(d["result"]).upper() not in ("PASS", "FAIL"):
+    sys.stderr.write("set-evidence: verification.result must be PASS or FAIL\n"); sys.exit(2)
+EOF
+    ensure_dirs
+    TH="$(ticket_home)"
+    mkdir -p "$TH/evidence/$KIND" 2>/dev/null || true   # $KIND is whitelisted above
+    EP="$TH/evidence/$KIND/result.json"
+    printf '%s\n' "$JSON" > "$EP"
+    history_append "evidence" "$KIND" ""
+    printf '%s\n' "$EP"
+    ;;
+
+  # evidence-status — print {none|valid|malformed} for a typed evidence artifact,
+  # by the same rules set-evidence enforces. The hook-checkable read surface
+  # (mirrors verdict-status). Score-free: presence + structure, never a number.
+  evidence-status)
+    need_ticket
+    KIND=""
+    while [ $# -gt 0 ]; do
+      case "$1" in --kind) KIND="$2"; shift 2 ;; *) shift ;; esac
+    done
+    case "$KIND" in
+      verification|risk-gate|adversarial) ;;
+      *) echo "evidence-status: --kind must be verification|risk-gate|adversarial" >&2; exit 2 ;;
+    esac
+    TH="$(ticket_home)"
+    EP="$TH/evidence/$KIND/result.json"
+    [ -f "$EP" ] || { echo none; exit 0; }
+    if _py - "$KIND" "$EP" <<'EOF'
+import sys, json
+kind, path = sys.argv[1], sys.argv[2]
+try:
+    d = json.load(open(path)); assert isinstance(d, dict)
+except Exception:
+    sys.exit(1)
+req = {"verification": ["result"], "risk-gate": ["high_risk"],
+       "adversarial": ["disproven", "unverified"]}[kind]
+sys.exit(0 if all(k in d for k in req) else 1)
+EOF
+    then echo valid; else echo malformed; fi
+    ;;
+
+  # qa-evidence — audit the persisted qa verdict against the coverage rubric it
+  # claims. A PASS/FIXED must obey qa's own gate: freshness=A and no C/D
+  # dimension, plus an EVIDENCE line that names a real end-to-end run (not code
+  # reads). A non-PASS status must name a blocker. Read surface for the
+  # qa-evidence-audit hook and pre-tool-gate. Never scores; classifies only.
+  #   none          no qa verdict on the ticket
+  #   ok            PASS with rubric+evidence intact, or an honest FAIL/blocked
+  #   contradiction:<dim>=<grade>  claims PASS but its own rubric disproves it
+  #   thin:<reason> claims PASS but evidence doesn't show an e2e run
+  #   unexplained   not a clean PASS and names no blocker
+  qa-evidence)
+    need_ticket
+    TH="$(ticket_home)"
+    VP="$TH/verdicts/qa.md"
+    [ -f "$VP" ] || { echo none; exit 0; }
+    S="$(grep -m1 -E '^STATUS:'  "$VP" 2>/dev/null | sed -E 's/^STATUS:[[:space:]]*([A-Z_]+).*/\1/')"
+    V="$(grep -m1 -E '^VERDICT:' "$VP" 2>/dev/null | sed -E 's/^VERDICT:[[:space:]]*([A-Z_]+).*/\1/')"
+    RUBRIC="$(grep -m1 -E '^RUBRIC:'   "$VP" 2>/dev/null || true)"
+    EVID="$(grep -m1 -E '^EVIDENCE:'   "$VP" 2>/dev/null | sed -E 's/^EVIDENCE:[[:space:]]*//')"
+    SUMM="$(grep -m1 -E '^SUMMARY:'    "$VP" 2>/dev/null | sed -E 's/^SUMMARY:[[:space:]]*//')"
+    # A PASS/FIXED claim must obey the coverage rubric and name a real e2e run.
+    _qa_pass_check() {
+      local fresh baddim
+      # freshness must be A — anything less means the e2e wasn't run on the
+      # final code state (qa Coverage rubric § Evidence freshness).
+      fresh="$(printf '%s' "$RUBRIC" | grep -oE 'freshness=[A-D]' | head -1 | cut -d= -f2)"
+      if [ -n "$fresh" ] && [ "$fresh" != A ]; then echo "contradiction:freshness=$fresh"; return; fi
+      # any dimension graded C or D forbids PASS (qa: "any applicable dimension
+      # at C or D forces VERDICT: FAIL").
+      baddim="$(printf '%s' "$RUBRIC" | grep -oE '[a-z_]+=[CD]\b' | head -1)"
+      if [ -n "$baddim" ]; then echo "contradiction:$baddim"; return; fi
+      # evidence must name a real run, not code reading.
+      if [ -z "$EVID" ] || printf '%s' "$EVID" | grep -qiE '^(none|n/?a|-|tbd)$'; then echo "thin:no-evidence"; return; fi
+      if ! printf '%s' "$EVID" | grep -qiE 'e2e|browser|agent-browser|journey|click|navigat|snapshot|screenshot|\.png|curl|api|cli|request'; then echo "thin:no-e2e"; return; fi
+      echo ok
+    }
+    # Key on STATUS — that's what the push/PR gate treats as ready. A
+    # DONE_WITH_CONCERNS is gate-ready, so it must still explain itself.
+    case "$S" in
+      BLOCKED|NEEDS_CONTEXT) echo ok ;;   # not gate-ready; verdict-status owns it
+      DONE|DONE_WITH_CONCERNS)
+        case "$V" in
+          PASS|FIXED) _qa_pass_check ;;
+          *) if [ -n "$SUMM$EVID" ]; then echo ok; else echo unexplained; fi ;;
+        esac
+        ;;
+      *)  # no/garbled STATUS — fall back to the verdict token
+        case "$V" in
+          PASS|FIXED) _qa_pass_check ;;
+          *) echo ok ;;
+        esac
+        ;;
+    esac
+    ;;
+
+  append-history)
+    need_ticket
+    EVENT="" ACTOR="" EXTRA=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --event)      EVENT="$2"; shift 2 ;;
+        --actor)      ACTOR="$2"; shift 2 ;;
+        --extra-json) EXTRA="$2"; shift 2 ;;
+        *) shift ;;
+      esac
+    done
+    [ -z "$EVENT" ] && { echo "append-history: --event required" >&2; exit 2; }
+    ensure_dirs
+    history_append "$EVENT" "$ACTOR" "$EXTRA"
+    ;;
+
+  # ensure — idempotent ticket bootstrap. If the branch already encodes a
+  # ticket, no-op. Otherwise generate an id, cut a feat/<id>_<slug> branch,
+  # init the ticket, and optionally seed requirement.md from --from-input.
+  #
+  # Prints KEY=VALUE lines so callers can `eval "$(bbs-ticket ensure ...)"`:
+  #   TICKET=<id>
+  #   BRANCH=<branch>
+  #   TICKET_HOME=<path>
+  #   CREATED=0|1           # 1 if this call cut a new branch
+  #   REQUIREMENT=<path>    # only when --from-input given
+  ensure)
+    FROM_INPUT="" SLUG_HINT="" TYPE="feat" PROMPT_REASON="" FORCE_CUT=0 FORCE_NO_BRANCH=0 ENSURE_WORKTREE="" MODE_FLAG=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --from-input)
+          # Foot-gun guard: callers regularly pass `--from-input /tmp/foo.txt`
+          # meaning "use this file's contents". The literal-text path silently
+          # slugs the branch as `_tmp-foo-txt` and seeds requirement.md with
+          # the path string. Detect short single-line values that resolve to
+          # an existing file and refuse with a hint to --from-input-file.
+          if [ -f "$2" ] && [ "$(printf '%s' "$2" | wc -l | tr -d ' ')" = "0" ] && [ "${#2}" -lt 256 ]; then
+            echo "ensure: --from-input got '$2' which is an existing file path." >&2
+            echo "  Did you mean: --from-input-file '$2'" >&2
+            echo "  (--from-input takes literal text; use --from-input-file for paths)" >&2
+            exit 2
+          fi
+          FROM_INPUT="$2"; shift 2 ;;
+        --from-input-file) FROM_INPUT="$(cat "$2" 2>/dev/null || true)"; shift 2 ;;
+        --slug-hint)     SLUG_HINT="$2"; shift 2 ;;
+        --type)          TYPE="$2"; shift 2 ;;
+        --reason)        PROMPT_REASON="$2"; shift 2 ;;
+        --cut-branch)    FORCE_CUT=1; shift ;;
+        --no-branch)     FORCE_NO_BRANCH=1; shift ;;
+        --mode)          MODE_FLAG="$2"; shift 2 ;;
+        *) shift ;;
+      esac
+    done
+
+    # Validate type
+    case "$TYPE" in
+      feat|fix|chore|bug|refactor) ;;
+      *) echo "ensure: invalid --type '$TYPE' (feat|fix|chore|bug|refactor)" >&2; exit 2 ;;
+    esac
+    case "$MODE_FLAG" in
+      ""|trunk|branch|worktree) ;;
+      *) echo "ensure: invalid --mode '$MODE_FLAG' (trunk|branch|worktree)" >&2; exit 2 ;;
+    esac
+
+    # Fast-path: branch already encodes a ticket
+    if [ -n "$TICKET" ]; then
+      TH="$(ticket_home)"
+      # Still seed requirement.md if --from-input provided AND file doesn't exist
+      REQ_PATH="$TH/requirement.md"
+      if [ -n "$FROM_INPUT" ] && [ ! -f "$REQ_PATH" ]; then
+        ensure_dirs
+        printf '%s\n' "$FROM_INPUT" > "$REQ_PATH"
+        acquire_lock || exit 1
+        json_mutate "$(index_path)" set pointers.requirement requirement.md
+        _release_lock; _LOCK_PATH=""
+        history_append "requirement_seeded" "${AGENT_ROLE:-${GT_ROLE:-developer}}" ""
+        echo "TICKET=$TICKET"
+        echo "BRANCH=$BRANCH"
+        echo "TICKET_HOME=$TH"
+        echo "CREATED=0"
+        echo "REQUIREMENT=$REQ_PATH"
+      else
+        echo "TICKET=$TICKET"
+        echo "BRANCH=$BRANCH"
+        echo "TICKET_HOME=$TH"
+        echo "CREATED=0"
+        [ -f "$REQ_PATH" ] && echo "REQUIREMENT=$REQ_PATH"
+      fi
+      exit 0
+    fi
+
+    # Slow-path: need to create a ticket branch
+    if ! command -v git >/dev/null 2>&1; then
+      echo "ensure: git not found — cannot create ticket branch" >&2
+      exit 2
+    fi
+    if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+      echo "ensure: not in a git work tree — cannot create ticket branch" >&2
+      exit 2
+    fi
+    # Git-flow mode — where new tickets get their branch:
+    #   trunk     no cut; tickets ride the current branch (e.g. develop),
+    #             identity carried by BABYSIT_TICKET env + manifest.
+    #   branch    cut in place from a clean base checkout; divert to a
+    #             worktree from anywhere unsafe (the safe-cut gate).
+    #   worktree  always divert — the primary checkout is pinned to base as
+    #             the shared integration/test surface (dev server lives
+    #             there); every ticket gets its own worktree + branch, and
+    #             `merge-base` lands it on the primary for QA.
+    # Resolution: --mode flag > git-flow.yaml `mode:` > legacy
+    # `ticket_branch:` (optional→trunk, required→branch) > default branch.
+    GF_MODE="$MODE_FLAG"
+    TB_TOP="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+    if [ -z "$GF_MODE" ] && [ -n "$TB_TOP" ] && [ -f "$TB_TOP/.babysit/git-flow.yaml" ]; then
+      read_gf_key() {
+        awk -v key="$1" '
+          /^[[:space:]]*#/ { next }
+          $0 ~ "^" key ":[[:space:]]*" {
+            sub("^" key ":[[:space:]]*", "")
+            sub(/[[:space:]]+#.*$/, "")
+            gsub(/^["'\'']|["'\'']$/, "")
+            print
+            exit
+          }
+        ' "$TB_TOP/.babysit/git-flow.yaml" 2>/dev/null || true
+      }
+      GF_MODE="$(read_gf_key mode)"
+      if [ -z "$GF_MODE" ]; then
+        case "$(read_gf_key ticket_branch)" in
+          optional) GF_MODE="trunk" ;;
+          required) GF_MODE="branch" ;;
+        esac
+      fi
+    fi
+    [ -z "$GF_MODE" ] && GF_MODE="branch"
+    case "$GF_MODE" in
+      trunk|branch|worktree) ;;
+      *)
+        echo "ensure: invalid mode '$GF_MODE' in .babysit/git-flow.yaml (trunk|branch|worktree)" >&2
+        exit 2 ;;
+    esac
+    # One-shot overrides: --no-branch forces the no-cut path for this call;
+    # --cut-branch forces a cut even under trunk mode (worktree mode already
+    # cuts — into a worktree — so it stays as-is).
+    [ "$FORCE_NO_BRANCH" = "1" ] && GF_MODE="trunk"
+    [ "$FORCE_CUT" = "1" ] && [ "$FORCE_NO_BRANCH" != "1" ] && [ "$GF_MODE" = "trunk" ] && GF_MODE="branch"
+
+    # Derive ticket id: bs-<8-hex> from /dev/urandom for collision resistance
+    NEW_TICKET=""
+    if [ -r /dev/urandom ]; then
+      NEW_TICKET="bs-$(LC_ALL=C tr -dc 'a-z0-9' </dev/urandom 2>/dev/null | head -c 8)"
+    fi
+    [ -z "$NEW_TICKET" ] && NEW_TICKET="bs-$(date +%s | tail -c 9)"
+
+    # Derive slug: --slug-hint > first words of --from-input > "untitled"
+    derive_slug() {
+      local raw="$1"
+      printf '%s' "$raw" \
+        | tr '[:upper:]' '[:lower:]' \
+        | tr -c 'a-z0-9' ' ' \
+        | awk '{for(i=1;i<=NF && i<=5;i++) printf "%s%s", $i, (i<NF&&i<5?"-":""); print ""}' \
+        | head -c 48 \
+        | sed 's/-*$//'
+    }
+    if [ "$GF_MODE" = "trunk" ]; then
+      # No branch cut: the ticket rides the current branch. The eval'd
+      # `export BABYSIT_TICKET=…` line below carries identity for this shell;
+      # fresh shells re-attach via `bbs-ticket session attach` or re-export.
+      TICKET="$NEW_TICKET"
+      [ "$BRANCH" = "unknown" ] && BRANCH="$(git branch --show-current 2>/dev/null || echo unknown)"
+      echo "ensure: mode=trunk — $TICKET stays on branch '$BRANCH' (no branch cut)" >&2
+      echo "ensure: identity is env-carried; run: export BABYSIT_TICKET=$TICKET" >&2
+    else
+      NEW_SLUG=""
+      [ -n "$SLUG_HINT" ]  && NEW_SLUG="$(derive_slug "$SLUG_HINT")"
+      [ -z "$NEW_SLUG" ] && [ -n "$FROM_INPUT" ] && NEW_SLUG="$(derive_slug "$FROM_INPUT")"
+      if [ -z "$NEW_SLUG" ]; then
+        echo "ensure: refusing to cut a branch with no slug — pass --from-input or --slug-hint" >&2
+        echo "ensure: (an empty call would have produced branch '$TYPE/${NEW_TICKET}_untitled')" >&2
+        exit 2
+      fi
+
+      NEW_BRANCH="$TYPE/${NEW_TICKET}_${NEW_SLUG}"
+
+      # Safe-cut gate: cutting in place is only safe from a clean checkout of
+      # the base branch — anywhere else the new branch forks from (and drags
+      # along) another ticket's work-in-progress, which is how feature A's
+      # uncommitted code ends up on feature B's branch. Unsafe cuts divert to
+      # a fresh worktree off base; the current checkout is never touched.
+      CUR_BRANCH="$(git branch --show-current 2>/dev/null || echo "")"
+      AUTOPILOT_BIN="$SCRIPT_DIR/bbs-autopilot"
+      [ -x "$AUTOPILOT_BIN" ] || AUTOPILOT_BIN="$(command -v bbs-autopilot 2>/dev/null || echo "$HOME/.claude/bbs-autopilot")"
+      BASE_BRANCH="$("$AUTOPILOT_BIN" base-branch 2>/dev/null || true)"
+      [ -z "$BASE_BRANCH" ] && BASE_BRANCH="main"
+      # Cut from origin/<base>, not local base: local base may carry other
+      # tickets' integration merges (worktree mode piles them there via
+      # merge-base), and a branch cut from it drags those commits into this
+      # ticket's PR. Fall back to local base only when origin has no <base>.
+      if git remote get-url origin >/dev/null 2>&1; then
+        git fetch origin "$BASE_BRANCH" >/dev/null 2>&1 \
+          || echo "ensure: warning — fetch failed, using the last-known origin/$BASE_BRANCH" >&2
+      fi
+      SRC_REF=""
+      git show-ref --verify --quiet "refs/remotes/origin/$BASE_BRANCH" && SRC_REF="origin/$BASE_BRANCH"
+      [ -z "$SRC_REF" ] && git show-ref --verify --quiet "refs/heads/$BASE_BRANCH" && SRC_REF="$BASE_BRANCH"
+      # Worktree mode never cuts in place: the primary checkout stays parked
+      # on base as the shared test surface, even when it's clean.
+      SAFE_CUT=0
+      if [ "$GF_MODE" != "worktree" ] \
+         && [ "$CUR_BRANCH" = "$BASE_BRANCH" ] && [ -z "$(git status --porcelain 2>/dev/null)" ]; then
+        SAFE_CUT=1
+      fi
+
+      if [ "$SAFE_CUT" = "1" ]; then
+        # Developer mode: cutting a branch silently moves the user's checkout —
+        # ask first. The skill renders this as one AskUserQuestion and re-runs
+        # with --cut-branch or --no-branch. Autonomous roles (mayor, general, …)
+        # have no one to ask and proceed as before. (The worktree divert below
+        # never moves the checkout, so it doesn't ask.)
+        _ENS_ROLE="${AGENT_ROLE:-${GT_ROLE:-developer}}"
+        if [ "$_ENS_ROLE" = "developer" ] && [ "$FORCE_CUT" != "1" ]; then
+          echo "STATUS: NEEDS_CONFIRM" >&2
+          echo "REASON: creating this ticket cuts a new branch '$NEW_BRANCH' off '$SRC_REF' and checks it out." >&2
+          echo "OPTIONS: re-run with --cut-branch to cut the branch," >&2
+          echo "         or --no-branch to stay on '$CUR_BRANCH' (identity carried by BABYSIT_TICKET)." >&2
+          exit 3
+        fi
+
+        # Cut the branch from SRC_REF (checkout -b will fail loudly if it
+        # already exists). The checkout is clean and on base, so moving it to
+        # origin/<base> loses nothing. --no-track: without it git would set
+        # the new branch's upstream to origin/<base>, breaking plain `git push`.
+        if ! git checkout --no-track -b "$NEW_BRANCH" "$SRC_REF" >/dev/null 2>&1; then
+          echo "ensure: git checkout -b '$NEW_BRANCH' '$SRC_REF' failed" >&2
+          exit 2
+        fi
+
+        # Re-derive TICKET / BRANCH / PROJECT_HOME now that we're on the new branch
+        eval "$("$SLUG_BIN" env 2>/dev/null || true)"
+        TICKET="${TICKET:-$NEW_TICKET}"
+        BRANCH="${BRANCH:-$NEW_BRANCH}"
+      else
+        if [ "$GF_MODE" = "worktree" ]; then
+          echo "ensure: mode=worktree — cutting into a worktree (primary checkout stays on '$CUR_BRANCH')" >&2
+        elif [ "$CUR_BRANCH" != "$BASE_BRANCH" ]; then
+          echo "ensure: on '$CUR_BRANCH' (base is '$BASE_BRANCH') — diverting the cut to a worktree" >&2
+        else
+          echo "ensure: '$CUR_BRANCH' has uncommitted changes — diverting the cut to a worktree" >&2
+        fi
+        if [ -z "$SRC_REF" ]; then
+          echo "ensure: base branch '$BASE_BRANCH' not found (local or origin) — cannot cut safely from '$CUR_BRANCH'." >&2
+          echo "  Fix: fetch/create '$BASE_BRANCH', or re-run with --no-branch to ride the current branch." >&2
+          exit 2
+        fi
+        ENS_TOP="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+        ENSURE_WORKTREE="$ENS_TOP/.babysit/worktrees/${NEW_TICKET}_${NEW_SLUG}"
+        if [ -e "$ENSURE_WORKTREE" ]; then
+          echo "ensure: worktree path $ENSURE_WORKTREE already exists — remove it or resume the ticket there." >&2
+          exit 2
+        fi
+        # The worktree lives inside the repo's working tree — exclude it
+        # locally so it never shows up as untracked (which would trip the
+        # gate's own dirty-check on the next ticket).
+        ENS_EXCLUDE="$(git rev-parse --git-path info/exclude 2>/dev/null || true)"
+        if [ -n "$ENS_EXCLUDE" ] && ! grep -qxF '.babysit/worktrees/' "$ENS_EXCLUDE" 2>/dev/null; then
+          mkdir -p "$(dirname "$ENS_EXCLUDE")"
+          echo '.babysit/worktrees/' >> "$ENS_EXCLUDE"
+        fi
+        mkdir -p "$(dirname "$ENSURE_WORKTREE")"
+        if ! git worktree add --no-track -b "$NEW_BRANCH" -- "$ENSURE_WORKTREE" "$SRC_REF" >/dev/null 2>&1; then
+          echo "ensure: git worktree add failed ($SRC_REF → $ENSURE_WORKTREE)" >&2
+          exit 2
+        fi
+        TICKET="$NEW_TICKET"
+        BRANCH="$NEW_BRANCH"
+        echo "ensure: worktree ready at $ENSURE_WORKTREE (branch $NEW_BRANCH off $SRC_REF)" >&2
+        echo "ensure: current checkout untouched — cd into the worktree before doing any work" >&2
+      fi
+    fi
+    PROJECT_HOME="${BABYSIT_PROJECT_HOME:-${BABYSIT_HOME:-$HOME/.babysit}/projects/$SLUG}"
+
+    # Init the ticket
+    ensure_dirs
+    acquire_lock || exit 1
+    F="$(index_path)"
+    json_mutate "$F" ensure_defaults "$TICKET"
+    json_mutate "$F" set id "$TICKET"
+    json_mutate "$F" set pointers.branch "$BRANCH"
+    # PROMPT_REASON is a free-form telemetry tag (e.g. "implement-entry"); it
+    # must NOT land in origin.type, which is an enum (standalone|sub_ticket|...).
+    # Record it as an extra on the ticket_initialized history event instead.
+    if [ -n "$PROMPT_REASON" ]; then
+      INIT_EXTRA="$(_py - "$PROMPT_REASON" <<'EOF'
+import json, sys
+print(json.dumps({"reason": sys.argv[1]}))
+EOF
+)"
+    else
+      INIT_EXTRA=""
+    fi
+    history_append "ticket_initialized" "${AGENT_ROLE:-${GT_ROLE:-developer}}" "$INIT_EXTRA"
+
+    # Seed requirement.md if input was provided
+    TH="$(ticket_home)"
+    REQ_PATH=""
+    if [ -n "$FROM_INPUT" ]; then
+      REQ_PATH="$TH/requirement.md"
+      printf '%s\n' "$FROM_INPUT" > "$REQ_PATH"
+      json_mutate "$F" set pointers.requirement requirement.md
+      history_append "requirement_seeded" "${AGENT_ROLE:-${GT_ROLE:-developer}}" ""
+    fi
+
+    # Seed manifest.yaml — one-entry repos[] with name=$SLUG and the worktree
+    # path when the cut diverted. Failure is logged but non-fatal —
+    # index.json is still the canonical state, manifest.yaml is an index
+    # over branches.
+    M="$(manifest_path)"
+    if [ ! -f "$M" ]; then
+      ENS_REPOS_JSON="$(single_repo_json "${SLUG:-repo}" "$BRANCH" "${BASE_BRANCH:-main}" "${ENSURE_WORKTREE:-.}")"
+      manifest_write "$M" "$TICKET" "" "$ENS_REPOS_JSON" || \
+        echo "ensure: warning — manifest.yaml seed failed (continuing)" >&2
+    fi
+
+    _release_lock; _LOCK_PATH=""
+
+    echo "TICKET=$TICKET"
+    echo "BRANCH=$BRANCH"
+    echo "TICKET_HOME=$TH"
+    echo "CREATED=1"
+    # Set when the safe-cut gate diverted the cut into a worktree; the caller
+    # must cd here (all work happens in the worktree, never in the checkout
+    # ensure was invoked from).
+    [ -n "${ENSURE_WORKTREE:-}" ] && echo "WORKTREE=$ENSURE_WORKTREE"
+    [ -n "$REQ_PATH" ] && echo "REQUIREMENT=$REQ_PATH"
+    # Without a ticket-encoding branch, env is the identity carrier — the
+    # caller's eval must pick it up so later bbs-* calls resolve this ticket.
+    if [ "$GF_MODE" = "trunk" ]; then
+      echo "export BABYSIT_TICKET=$TICKET"
+    fi
+    ;;
+
+  # merge-base — land the ticket worktree's branch on the primary checkout.
+  #
+  # Single-repo trunk flow: ONE long-lived dev server runs in the primary
+  # checkout (sitting on base_branch, e.g. develop) while tickets are
+  # implemented in .babysit/worktrees/<ticket>_<slug>/. Before QA — and after
+  # every QA fix — the ticket branch must be merged into the primary checkout
+  # so the server actually serves the change. Parallel autopilot runs
+  # serialize on a lock in the shared git dir; any unsafe position (dirty
+  # tree, primary off base, conflict) BLOCKs instead of guessing. The
+  # worktree stays the source of truth: fixes happen there, never on the
+  # primary checkout.
+  merge-base)
+    MB_BASE=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --base) MB_BASE="$2"; shift 2 ;;
+        *) shift ;;
+      esac
+    done
+    command -v git >/dev/null 2>&1 || { echo "merge-base: git not found" >&2; exit 2; }
+    if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+      echo "merge-base: not in a git work tree" >&2; exit 2
+    fi
+    MB_TOP="$(git rev-parse --show-toplevel)"
+    MB_PRIMARY="$(git worktree list --porcelain 2>/dev/null | sed -n 's/^worktree //p' | head -1)"
+    if [ -z "$MB_PRIMARY" ] || [ "$MB_PRIMARY" = "$MB_TOP" ]; then
+      echo "STATUS: BLOCKED" >&2
+      echo "REASON: merge-base must run from a linked ticket worktree — cwd is the primary checkout." >&2
+      echo "RECOMMENDATION: cd into the ticket worktree (.babysit/worktrees/<ticket>_<slug>/) and re-run." >&2
+      exit 2
+    fi
+    MB_BRANCH="$(git branch --show-current 2>/dev/null || echo "")"
+    if [ -z "$MB_BRANCH" ]; then
+      echo "merge-base: detached HEAD in worktree — checkout the ticket branch first" >&2; exit 2
+    fi
+    if [ -n "$(git status --porcelain 2>/dev/null)" ]; then
+      echo "STATUS: BLOCKED" >&2
+      echo "REASON: worktree has uncommitted changes — the merge lands commits, not the working tree." >&2
+      echo "RECOMMENDATION: commit (or stash) in the worktree, then re-run merge-base." >&2
+      exit 2
+    fi
+    if [ -z "$MB_BASE" ]; then
+      AUTOPILOT_BIN="$SCRIPT_DIR/bbs-autopilot"
+      [ -x "$AUTOPILOT_BIN" ] || AUTOPILOT_BIN="$(command -v bbs-autopilot 2>/dev/null || echo "$HOME/.claude/bbs-autopilot")"
+      MB_BASE="$(cd "$MB_PRIMARY" && "$AUTOPILOT_BIN" base-branch 2>/dev/null || true)"
+      [ -z "$MB_BASE" ] && MB_BASE="main"
+    fi
+    if [ "$MB_BRANCH" = "$MB_BASE" ]; then
+      echo "merge-base: worktree is on the base branch '$MB_BASE' — nothing to land" >&2; exit 2
+    fi
+    MB_PRIMARY_BRANCH="$(git -C "$MB_PRIMARY" branch --show-current 2>/dev/null || echo "")"
+    if [ "$MB_PRIMARY_BRANCH" != "$MB_BASE" ]; then
+      echo "STATUS: BLOCKED" >&2
+      echo "REASON: primary checkout $MB_PRIMARY is on '$MB_PRIMARY_BRANCH', not base '$MB_BASE'." >&2
+      echo "RECOMMENDATION: checkout '$MB_BASE' in the primary checkout (or pass --base), then re-run." >&2
+      exit 2
+    fi
+    if [ -n "$(git -C "$MB_PRIMARY" status --porcelain 2>/dev/null)" ]; then
+      echo "STATUS: BLOCKED" >&2
+      echo "REASON: primary checkout $MB_PRIMARY has uncommitted changes — merging would tangle them with the ticket." >&2
+      echo "RECOMMENDATION: commit or stash the primary checkout's changes, then re-run merge-base." >&2
+      exit 2
+    fi
+    # One merge at a time across parallel autopilot runs: the lock lives in
+    # the shared git dir, which every linked worktree of this repo sees.
+    MB_GITDIR="$(git -C "$MB_PRIMARY" rev-parse --absolute-git-dir 2>/dev/null)"
+    qa_lease_guard "$MB_GITDIR" merge-base || exit 2
+    MB_LOCK="$MB_GITDIR/bbs-merge-base.lock"
+    if ! bbs_lock_acquire "$MB_LOCK" 300; then
+      echo "STATUS: BLOCKED" >&2
+      echo "REASON: could not acquire $MB_LOCK after 30s — another merge-base may be stuck." >&2
+      echo "RECOMMENDATION: if no merge is in flight, remove the lock dir and re-run." >&2
+      exit 2
+    fi
+    MB_PRE="$(git -C "$MB_PRIMARY" rev-parse HEAD)"
+    if ! git -C "$MB_PRIMARY" merge --no-edit "$MB_BRANCH" >/dev/null 2>&1; then
+      git -C "$MB_PRIMARY" merge --abort >/dev/null 2>&1
+      bbs_lock_release "$MB_LOCK"
+      echo "STATUS: BLOCKED" >&2
+      echo "REASON: merge conflict landing '$MB_BRANCH' on '$MB_BASE' ($MB_PRIMARY); merge aborted, primary untouched." >&2
+      echo "RECOMMENDATION: in the worktree, merge 'origin/$MB_BASE' into '$MB_BRANCH' (never local '$MB_BASE' — it carries other tickets), resolve, commit, re-run merge-base." >&2
+      echo "  If origin/$MB_BASE merges clean, the conflict is with another in-flight ticket — QA solo via 'bbs-ticket switch $TICKET' and land the PRs in sequence." >&2
+      exit 2
+    fi
+    MB_POST="$(git -C "$MB_PRIMARY" rev-parse HEAD)"
+    [ -n "$TICKET" ] && _serving_write "$MB_GITDIR" append "$TICKET"
+    bbs_lock_release "$MB_LOCK"
+    [ -n "$TICKET" ] && history_append "merge_base" "${AGENT_ROLE:-${GT_ROLE:-developer}}" \
+      "$(printf '{"base":"%s","head":"%s"}' "$MB_BASE" "$MB_POST")"
+    if [ "$MB_PRE" = "$MB_POST" ]; then echo "MERGED=0"; else echo "MERGED=1"; fi
+    echo "BASE=$MB_BASE"
+    echo "BRANCH=$MB_BRANCH"
+    echo "PRIMARY=$MB_PRIMARY"
+    echo "HEAD=$MB_POST"
+    echo "merge-base: primary checkout now includes '$MB_BRANCH' — test against the server there;" >&2
+    echo "  fix in this worktree, commit, and re-run merge-base after every QA fix." >&2
+    ;;
+
+  # refresh — bring the ticket branch up to date with origin/<base>.
+  #
+  # The one sanctioned way to pull latest base into a ticket branch: fetch,
+  # then merge origin/<base>. Merge, not rebase — the branch may be pushed.
+  # Never references local <base>: under worktree mode it is a pile of other
+  # tickets' integration merges, and merging it in drags them into this
+  # ticket's PR ancestry. Touches only the current checkout's branch — no
+  # shared state, no lock.
+  refresh)
+    RF_BASE=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --base) RF_BASE="$2"; shift 2 ;;
+        *) shift ;;
+      esac
+    done
+    command -v git >/dev/null 2>&1 || { echo "refresh: git not found" >&2; exit 2; }
+    if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+      echo "refresh: not in a git work tree" >&2; exit 2
+    fi
+    RF_BRANCH="$(git branch --show-current 2>/dev/null || echo "")"
+    if [ -z "$RF_BRANCH" ]; then
+      echo "refresh: detached HEAD — checkout the ticket branch first" >&2; exit 2
+    fi
+    if [ -z "$RF_BASE" ]; then
+      AUTOPILOT_BIN="$SCRIPT_DIR/bbs-autopilot"
+      [ -x "$AUTOPILOT_BIN" ] || AUTOPILOT_BIN="$(command -v bbs-autopilot 2>/dev/null || echo "$HOME/.claude/bbs-autopilot")"
+      RF_BASE="$("$AUTOPILOT_BIN" base-branch 2>/dev/null || true)"
+      [ -z "$RF_BASE" ] && RF_BASE="main"
+    fi
+    if [ "$RF_BRANCH" = "$RF_BASE" ]; then
+      echo "refresh: on the base branch '$RF_BASE' — nothing to refresh (reset-base maintains the primary)" >&2; exit 2
+    fi
+    if [ -n "$(git status --porcelain 2>/dev/null)" ]; then
+      echo "STATUS: BLOCKED" >&2
+      echo "REASON: '$RF_BRANCH' has uncommitted changes — the merge needs a clean tree." >&2
+      echo "RECOMMENDATION: commit (or stash) them, then re-run refresh." >&2
+      exit 2
+    fi
+    git fetch origin "$RF_BASE" >/dev/null 2>&1 \
+      || echo "refresh: warning — fetch failed, using the last-known origin/$RF_BASE" >&2
+    if ! git rev-parse --verify -q "origin/$RF_BASE" >/dev/null 2>&1; then
+      echo "STATUS: BLOCKED" >&2
+      echo "REASON: origin/$RF_BASE not found — nothing safe to refresh from (local '$RF_BASE' may carry other tickets' merges)." >&2
+      echo "RECOMMENDATION: add an 'origin' remote tracking '$RF_BASE' (or fetch it), then re-run." >&2
+      exit 2
+    fi
+    if git merge-base --is-ancestor "origin/$RF_BASE" HEAD 2>/dev/null; then
+      echo "UPDATED=0"
+      echo "BASE=$RF_BASE"
+      echo "refresh: '$RF_BRANCH' already contains origin/$RF_BASE" >&2
+      exit 0
+    fi
+    if ! git merge --no-edit "origin/$RF_BASE" >/dev/null 2>&1; then
+      git merge --abort >/dev/null 2>&1
+      echo "STATUS: BLOCKED" >&2
+      echo "REASON: merge conflict bringing origin/$RF_BASE into '$RF_BRANCH'; merge aborted, branch untouched." >&2
+      echo "RECOMMENDATION: run 'git merge origin/$RF_BASE' here, resolve, commit; then re-run merge-base/switch if this ticket is on the test surface." >&2
+      exit 2
+    fi
+    [ -n "$TICKET" ] && history_append "refresh" "${AGENT_ROLE:-${GT_ROLE:-developer}}" \
+      "$(printf '{"base":"%s","head":"%s"}' "$RF_BASE" "$(git rev-parse HEAD)")"
+    echo "UPDATED=1"
+    echo "BASE=$RF_BASE"
+    echo "HEAD=$(git rev-parse HEAD)"
+    echo "refresh: merged origin/$RF_BASE into '$RF_BRANCH' — if this ticket is on the test surface, re-run merge-base/switch." >&2
+    ;;
+
+  # reset-base — restore the primary checkout's base branch to origin/<base>.
+  #
+  # Under worktree mode the local base branch is a disposable integration
+  # surface: merge-base piles ticket merges onto it so the shared dev server
+  # can test them, while the worktree branches stay the source of truth. Once
+  # tickets land upstream (PRs merged), reset the pile. Refuses whenever real
+  # work would be lost: dirty tree, primary off base, or non-merge commits on
+  # local base that origin doesn't have (someone committed directly there).
+  # Discarding merge commits is safe — their content lives on ticket branches;
+  # in-flight worktrees just re-run merge-base afterwards.
+  reset-base)
+    RB_BASE="" RB_QUIET=0
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --base) RB_BASE="$2"; shift 2 ;;
+        --quiet) RB_QUIET=1; shift ;;
+        *) shift ;;
+      esac
+    done
+    command -v git >/dev/null 2>&1 || { echo "reset-base: git not found" >&2; exit 2; }
+    if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+      echo "reset-base: not in a git work tree" >&2; exit 2
+    fi
+    RB_PRIMARY="$(git worktree list --porcelain 2>/dev/null | sed -n 's/^worktree //p' | head -1)"
+    [ -z "$RB_PRIMARY" ] && RB_PRIMARY="$(git rev-parse --show-toplevel)"
+    if [ -z "$RB_BASE" ]; then
+      AUTOPILOT_BIN="$SCRIPT_DIR/bbs-autopilot"
+      [ -x "$AUTOPILOT_BIN" ] || AUTOPILOT_BIN="$(command -v bbs-autopilot 2>/dev/null || echo "$HOME/.claude/bbs-autopilot")"
+      RB_BASE="$(cd "$RB_PRIMARY" && "$AUTOPILOT_BIN" base-branch 2>/dev/null || true)"
+      [ -z "$RB_BASE" ] && RB_BASE="main"
+    fi
+    RB_PRIMARY_BRANCH="$(git -C "$RB_PRIMARY" branch --show-current 2>/dev/null || echo "")"
+    if [ "$RB_PRIMARY_BRANCH" != "$RB_BASE" ]; then
+      echo "STATUS: BLOCKED" >&2
+      echo "REASON: primary checkout $RB_PRIMARY is on '$RB_PRIMARY_BRANCH', not base '$RB_BASE'." >&2
+      echo "RECOMMENDATION: checkout '$RB_BASE' there (or pass --base), then re-run reset-base." >&2
+      exit 2
+    fi
+    if [ -n "$(git -C "$RB_PRIMARY" status --porcelain 2>/dev/null)" ]; then
+      echo "STATUS: BLOCKED" >&2
+      echo "REASON: primary checkout $RB_PRIMARY has uncommitted changes — reset --hard would destroy them." >&2
+      echo "RECOMMENDATION: commit or stash them, then re-run reset-base." >&2
+      exit 2
+    fi
+    git -C "$RB_PRIMARY" fetch origin "$RB_BASE" >/dev/null 2>&1 \
+      || echo "reset-base: warning — fetch failed, using the last-known origin/$RB_BASE" >&2
+    if ! git -C "$RB_PRIMARY" rev-parse --verify -q "origin/$RB_BASE" >/dev/null 2>&1; then
+      echo "STATUS: BLOCKED" >&2
+      echo "REASON: origin/$RB_BASE not found — nothing safe to reset to." >&2
+      echo "RECOMMENDATION: add an 'origin' remote tracking '$RB_BASE' (or fetch it), then re-run." >&2
+      exit 2
+    fi
+    # Stray commits = non-merge commits on local base that origin doesn't have
+    # AND no other local branch reaches — work committed directly on base,
+    # gone if we reset. Ticket commits fast-forwarded in by merge-base are
+    # still reachable from their worktree branch, so they don't count.
+    RB_STRAY="$(git -C "$RB_PRIMARY" rev-list --no-merges "origin/$RB_BASE..$RB_BASE" \
+                  --not --exclude="$RB_BASE" --branches 2>/dev/null || true)"
+    if [ -n "$RB_STRAY" ]; then
+      echo "STATUS: BLOCKED" >&2
+      echo "REASON: '$RB_BASE' has commits no other branch (or origin) holds — reset would lose real work:" >&2
+      printf '%s\n' "$RB_STRAY" | head -5 | while read -r rb_c; do
+        git -C "$RB_PRIMARY" log -1 --oneline "$rb_c" 2>/dev/null >&2
+      done
+      echo "RECOMMENDATION: push them, or move them to a ticket branch, then re-run reset-base." >&2
+      exit 2
+    fi
+    # Serialize with merge-base: same lock in the shared git dir.
+    RB_GITDIR="$(git -C "$RB_PRIMARY" rev-parse --absolute-git-dir 2>/dev/null)"
+    qa_lease_guard "$RB_GITDIR" reset-base || exit 2
+    RB_LOCK="$RB_GITDIR/bbs-merge-base.lock"
+    if ! bbs_lock_acquire "$RB_LOCK" 300; then
+      echo "STATUS: BLOCKED" >&2
+      echo "REASON: could not acquire $RB_LOCK after 30s — a merge-base may be in flight." >&2
+      echo "RECOMMENDATION: if nothing is running, remove the lock dir and re-run." >&2
+      exit 2
+    fi
+    RB_PRE="$(git -C "$RB_PRIMARY" rev-parse HEAD)"
+    if ! git -C "$RB_PRIMARY" reset --hard "origin/$RB_BASE" >/dev/null 2>&1; then
+      bbs_lock_release "$RB_LOCK"
+      echo "reset-base: git reset --hard origin/$RB_BASE failed" >&2
+      exit 2
+    fi
+    RB_POST="$(git -C "$RB_PRIMARY" rev-parse HEAD)"
+    _serving_write "$RB_GITDIR" set
+    bbs_lock_release "$RB_LOCK"
+    [ -n "$TICKET" ] && history_append "reset_base" "${AGENT_ROLE:-${GT_ROLE:-developer}}" \
+      "$(printf '{"base":"%s","head":"%s"}' "$RB_BASE" "$RB_POST")"
+    if [ "$RB_PRE" = "$RB_POST" ]; then echo "RESET=0"; else echo "RESET=1"; fi
+    echo "BASE=$RB_BASE"
+    echo "PRIMARY=$RB_PRIMARY"
+    echo "HEAD=$RB_POST"
+    # The advisory is only true for a direct invocation: switch/serve call
+    # reset-base mid-compose and immediately merge tickets back in, so
+    # "matches origin" would mislead anyone reading the combined output.
+    if [ "$RB_QUIET" != "1" ]; then
+      echo "reset-base: '$RB_BASE' now matches origin — re-run merge-base from any in-flight worktree" >&2
+      echo "  so the shared server serves those tickets again." >&2
+    fi
+    ;;
+
+  # switch — point the shared test surface at exactly the named ticket(s).
+  #
+  # The fast QA hop, runnable from anywhere in the repo: reset the primary
+  # checkout's base branch to origin/<base> (full reset-base safety), then
+  # merge each named ticket's branch in. The dev server in the primary now
+  # serves base + those tickets and nothing else — one command to swap which
+  # ticket you're testing, no cd into worktrees. Direction is the complement
+  # of merge-base: merge-base pushes the current worktree's change out to the
+  # surface; switch pulls chosen tickets in from the surface's side. Fixes
+  # still happen in the ticket worktree — commit there, re-run switch.
+  switch)
+    SW_BASE="" SW_TICKETS=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --base) SW_BASE="$2"; shift 2 ;;
+        -*) echo "switch: unknown flag '$1'" >&2; exit 2 ;;
+        *) SW_TICKETS="$SW_TICKETS $1"; shift ;;
+      esac
+    done
+    SW_TICKETS="${SW_TICKETS# }"
+    if [ -z "$SW_TICKETS" ]; then
+      echo "usage: bbs-ticket switch <ticket> [<ticket>...] [--base BRANCH]" >&2; exit 2
+    fi
+    command -v git >/dev/null 2>&1 || { echo "switch: git not found" >&2; exit 2; }
+    if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+      echo "switch: not in a git work tree" >&2; exit 2
+    fi
+    SW_PRIMARY="$(git worktree list --porcelain 2>/dev/null | sed -n 's/^worktree //p' | head -1)"
+    [ -z "$SW_PRIMARY" ] && SW_PRIMARY="$(git rev-parse --show-toplevel)"
+    SW_GITDIR="$(git -C "$SW_PRIMARY" rev-parse --absolute-git-dir 2>/dev/null)"
+    qa_lease_guard "$SW_GITDIR" switch || exit 2
+    # Resolve every ticket to a branch before touching anything — a typo'd
+    # ticket id must not leave the surface half-switched.
+    SW_BRANCHES=""
+    for sw_t in $SW_TICKETS; do
+      sw_b="$(git for-each-ref --format='%(refname:short)' "refs/heads/*/${sw_t}_*" 2>/dev/null | head -1)"
+      if [ -z "$sw_b" ]; then
+        echo "STATUS: BLOCKED" >&2
+        echo "REASON: no local branch matches '*/${sw_t}_*' — unknown ticket or branch never cut." >&2
+        echo "RECOMMENDATION: check the id (bbs-ticket session list), or run ensure for it first." >&2
+        exit 2
+      fi
+      SW_BRANCHES="$SW_BRANCHES $sw_b"
+    done
+    SW_BRANCHES="${SW_BRANCHES# }"
+    # Clean slate: reset-base does the safety checks (dirty, off-base, stray
+    # commits) and BLOCKs loudly; its stderr passes through.
+    "$0" reset-base --quiet ${SW_BASE:+--base "$SW_BASE"} >/dev/null || exit $?
+    if [ -z "$SW_BASE" ]; then
+      AUTOPILOT_BIN="$SCRIPT_DIR/bbs-autopilot"
+      [ -x "$AUTOPILOT_BIN" ] || AUTOPILOT_BIN="$(command -v bbs-autopilot 2>/dev/null || echo "$HOME/.claude/bbs-autopilot")"
+      SW_BASE="$(cd "$SW_PRIMARY" && "$AUTOPILOT_BIN" base-branch 2>/dev/null || true)"
+      [ -z "$SW_BASE" ] && SW_BASE="main"
+    fi
+    SW_LOCK="$SW_GITDIR/bbs-merge-base.lock"
+    if ! bbs_lock_acquire "$SW_LOCK" 300; then
+      echo "STATUS: BLOCKED" >&2
+      echo "REASON: could not acquire $SW_LOCK after 30s — a merge-base may be in flight." >&2
+      echo "RECOMMENDATION: if nothing is running, remove the lock dir and re-run." >&2
+      exit 2
+    fi
+    for sw_b in $SW_BRANCHES; do
+      if ! git -C "$SW_PRIMARY" merge --no-edit "$sw_b" >/dev/null 2>&1; then
+        git -C "$SW_PRIMARY" merge --abort >/dev/null 2>&1
+        bbs_lock_release "$SW_LOCK"
+        echo "STATUS: BLOCKED" >&2
+        echo "REASON: merge conflict landing '$sw_b' on '$SW_BASE' — that merge aborted; earlier tickets in this switch are already on the surface." >&2
+        echo "RECOMMENDATION: in that ticket's worktree, merge 'origin/$SW_BASE' in (never local '$SW_BASE'), resolve, commit, re-run switch." >&2
+        echo "  If origin/$SW_BASE merges clean, it conflicts with an earlier ticket in this switch — switch them separately or resolve the pair together." >&2
+        exit 2
+      fi
+    done
+    SW_HEAD="$(git -C "$SW_PRIMARY" rev-parse HEAD)"
+    # shellcheck disable=SC2086
+    _serving_write "$SW_GITDIR" set $SW_TICKETS
+    bbs_lock_release "$SW_LOCK"
+    echo "BASE=$SW_BASE"
+    echo "PRIMARY=$SW_PRIMARY"
+    echo "HEAD=$SW_HEAD"
+    echo "SERVING=$(printf '%s' "$SW_TICKETS" | tr ' ' ',')"
+    echo "switch: test surface now serves '$SW_BASE' + $SW_TICKETS — fixes go in the ticket worktree(s), then re-run switch." >&2
+    ;;
+
+  # serve — the human-review lever for attended parallel tickets.
+  #
+  # Human review on the real site is the longest stage that touches the shared
+  # surface, so it gets the qa-lease with a long ttl (default 240min — the
+  # 60min agent-QA default would let a parallel run stale-steal the surface
+  # mid-review), then switch so the dev server serves base + exactly this
+  # ticket. Cross-repo pairs fan out: the same acquire+switch runs in every
+  # sibling repo (index.json.siblings × RELATED_*_REPO). Reentrant — after the
+  # agent commits a review fix in the ticket worktree, re-run serve to refresh
+  # the lease and re-switch every surface. serve --release frees the lease(s)
+  # and leaves the tree alone (the next serve/switch resets it anyway).
+  serve)
+    SV_TICKETS="" SV_RELEASE=0 SV_TTL=240
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --release|--done) SV_RELEASE=1; shift ;;
+        --ttl-min) SV_TTL="$2"; shift 2 ;;
+        -*) echo "serve: unknown flag '$1'" >&2; exit 2 ;;
+        *) SV_TICKETS="$SV_TICKETS $1"; shift ;;
+      esac
+    done
+    SV_TICKETS="${SV_TICKETS# }"
+    command -v git >/dev/null 2>&1 || { echo "serve: git not found" >&2; exit 2; }
+    if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+      echo "serve: not in a git work tree" >&2; exit 2
+    fi
+    SV_PRIMARY="$(git worktree list --porcelain 2>/dev/null | sed -n 's/^worktree //p' | head -1)"
+    [ -z "$SV_PRIMARY" ] && SV_PRIMARY="$(git rev-parse --show-toplevel)"
+    SV_REPO="$(basename "$SV_PRIMARY")"
+    SV_GITDIR="$(git -C "$SV_PRIMARY" rev-parse --absolute-git-dir 2>/dev/null)"
+    sv_lease_owner() {  # $1 = gitdir → current lease owner (empty when free)
+      sed -n 's/^owner=//p' "$1/bbs-qa-lease/owner" 2>/dev/null | head -1
+    }
+    # sv_sibs <ticket> — sibling rows as "role<TAB>repo<TAB>ticket" lines.
+    # JSON goes in as argv, not stdin — the heredoc already owns stdin.
+    sv_sibs() {
+      _py - "$(json_read "$PROJECT_HOME/tickets/$(safe "$1")/index.json" siblings)" <<'EOF'
+import json, sys
+try:
+    sibs = json.loads(sys.argv[1])
+except Exception:
+    sys.exit(0)
+for s in sibs or []:
+    print(f"{s.get('role','')}\t{s.get('repo','')}\t{s.get('ticket','')}")
+EOF
+    }
+
+    if [ "$SV_RELEASE" = "1" ]; then
+      # Bare release covers whatever is being served right now.
+      [ -n "$SV_TICKETS" ] || SV_TICKETS="$(cat "$SV_GITDIR/bbs-serving" 2>/dev/null | tr ',' ' ')"
+      SV_OWNER="$(sv_lease_owner "$SV_GITDIR")"
+      if [ -n "$SV_OWNER" ]; then
+        BABYSIT_TICKET="$SV_OWNER" "$0" qa-lease release --ticket "$SV_OWNER" >/dev/null || exit $?
+        echo "RELEASED: $SV_REPO $SV_OWNER"
+      else
+        echo "RELEASED: $SV_REPO (already free)"
+      fi
+      for SV_T in $SV_TICKETS; do
+        while IFS="$(printf '\t')" read -r sv_role sv_repo sv_t; do
+          [ -n "$sv_t" ] || continue
+          sv_path="$(_related_repo_path "$sv_role" "$SV_PRIMARY")" || {
+            echo "serve: sibling $sv_repo/$sv_t not released — RELATED repo path for role '$sv_role' unresolved" >&2
+            continue
+          }
+          sv_gd="$(git -C "$sv_path" rev-parse --absolute-git-dir 2>/dev/null)"
+          sv_owner="$(sv_lease_owner "$sv_gd")"
+          [ -n "$sv_owner" ] || continue   # already free (or released via an earlier sibling)
+          if (cd "$sv_path" 2>/dev/null && BABYSIT_TICKET="$sv_owner" "$0" qa-lease release --ticket "$sv_owner" >/dev/null); then
+            echo "RELEASED: $(basename "$sv_path") $sv_owner"
+          else
+            echo "serve: sibling release failed in $sv_path for $sv_owner" >&2
+          fi
+        done <<EOF
+$(sv_sibs "$SV_T")
+EOF
+      done
+      exit 0
+    fi
+
+    # Bare serve: inside a ticket context serve that ticket; otherwise serve
+    # the finished batch — every open ticket with qa + review-pr DONE.
+    if [ -z "$SV_TICKETS" ]; then
+      if [ -n "$TICKET" ]; then
+        SV_TICKETS="$TICKET"
+      else
+        for SV_D in "$PROJECT_HOME"/tickets/*/; do
+          [ -d "$SV_D" ] || continue
+          SV_T="$(basename "$SV_D")"
+          case "$(json_read "${SV_D%/}/index.json" status)" in done|cancelled|duplicate) continue ;; esac
+          case "$(BABYSIT_TICKET="$SV_T" "$0" verdict-status --skill qa 2>/dev/null)" in
+            DONE|DONE_WITH_CONCERNS) : ;; *) continue ;;
+          esac
+          case "$(BABYSIT_TICKET="$SV_T" "$0" verdict-status --skill review-pr 2>/dev/null)" in
+            DONE|DONE_WITH_CONCERNS) : ;; *) continue ;;
+          esac
+          SV_TICKETS="$SV_TICKETS $SV_T"
+        done
+        SV_TICKETS="${SV_TICKETS# }"
+        if [ -z "$SV_TICKETS" ]; then
+          echo "serve: nothing finished to serve — no open ticket has qa + review-pr DONE (see bbs-ticket board)" >&2
+          exit 0
+        fi
+      fi
+    fi
+    SV_RC=0
+
+    # _serve_set <repo-dir> <owner-ticket> <ticket...>: long lease + composed
+    # switch. A lease we just created (not one refreshed from an earlier serve)
+    # is released if the switch BLOCKs — a failed serve must not leave a stray
+    # lease.
+    _serve_set() {
+      local dir="$1" owner="$2" out; shift 2
+      out="$(cd "$dir" && BABYSIT_TICKET="$owner" "$0" qa-lease acquire --ticket "$owner" --ttl-min "$SV_TTL")" || return 2
+      if ! (cd "$dir" && BABYSIT_TICKET="$owner" "$0" switch "$@" >/dev/null); then
+        case "$out" in
+          *REFRESHED=1*) : ;;  # lease predates this serve — keep it
+          *) (cd "$dir" && BABYSIT_TICKET="$owner" "$0" qa-lease release --ticket "$owner" >/dev/null 2>&1) ;;
+        esac
+        return 2
+      fi
+      return 0
+    }
+    # sv_pick_owner <gitdir> <ticket...> — reuse the live lease owner when it
+    # is one of the tickets being served (keeps re-serve reentrant even when
+    # the set grows or reorders); otherwise the first ticket owns.
+    sv_pick_owner() {
+      local gd="$1" cur; shift
+      cur="$(sv_lease_owner "$gd")"
+      if [ -n "$cur" ]; then
+        case " $* " in *" $cur "*) printf '%s' "$cur"; return 0 ;; esac
+      fi
+      printf '%s' "$1"
+    }
+
+    SV_OWNER="$(sv_pick_owner "$SV_GITDIR" $SV_TICKETS)"
+    _serve_set "$SV_PRIMARY" "$SV_OWNER" $SV_TICKETS || exit $?
+    SV_LIST="$(printf '%s' "$SV_TICKETS" | tr ' ' ',')"
+    echo "SERVED: $SV_REPO $SV_LIST"
+    TICKET="$SV_OWNER" history_append "serve" "${AGENT_ROLE:-${GT_ROLE:-developer}}" \
+      "$(printf '{"tickets":"%s","ttl_min":%s}' "$SV_LIST" "$SV_TTL")"
+
+    # Sibling fan-out: collect "path<TAB>ticket" rows across every served
+    # ticket, then one lease + one composed switch per sibling repo (two
+    # tickets sharing a sibling repo must land there together, not reset
+    # each other).
+    SV_SIB_ROWS=""
+    for SV_T in $SV_TICKETS; do
+      while IFS="$(printf '\t')" read -r sv_role sv_repo sv_t; do
+        [ -n "$sv_t" ] || continue
+        sv_path="$(_related_repo_path "$sv_role" "$SV_PRIMARY")" || {
+          echo "STATUS: NEEDS_CONTEXT" >&2
+          echo "REASON: sibling $sv_repo/$sv_t (role '$sv_role') has no resolvable local path — RELATED_*_REPO unset in $SV_PRIMARY/.babysit/.env." >&2
+          echo "RECOMMENDATION: set it (see setup-project § Related Repos), then re-run serve; this repo is already serving $SV_LIST." >&2
+          SV_RC=2
+          continue
+        }
+        if [ ! -d "$sv_path" ]; then
+          echo "STATUS: NEEDS_CONTEXT" >&2
+          echo "REASON: sibling repo path '$sv_path' (role '$sv_role') does not exist on this machine." >&2
+          echo "RECOMMENDATION: fix RELATED_*_REPO in .babysit/.env, then re-run serve; this repo is already serving $SV_LIST." >&2
+          SV_RC=2
+          continue
+        fi
+        SV_SIB_ROWS="$SV_SIB_ROWS$sv_path	$sv_t
+"
+      done <<EOF
+$(sv_sibs "$SV_T")
+EOF
+    done
+    while IFS= read -r sv_path; do
+      [ -n "$sv_path" ] || continue
+      sv_ts="$(printf '%s' "$SV_SIB_ROWS" | awk -F'\t' -v p="$sv_path" '$1==p{print $2}' | tr '\n' ' ')"
+      sv_ts="${sv_ts% }"
+      sv_gd="$(git -C "$sv_path" rev-parse --absolute-git-dir 2>/dev/null)"
+      sv_owner="$(sv_pick_owner "$sv_gd" $sv_ts)"
+      if _serve_set "$sv_path" "$sv_owner" $sv_ts; then
+        echo "SERVED: $(basename "$sv_path") $(printf '%s' "$sv_ts" | tr ' ' ',')"
+      else
+        SV_RC=2
+      fi
+    done <<EOF
+$(printf '%s' "$SV_SIB_ROWS" | cut -f1 | awk 'NF && !seen[$0]++')
+EOF
+    if [ "$SV_RC" = "0" ]; then
+      echo "serve: review on the dev server(s); fixes commit in the ticket worktree, then re-run 'bbs-ticket serve $SV_TICKETS'." >&2
+      echo "  Done reviewing → bbs-ticket serve --release" >&2
+    fi
+    exit "$SV_RC"
+    ;;
+
+  # qa-lease — exclusive QA-session lease on the shared test surface.
+  #
+  # The merge-base lock serializes individual git operations; it cannot keep
+  # the surface stable for the minutes a QA session takes. The lease can:
+  # while held, merge-base / switch / reset-base from any *other* ticket
+  # BLOCK (qa_lease_guard), so a PASS verdict always describes the surface
+  # it was measured on. Reentrant for the owner (acquire refreshes); a stale
+  # lease (age > ttl) is stolen loudly — a crashed run must not wedge the
+  # queue. Parallel-QA protocol: acquire → switch <ticket> → run qa (fixes
+  # commit in the worktree, re-run switch) → set-verdict → release.
+  qa-lease)
+    QL_VERB="${1:-}"; [ $# -gt 0 ] && shift || true
+    QL_TICKET="" QL_TTL=60 QL_FORCE=false
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --ticket) QL_TICKET="$2"; shift 2 ;;
+        --ttl-min) QL_TTL="$2"; shift 2 ;;
+        --force) QL_FORCE=true; shift ;;
+        *) echo "qa-lease: unknown arg '$1'" >&2; exit 2 ;;
+      esac
+    done
+    [ -n "$QL_TICKET" ] || QL_TICKET="$TICKET"
+    command -v git >/dev/null 2>&1 || { echo "qa-lease: git not found" >&2; exit 2; }
+    if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+      echo "qa-lease: not in a git work tree" >&2; exit 2
+    fi
+    QL_PRIMARY="$(git worktree list --porcelain 2>/dev/null | sed -n 's/^worktree //p' | head -1)"
+    [ -z "$QL_PRIMARY" ] && QL_PRIMARY="$(git rev-parse --show-toplevel)"
+    QL_GITDIR="$(git -C "$QL_PRIMARY" rev-parse --absolute-git-dir 2>/dev/null)"
+    QL_DIR="$QL_GITDIR/bbs-qa-lease"
+    ql_read() { sed -n "s/^$1=//p" "$QL_DIR/owner" 2>/dev/null | head -1; }
+    ql_write_owner() {
+      printf 'owner=%s\npid=%s\nsince=%s\nsince_epoch=%s\nttl_min=%s\n' \
+        "$QL_TICKET" "$$" "$(iso_now)" "$(date +%s)" "$QL_TTL" > "$QL_DIR/owner"
+    }
+    ql_age_min() {
+      local since now; since="$(ql_read since_epoch)"; now="$(date +%s)"
+      echo $(( (now - ${since:-$now}) / 60 ))
+    }
+    case "$QL_VERB" in
+      acquire)
+        if [ -z "$QL_TICKET" ]; then
+          echo "qa-lease: no owner — no ticket in scope and no --ticket given" >&2; exit 2
+        fi
+        if mkdir "$QL_DIR" 2>/dev/null; then
+          ql_write_owner
+          [ -n "$TICKET" ] && history_append "qa_lease_acquire" "${AGENT_ROLE:-${GT_ROLE:-developer}}" \
+            "$(printf '{"owner":"%s","ttl_min":%s}' "$QL_TICKET" "$QL_TTL")"
+          echo "OWNER=$QL_TICKET"; echo "TTL_MIN=$QL_TTL"; echo "ACQUIRED=1"
+          exit 0
+        fi
+        QL_OWNER="$(ql_read owner)"
+        if [ -n "$QL_OWNER" ] && [ "$QL_OWNER" = "$QL_TICKET" ]; then
+          ql_write_owner
+          echo "OWNER=$QL_TICKET"; echo "TTL_MIN=$QL_TTL"; echo "ACQUIRED=1"; echo "REFRESHED=1"
+          exit 0
+        fi
+        QL_AGE="$(ql_age_min)"
+        QL_HELD_TTL="$(ql_read ttl_min)"; [ -n "$QL_HELD_TTL" ] || QL_HELD_TTL=60
+        if [ -z "$QL_OWNER" ] || [ "$QL_AGE" -gt "$QL_HELD_TTL" ]; then
+          rm -rf "$QL_DIR" 2>/dev/null
+          if mkdir "$QL_DIR" 2>/dev/null; then
+            ql_write_owner
+            echo "qa-lease: stole stale lease from '${QL_OWNER:-unknown}' (${QL_AGE}min > ${QL_HELD_TTL}min ttl)" >&2
+            [ -n "$TICKET" ] && history_append "qa_lease_steal" "${AGENT_ROLE:-${GT_ROLE:-developer}}" \
+              "$(printf '{"owner":"%s","stolen_from":"%s","ttl_min":%s}' "$QL_TICKET" "${QL_OWNER:-unknown}" "$QL_TTL")"
+            echo "OWNER=$QL_TICKET"; echo "TTL_MIN=$QL_TTL"; echo "ACQUIRED=1"; echo "STOLE_FROM=${QL_OWNER:-unknown}"
+            exit 0
+          fi
+          QL_OWNER="$(ql_read owner)"; QL_AGE="$(ql_age_min)"
+        fi
+        echo "STATUS: BLOCKED" >&2
+        echo "REASON: qa-lease held by '${QL_OWNER:-unknown}' (${QL_AGE}min into a ${QL_HELD_TTL}min lease) — one QA session at a time on the shared surface." >&2
+        echo "RECOMMENDATION: wait and re-run acquire, or 'bbs-ticket qa-lease release --force' if that run is dead." >&2
+        exit 2
+        ;;
+      release)
+        [ -d "$QL_DIR" ] || { echo "FREE=1"; exit 0; }
+        QL_OWNER="$(ql_read owner)"
+        if [ "$QL_FORCE" != "true" ] && [ -n "$QL_OWNER" ] && [ "$QL_OWNER" != "$QL_TICKET" ]; then
+          echo "STATUS: BLOCKED" >&2
+          echo "REASON: qa-lease belongs to '$QL_OWNER', not '${QL_TICKET:-<none>}' — releasing someone else's lease mid-QA corrupts their verdict." >&2
+          echo "RECOMMENDATION: let the owner release it, or pass --force if that run is dead." >&2
+          exit 2
+        fi
+        rm -rf "$QL_DIR" 2>/dev/null
+        [ -n "$TICKET" ] && history_append "qa_lease_release" "${AGENT_ROLE:-${GT_ROLE:-developer}}" \
+          "$(printf '{"owner":"%s"}' "${QL_OWNER:-unknown}")"
+        echo "RELEASED=1"; echo "OWNER=${QL_OWNER:-unknown}"
+        ;;
+      status)
+        if [ ! -d "$QL_DIR" ]; then echo "FREE"; exit 0; fi
+        echo "OWNER=$(ql_read owner)"
+        echo "AGE_MIN=$(ql_age_min)"
+        echo "TTL_MIN=$(ql_read ttl_min)"
+        ;;
+      *)
+        echo "usage: bbs-ticket qa-lease <acquire|release|status> [--ticket ID] [--ttl-min N] [--force]" >&2
+        exit 2
+        ;;
+    esac
+    ;;
+
+  # session — inspect/rehydrate ~/.babysit/sessions/<uuid>.yaml written by
+  # the preamble session-writer hook (docs/identity.md). `attach` echoes
+  # export lines so a fresh shell can recover ticket identity after a crash.
+  session)
+    SS_VERB="${1:-}"; [ $# -gt 0 ] && shift || true
+    SS_DIR="${BABYSIT_HOME:-$HOME/.babysit}/sessions"
+    case "$SS_VERB" in
+      list)
+        [ -d "$SS_DIR" ] || exit 0
+        SS_NOW="$(date +%s)"
+        SS_CUTOFF=$((SS_NOW - 7200))  # 120m window — matches preamble sweep
+        printf '%-40s %-14s %-6s %s\n' "SESSION_ID" "TICKET" "AGE" "CWD"
+        for SS_F in "$SS_DIR"/*.yaml; do
+          [ -e "$SS_F" ] || continue
+          SS_MT="$(stat -f %m "$SS_F" 2>/dev/null || stat -c %Y "$SS_F" 2>/dev/null || echo 0)"
+          [ "$SS_MT" -lt "$SS_CUTOFF" ] && continue
+          printf '%-40s %-14s %-6s %s\n' \
+            "$(ss_field "$SS_F" session_id)" "$(ss_field "$SS_F" ticket)" \
+            "$(( (SS_NOW - SS_MT) / 60 ))m" "$(ss_field "$SS_F" cwd)"
+        done
+        ;;
+      attach)
+        SS_ID="${1:-}"
+        [ -z "$SS_ID" ] && { echo "usage: bbs-ticket session attach <session-id>" >&2; exit 2; }
+        case "$SS_ID" in *[!A-Za-z0-9_-]*|''|.|..)
+          echo "session attach: invalid session id (allowed: [A-Za-z0-9_-])" >&2; exit 2 ;;
+        esac
+        SS_F="$SS_DIR/$SS_ID.yaml"
+        if [ ! -f "$SS_F" ]; then
+          echo "session attach: no session file at $SS_F" >&2
+          echo "Fix: run 'bbs-ticket session list' to see active sessions." >&2
+          exit 1
+        fi
+        printf 'export BABYSIT_TICKET=%s\n' "$(ss_field "$SS_F" ticket)"
+        printf 'export BABYSIT_SESSION=%s\n' "$SS_ID"
+        ;;
+      end)
+        SS_ID="${1:-}"
+        [ -z "$SS_ID" ] && { echo "usage: bbs-ticket session end <session-id>" >&2; exit 2; }
+        case "$SS_ID" in *[!A-Za-z0-9_-]*|''|.|..)
+          echo "session end: invalid session id (allowed: [A-Za-z0-9_-])" >&2; exit 2 ;;
+        esac
+        rm -f "$SS_DIR/$SS_ID.yaml" 2>/dev/null || true
+        ;;
+      *)
+        echo "usage: bbs-ticket session <list|attach|end> [args]" >&2
+        exit 2
+        ;;
+    esac
+    ;;
+
+  # find-similar — read-only search for open tickets whose slug + requirement
+  # overlap with a free-text input. Powers the inline-requirement entry in
+  # /bbs:autopilot so a user who retypes an existing feature request sees the match
+  # before a duplicate ticket is cut.
+  #
+  # Scoring: containment of input tokens in the ticket bag — |A∩B| / |A|
+  # where A = stop-word-filtered tokens of --from-input, B = tokens from the
+  # branch slug ∪ requirement.md body. Containment (not Jaccard) because the
+  # input is typically a short user ask while the ticket bag is long, and we
+  # want "does this request mostly appear in this ticket" rather than
+  # symmetric set similarity. Tickets with status in {done, cancelled, merged}
+  # are skipped.
+  #
+  # Output: one match per line, tab-separated: <ticket-id>\t<score>\t<slug>
+  # No matches → empty stdout, exit 0. Always exits 0 unless args are invalid.
+  find-similar)
+    FROM_INPUT=""; LIMIT=3; MIN_SCORE="0.6"
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --from-input)      FROM_INPUT="$2"; shift 2 ;;
+        --from-input-file) FROM_INPUT="$(cat "$2" 2>/dev/null || true)"; shift 2 ;;
+        --limit)           LIMIT="$2"; shift 2 ;;
+        --min-score)       MIN_SCORE="$2"; shift 2 ;;
+        *) shift ;;
+      esac
+    done
+    if [ -z "$FROM_INPUT" ]; then
+      echo "find-similar: --from-input <text> required" >&2
+      exit 2
+    fi
+    TDIR="$PROJECT_HOME/tickets"
+    [ -d "$TDIR" ] || exit 0
+    _py - "$TDIR" "$FROM_INPUT" "$LIMIT" "$MIN_SCORE" <<'EOF'
+import json, os, re, sys
+
+TDIR, INPUT = sys.argv[1], sys.argv[2]
+try:
+    LIMIT = int(sys.argv[3])
+    MIN   = float(sys.argv[4])
+except ValueError:
+    print("find-similar: --limit and --min-score must be numeric", file=sys.stderr)
+    sys.exit(2)
+
+# Verbs/articles/common filler that would otherwise inflate the intersection
+# between unrelated tickets. Kept small — too aggressive a list would also
+# drop domain tokens.
+STOP = {
+    "a","an","the","and","or","of","to","for","in","on","with","that","this",
+    "is","are","be","it","its","by","as","at","from","into","but","not","no",
+    "so","if","then","than","i","we","you","they","he","she","my","your",
+    "build","create","add","fix","make","do","run","new","use","using",
+}
+
+def tok(text):
+    if not text:
+        return set()
+    parts = re.findall(r"[a-z0-9]+", text.lower())
+    # drop stop-words and 1-char noise
+    return {p for p in parts if p not in STOP and len(p) > 1}
+
+def slug_from_branch(branch):
+    # branch shape: feat/bs-xxxxxxxx_<slug> (or fix/chore/bug/refactor)
+    m = re.match(r"^[a-z]+/bs-[a-z0-9]+_(.+)$", branch or "")
+    return m.group(1) if m else ""
+
+input_tokens = tok(INPUT)
+if not input_tokens:
+    sys.exit(0)
+
+CLOSED = {"done", "cancelled", "merged"}
+results = []
+try:
+    entries = sorted(os.listdir(TDIR))
+except OSError:
+    sys.exit(0)
+
+for tid in entries:
+    th = os.path.join(TDIR, tid)
+    idx = os.path.join(th, "index.json")
+    if not os.path.isfile(idx):
+        continue
+    try:
+        with open(idx) as fh:
+            data = json.load(fh)
+    except Exception:
+        continue
+    if data.get("status") in CLOSED:
+        continue
+    branch = (data.get("pointers") or {}).get("branch") or ""
+    slug = slug_from_branch(branch)
+    slug_tokens = tok(slug)
+    req_tokens = set()
+    rpath = os.path.join(th, "requirement.md")
+    if os.path.isfile(rpath):
+        try:
+            with open(rpath) as fh:
+                req_tokens = tok(fh.read())
+        except Exception:
+            pass
+    ticket_tokens = slug_tokens | req_tokens
+    if not ticket_tokens:
+        continue
+    inter = input_tokens & ticket_tokens
+    # containment of input in ticket bag — see header comment for rationale
+    score = len(inter) / len(input_tokens)
+    if score >= MIN:
+        results.append((score, tid, slug or tid))
+
+results.sort(key=lambda r: (-r[0], r[1]))
+for score, tid, slug in results[:LIMIT]:
+    print(f"{tid}\t{score:.3f}\t{slug}")
+EOF
+    exit 0
+    ;;
+
+  path)
+    KIND="${1:-}"
+    [ $# -gt 0 ] && shift
+    _PATH_KIND="$KIND"
+
+    # No kind → print full kind table + examples (usage → exit 2).
+    if [ -z "$KIND" ]; then
+      _print_path_help
+      exit 2
+    fi
+
+    # Validate kind enum upfront so unknown-kind errors come from one place.
+    case "$KIND" in
+      home|index|requirement|design|plan|manifest|history|checkpoint) ;;
+      handoff|verdict|review|evidence|sub-ticket|worktree) ;;
+      *)
+        echo "bbs-ticket path: $KIND: unknown kind (try: bbs-ticket path)" >&2
+        exit 2 ;;
+    esac
+
+    # Parse mode + selectors.
+    MODE=""; PSKILL=""; PNAME=""; PSEQ=""; PSLUG=""; PLATEST=0
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --read)   MODE="read"; shift ;;
+        --write)  MODE="write"; shift ;;
+        --skill)  PSKILL="${2:-}"; shift 2 ;;
+        --name)   PNAME="${2:-}"; shift 2 ;;
+        --seq)    PSEQ="${2:-}"; shift 2 ;;
+        --slug)   PSLUG="${2:-}"; shift 2 ;;
+        --latest) PLATEST=1; shift ;;
+        *)
+          echo "bbs-ticket path: $KIND: unknown selector '$1'" >&2
+          _print_path_kind_help "$KIND" || true
+          exit 2 ;;
+      esac
+    done
+
+    # No mode → print kind-specific help (usage → exit 2).
+    if [ -z "$MODE" ]; then
+      _print_path_kind_help "$KIND"
+      exit 2
+    fi
+
+    # Reject append-only writers — these go through add-handoff/set-verdict/set-review,
+    # which hold the index lock and update LATEST atomically.
+    if [ "$MODE" = "write" ]; then
+      case "$KIND" in
+        handoff)
+          echo "bbs-ticket path: handoff: --write rejected, use \`bbs-ticket add-handoff --skill S --status STATUS\` instead" >&2
+          exit 2 ;;
+        verdict)
+          echo "bbs-ticket path: verdict: --write rejected, use \`bbs-ticket set-verdict --skill S\` instead" >&2
+          exit 2 ;;
+        review)
+          echo "bbs-ticket path: review: --write rejected, use \`bbs-ticket set-review --skill S\` instead" >&2
+          exit 2 ;;
+        worktree)
+          echo "bbs-ticket path: worktree: --write rejected; worktree path is derived from manifest.yaml" >&2
+          exit 2 ;;
+      esac
+    fi
+
+    # Validate selector values (path-traversal → exit 3, other → exit 2).
+    if [ -n "$PSKILL" ]; then PSKILL="$(_safe_path_component skill "$PSKILL")" || exit $?; fi
+    if [ -n "$PNAME" ];  then PNAME="$(_safe_path_component name "$PNAME")"   || exit $?; fi
+    if [ -n "$PSLUG" ];  then PSLUG="$(_safe_path_component slug "$PSLUG")"   || exit $?; fi
+    if [ -n "$PSEQ" ];   then PSEQ="$(_safe_seq "$PSEQ")"                     || exit $?; fi
+
+    # Per-kind required-selector checks.
+    case "$KIND" in
+      verdict|review)
+        [ -z "$PSKILL" ] && {
+          echo "bbs-ticket path: $KIND: --skill is required (try: bbs-ticket path $KIND --skill <name> --read)" >&2
+          exit 2; } ;;
+      evidence)
+        [ -z "$PSKILL" ] && {
+          echo "bbs-ticket path: evidence: --skill is required (try: bbs-ticket path evidence --skill <name> --name <file> --write)" >&2
+          exit 2; }
+        if [ "$MODE" = "write" ] && [ -z "$PNAME" ]; then
+          echo "bbs-ticket path: evidence: --name is required for --write" >&2
+          exit 2
+        fi ;;
+      sub-ticket)
+        if [ "$MODE" = "write" ]; then
+          [ -z "$PSEQ" ]  && { echo "bbs-ticket path: sub-ticket: --seq is required for --write"  >&2; exit 2; }
+          [ -z "$PSLUG" ] && { echo "bbs-ticket path: sub-ticket: --slug is required for --write" >&2; exit 2; }
+        fi ;;
+    esac
+
+    need_ticket
+    TH="$(ticket_home)"
+
+    # Build canonical path. For some handoff/sub-ticket reads we resolve via
+    # glob → may stay empty if no match.
+    CANONICAL=""
+    case "$KIND" in
+      home)        CANONICAL="$TH" ;;
+      index)       CANONICAL="$TH/index.json" ;;
+      requirement) CANONICAL="$TH/requirement.md" ;;
+      design)      CANONICAL="$TH/design.md" ;;
+      plan)        CANONICAL="$TH/plan.md" ;;
+      manifest)    CANONICAL="$TH/manifest.md" ;;
+      history)     CANONICAL="$TH/history.jsonl" ;;
+      checkpoint)  CANONICAL="$TH/checkpoint.json" ;;
+      verdict)     CANONICAL="$TH/verdicts/$PSKILL.md" ;;
+      review)      CANONICAL="$TH/reviews/$PSKILL.md" ;;
+      evidence)
+        if [ -n "$PNAME" ]; then CANONICAL="$TH/evidence/$PSKILL/$PNAME"
+        else                     CANONICAL="$TH/evidence/$PSKILL"
+        fi ;;
+      sub-ticket)
+        if [ -n "$PSEQ" ] && [ -n "$PSLUG" ]; then
+          CANONICAL="$TH/sub-tickets/$(printf '%03d' "$PSEQ")-$PSLUG.md"
+        elif [ -n "$PSEQ" ]; then
+          for f in "$TH"/sub-tickets/"$(printf '%03d' "$PSEQ")"-*.md; do
+            [ -e "$f" ] && { CANONICAL="$f"; break; }
+          done
+        elif [ -n "$PSLUG" ]; then
+          for f in "$TH"/sub-tickets/[0-9][0-9][0-9]-"$PSLUG".md; do
+            [ -e "$f" ] && { CANONICAL="$f"; break; }
+          done
+        fi ;;
+      handoff)
+        if [ "$PLATEST" = "1" ]; then
+          if [ -n "$PSKILL" ]; then
+            for f in "$TH"/handoffs/[0-9][0-9][0-9]-"$PSKILL"-*.md; do
+              [ -e "$f" ] && CANONICAL="$f"
+            done
+          else
+            L="$TH/handoffs/LATEST"
+            if [ -f "$L" ]; then
+              _LATEST_NAME="$(cat "$L")"
+              # Validate before composing — LATEST is plain text on disk.
+              case "$_LATEST_NAME" in
+                ""|*/*|*..*|.*)
+                  echo "bbs-ticket path handoff: LATEST contains invalid name '$_LATEST_NAME'" >&2
+                  exit 3 ;;
+                *)
+                  CANONICAL="$TH/handoffs/$_LATEST_NAME" ;;
+              esac
+            fi
+          fi
+        elif [ -n "$PSEQ" ]; then
+          PADDED="$(printf '%03d' "$PSEQ")"
+          if [ -n "$PSKILL" ]; then
+            for f in "$TH"/handoffs/"$PADDED"-"$PSKILL"-*.md; do
+              [ -e "$f" ] && { CANONICAL="$f"; break; }
+            done
+          else
+            for f in "$TH"/handoffs/"$PADDED"-*.md; do
+              [ -e "$f" ] && { CANONICAL="$f"; break; }
+            done
+          fi
+        else
+          # No selector: directory ref. Useful for `path handoff --read`
+          # to find the handoffs dir, but don't legacy-fall-back here.
+          CANONICAL="$TH/handoffs"
+        fi ;;
+      worktree)
+        # Read worktree path from manifest.yaml. Matches repo whose name ==
+        # current repo basename; falls back to first repo. Empty → no manifest.
+        _WT_MPATH="$(manifest_path)"
+        if [ -f "$_WT_MPATH" ]; then
+          _WT_PRODUCT_ROOT=""
+          _WT_CURRENT_REPO="$(basename "$(git rev-parse --show-toplevel 2>/dev/null || echo "")")"
+          # Write Python to temp file to avoid shell-parser quote confusion
+          # when the script contains '"' inside a $() substitution.
+          _WT_PY_TMP="$(mktemp /tmp/bbs_wt_XXXXXX.py)" || { exit 0; }
+          cat > "$_WT_PY_TMP" <<'PYEOF'
+import sys, os
+mpath, current_repo, product_root = sys.argv[1], sys.argv[2], sys.argv[3]
+try:
+    with open(mpath) as fh:
+        lines = fh.read().splitlines()
+except OSError:
+    sys.exit(0)
+
+repos = []
+cur = None
+for ln in lines:
+    if ln.startswith("  - "):
+        cur = {}; repos.append(cur)
+        kv = ln[4:].strip()
+        if ":" in kv:
+            k, v = kv.split(":", 1); cur[k.strip()] = v.strip()
+    elif ln.startswith("    ") and cur is not None:
+        kv = ln.strip()
+        if ":" in kv:
+            k, v = kv.split(":", 1); cur[k.strip()] = v.strip()
+
+def unquote(v):
+    v = v.strip()
+    if len(v) >= 2 and v[0] == v[-1] and v[0] in (chr(39), chr(34)):
+        inner = v[1:-1]
+        if v[0] == chr(39):
+            return inner.replace(chr(39)*2, chr(39))
+        return inner
+    return v
+
+matched = None
+for r in repos:
+    if unquote(r.get("name","")) == current_repo:
+        matched = r; break
+if matched is None and repos:
+    matched = repos[0]
+if not matched:
+    sys.exit(0)
+
+wt = unquote(matched.get("worktree", ""))
+if not wt or wt == ".":
+    sys.exit(0)
+
+if not os.path.isabs(wt):
+    if product_root:
+        wt = os.path.normpath(os.path.join(product_root, wt))
+    else:
+        sys.exit(0)
+print(wt)
+PYEOF
+          _WT_PATH="$(python3 "$_WT_PY_TMP" "$_WT_MPATH" "$_WT_CURRENT_REPO" "$_WT_PRODUCT_ROOT" 2>/dev/null)"
+          rm -f "$_WT_PY_TMP"
+          if [ -n "$_WT_PATH" ]; then
+            printf '%s\n' "$_WT_PATH"
+          fi
+        fi
+        # worktree --read exits here regardless (empty = no manifest, not an error)
+        exit 0 ;;
+    esac
+
+    # ── --write: emit canonical, mkdir -p parent, exit 0.
+    if [ "$MODE" = "write" ]; then
+      if [ "$KIND" = "home" ]; then
+        mkdir -p "$CANONICAL" 2>/dev/null || true
+      else
+        mkdir -p "$(dirname "$CANONICAL")" 2>/dev/null || true
+      fi
+      printf '%s\n' "$CANONICAL"
+      exit 0
+    fi
+
+    # ── --read: walk canonical → legacy fallbacks.
+    CANONICAL_HIT=0
+    [ -n "$CANONICAL" ] && [ -e "$CANONICAL" ] && CANONICAL_HIT=1
+
+    # Pre-collect legacy hits (we need them for both dual-presence and fallback).
+    LEGACY_HIT=""
+    while IFS= read -r p; do
+      [ -z "$p" ] && continue
+      if [ -e "$p" ]; then LEGACY_HIT="$p"; break; fi
+    done < <(_legacy_paths "$KIND" "$PSKILL" "$PLATEST" "$PSEQ" "$PSLUG")
+
+    # Dual-presence guard: ALWAYS emit BBS_PATH_DUAL stderr (not telemetry-gated).
+    # Returning canonical silently when a stale legacy shadow exists masks divergence.
+    if [ "$CANONICAL_HIT" = "1" ] && [ -n "$LEGACY_HIT" ]; then
+      echo "BBS_PATH_DUAL $KIND $CANONICAL $LEGACY_HIT" >&2
+      _path_telemetry_append "$KIND" "dual" "$CANONICAL" "$LEGACY_HIT"
+    fi
+
+    # Canonical wins.
+    if [ "$CANONICAL_HIT" = "1" ]; then
+      printf '%s\n' "$CANONICAL"
+      exit 0
+    fi
+
+    # Fall back to legacy.
+    if [ -n "$LEGACY_HIT" ]; then
+      _today="$(date +%Y-%m-%d)"
+      # Sunset warning (post-sunset_date, unconditional).
+      if [[ "$_today" > "$_LEGACY_SUNSET" ]]; then
+        echo "BBS_PATH_LEGACY_SUNSET $KIND $LEGACY_HIT (sunset $_LEGACY_SUNSET, hard-fail $_LEGACY_HARDFAIL)" >&2
+      fi
+      # Hard-fail-imminent escalation (14d window).
+      if [[ "$_today" > "$_LEGACY_HARDFAIL_WARN_FROM" ]]; then
+        # Days remaining (best-effort; falls back to a generic message).
+        _days_left=""
+        _days_left="$( {
+          date_to_epoch() {
+            date -j -f %Y-%m-%d "$1" +%s 2>/dev/null \
+              || date -d "$1" +%s 2>/dev/null
+          }
+          a="$(date_to_epoch "$_LEGACY_HARDFAIL")"
+          b="$(date_to_epoch "$_today")"
+          [ -n "$a" ] && [ -n "$b" ] && echo $(( (a - b) / 86400 ))
+        } )"
+        echo "BBS_PATH_HARDFAIL_IN ${_days_left:-?}d $KIND $LEGACY_HIT" >&2
+      fi
+      # Telemetry (default ON; opt-out via BBS_PATH_TELEMETRY=0).
+      if [ "${BBS_PATH_TELEMETRY:-1}" != "0" ]; then
+        echo "BBS_PATH_FALLBACK $KIND $LEGACY_HIT" >&2
+        _path_telemetry_append "$KIND" "fallback" "$CANONICAL" "$LEGACY_HIT"
+      fi
+      printf '%s\n' "$LEGACY_HIT"
+      exit 0
+    fi
+
+    # Nothing resolves.
+    if [ -n "$CANONICAL" ]; then
+      echo "bbs-ticket path: $KIND: not found at $CANONICAL (legacy fallbacks also empty)" >&2
+    else
+      echo "bbs-ticket path: $KIND: not found (no matching files)" >&2
+    fi
+    exit 1
+    ;;
+
+  list)
+    KIND="${1:-}"
+    [ $# -gt 0 ] && shift
+    _PATH_KIND="$KIND"
+    if [ -z "$KIND" ]; then
+      echo "bbs-ticket list: <kind> required (try: bbs-ticket path)" >&2
+      exit 2
+    fi
+    case "$KIND" in
+      handoff|verdict|review|evidence|sub-ticket) ;;
+      *)
+        echo "bbs-ticket list: $KIND: kind is not listable" >&2
+        exit 2 ;;
+    esac
+
+    PSKILL=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --skill) PSKILL="${2:-}"; shift 2 ;;
+        *) echo "bbs-ticket list: $KIND: unknown selector '$1'" >&2; exit 2 ;;
+      esac
+    done
+    if [ -n "$PSKILL" ]; then PSKILL="$(_safe_path_component skill "$PSKILL")" || exit $?; fi
+
+    need_ticket
+    TH="$(ticket_home)"
+    case "$KIND" in
+      handoff)
+        if [ -n "$PSKILL" ]; then
+          for f in "$TH"/handoffs/[0-9][0-9][0-9]-"$PSKILL"-*.md; do
+            [ -e "$f" ] && printf '%s\n' "$f"
+          done | sort
+        else
+          for f in "$TH"/handoffs/[0-9][0-9][0-9]-*.md; do
+            [ -e "$f" ] && printf '%s\n' "$f"
+          done | sort
+        fi ;;
+      verdict)
+        for f in "$TH"/verdicts/*.md; do [ -e "$f" ] && printf '%s\n' "$f"; done | sort ;;
+      review)
+        for f in "$TH"/reviews/*.md; do [ -e "$f" ] && printf '%s\n' "$f"; done | sort ;;
+      evidence)
+        if [ -n "$PSKILL" ]; then
+          [ -d "$TH/evidence/$PSKILL" ] && find "$TH/evidence/$PSKILL" -type f 2>/dev/null | sort
+        else
+          [ -d "$TH/evidence" ] && find "$TH/evidence" -type f 2>/dev/null | sort
+        fi ;;
+      sub-ticket)
+        for f in "$TH"/sub-tickets/[0-9][0-9][0-9]-*.md; do
+          [ -e "$f" ] && printf '%s\n' "$f"
+        done | sort ;;
+    esac
+    exit 0
+    ;;
+
+  reconcile)
+    # Infer ticket status from observable filesystem state and advance
+    # index.json.status when it lags. Conservative — only moves along the
+    # ladder triage < backlog < planned < decomposed < in_review; never
+    # downgrades, never overwrites terminal/explicit states (done, blocked,
+    # cancelled, duplicate, in_progress). Skips git/PR probes for v1; the
+    # signals that matter are filesystem (requirement.md / plan.md /
+    # manifest.md) and manifest.yaml.repos[].pushed.
+    RC_ALL=0; RC_DRY=0; RC_QUIET=0; RC_ONE=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --all)     RC_ALL=1; shift ;;
+        --dry-run) RC_DRY=1; shift ;;
+        --quiet)   RC_QUIET=1; shift ;;
+        --ticket)  RC_ONE="${2:-}"; shift 2 ;;
+        *) echo "reconcile: unknown arg '$1'" >&2; exit 2 ;;
+      esac
+    done
+    if [ "$RC_ALL" = "1" ] && [ -n "$RC_ONE" ]; then
+      echo "reconcile: --all and --ticket are mutually exclusive" >&2; exit 2
+    fi
+
+    # Per-ticket reconcile. $1 = ticket id. Reads $PROJECT_HOME/tickets/<id>/.
+    rc_one() {
+      local tid="$1" th idx cur target
+      th="$PROJECT_HOME/tickets/$(safe "$tid")"
+      idx="$th/index.json"
+      [ -f "$idx" ] || { [ "$RC_QUIET" = "1" ] || echo "$tid: skip (no index.json)"; return 0; }
+
+      cur="$(json_read "$idx" status)"
+      [ -z "$cur" ] && cur="triage"
+
+      target="$(_py - "$th" <<'EOF'
+import os, sys
+th = sys.argv[1]
+def has(name):
+    try: return os.path.getsize(os.path.join(th, name)) > 0
+    except OSError: return False
+
+pushed = False
+my = os.path.join(th, "manifest.yaml")
+if os.path.exists(my):
+    try:
+        with open(my) as fh:
+            for ln in fh:
+                if ln.startswith("    pushed:") and ln.split(":", 1)[1].strip() == "true":
+                    pushed = True; break
+    except OSError:
+        pass
+
+if pushed:                  print("in_review")
+elif has("manifest.md"):    print("decomposed")
+elif has("plan.md"):        print("planned")
+elif has("requirement.md"): print("backlog")
+else:                       print("triage")
+EOF
+)"
+
+      # Rank ladder for advance-only check. Anything not listed (done,
+      # blocked, cancelled, duplicate, in_progress, unknown) gets rank=-1
+      # and is left alone — terminal, explicit, or already past where
+      # filesystem signals can reach.
+      local cur_r tgt_r
+      case "$cur" in
+        triage)     cur_r=0 ;;
+        backlog)    cur_r=1 ;;
+        planned)    cur_r=2 ;;
+        decomposed) cur_r=3 ;;
+        in_review)  cur_r=5 ;;
+        *)          cur_r=-1 ;;
+      esac
+      case "$target" in
+        triage)     tgt_r=0 ;;
+        backlog)    tgt_r=1 ;;
+        planned)    tgt_r=2 ;;
+        decomposed) tgt_r=3 ;;
+        in_review)  tgt_r=5 ;;
+        *)          tgt_r=-1 ;;
+      esac
+
+      if [ "$cur_r" = "-1" ]; then
+        [ "$RC_QUIET" = "1" ] || echo "$tid: $cur (skip — terminal/explicit)"
+        return 0
+      fi
+      if [ "$tgt_r" -le "$cur_r" ]; then
+        [ "$RC_QUIET" = "1" ] || echo "$tid: $cur (no advancement; derived=$target)"
+        return 0
+      fi
+
+      if [ "$RC_DRY" = "1" ]; then
+        echo "$tid: $cur -> $target (dry-run)"
+        return 0
+      fi
+
+      # Re-invoke ourselves so set-status's lock + history_append fire. The
+      # subprocess gets a clean BABYSIT_TICKET; AGENT_ROLE flows through.
+      if BABYSIT_TICKET="$tid" "$0" set-status "$target" >/dev/null; then
+        echo "$tid: $cur -> $target"
+      else
+        echo "$tid: $cur -> $target FAILED" >&2
+        return 1
+      fi
+    }
+
+    if [ "$RC_ALL" = "1" ]; then
+      [ -d "$PROJECT_HOME/tickets" ] || { echo "reconcile: no tickets dir at $PROJECT_HOME/tickets" >&2; exit 0; }
+      _rc_rc=0
+      for d in "$PROJECT_HOME"/tickets/*/; do
+        [ -d "$d" ] || continue
+        _tid="$(basename "$d")"
+        rc_one "$_tid" || _rc_rc=$?
+      done
+      exit "$_rc_rc"
+    fi
+
+    if [ -n "$RC_ONE" ]; then
+      rc_one "$RC_ONE"
+      exit $?
+    fi
+
+    need_ticket
+    rc_one "$TICKET"
+    exit $?
+    ;;
+
+  # board — read-only aggregated view: every ticket in this project joined
+  # with its manifest (branch/pushed), verdicts (qa, review-pr), live session,
+  # PR pointer, and siblings, plus who holds the qa-lease and what the primary
+  # checkout is serving. Zero mutation — safe to run any time, from anywhere
+  # in the repo. Skips done/cancelled/duplicate unless --all; --pr asks gh for
+  # each PR's state (the only part that touches the network).
+  board)
+    BD_PR=0 BD_ALL=0
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --pr)  BD_PR=1; shift ;;
+        --all) BD_ALL=1; shift ;;
+        *) echo "board: unknown arg '$1'" >&2; exit 2 ;;
+      esac
+    done
+    [ -d "$PROJECT_HOME/tickets" ] || { echo "board: no tickets at $PROJECT_HOME/tickets" >&2; exit 0; }
+    BD_PRIMARY="" BD_GITDIR="" BD_REPO=""
+    if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+      BD_PRIMARY="$(git worktree list --porcelain 2>/dev/null | sed -n 's/^worktree //p' | head -1)"
+      [ -z "$BD_PRIMARY" ] && BD_PRIMARY="$(git rev-parse --show-toplevel)"
+      BD_GITDIR="$(git -C "$BD_PRIMARY" rev-parse --absolute-git-dir 2>/dev/null)"
+      BD_REPO="$(basename "$BD_PRIMARY")"
+    fi
+    BD_SESS_DIR="${BABYSIT_HOME:-$HOME/.babysit}/sessions"
+    BD_NOW="$(date +%s)"
+    bd_session_for() {  # $1 = ticket → "id… (Xm)" for the freshest live session
+      local f t mt
+      [ -d "$BD_SESS_DIR" ] || return 0
+      for f in "$BD_SESS_DIR"/*.yaml; do
+        [ -e "$f" ] || continue
+        mt="$(stat -f %m "$f" 2>/dev/null || stat -c %Y "$f" 2>/dev/null || echo 0)"
+        [ $((BD_NOW - mt)) -gt 7200 ] && continue   # 120m window, matches session list
+        t="$(ss_field "$f" ticket)"
+        [ "$t" = "$1" ] || continue
+        printf '%s(%sm)' "$(ss_field "$f" session_id | head -c 12)" "$(( (BD_NOW - mt) / 60 ))"
+        return 0
+      done
+    }
+    bd_sib_tsv() {  # $1 = siblings JSON → "role<TAB>repo<TAB>ticket" lines
+      _py - "$1" <<'EOF'
+import json, sys
+try:
+    sibs = json.loads(sys.argv[1])
+except Exception:
+    sys.exit(0)
+for s in sibs or []:
+    print(f"{s.get('role','')}\t{s.get('repo','')}\t{s.get('ticket','')}")
+EOF
+    }
+    printf '%-14s %-12s %-9s %-9s %-7s %-16s %-12s %s\n' \
+      "TICKET" "STATUS" "QA" "REVIEW" "PUSHED" "SESSION" "PR" "BRANCH"
+    for BD_D in "$PROJECT_HOME"/tickets/*/; do
+      [ -d "$BD_D" ] || continue
+      BD_T="$(basename "$BD_D")"
+      BD_IDX="${BD_D%/}/index.json"
+      BD_STATUS="$(json_read "$BD_IDX" status)"; [ -n "$BD_STATUS" ] || BD_STATUS="triage"
+      if [ "$BD_ALL" != "1" ]; then
+        case "$BD_STATUS" in done|cancelled|duplicate) continue ;; esac
+      fi
+      BD_BRANCH="-" BD_PUSHED="-"
+      if [ -f "${BD_D%/}/manifest.yaml" ]; then
+        BD_ROW="$(_py - "$(manifest_read "${BD_D%/}/manifest.yaml" 2>/dev/null)" "$BD_REPO" <<'EOF'
+import json, sys
+try:
+    d = json.loads(sys.argv[1])
+except Exception:
+    sys.exit(0)
+repos = d.get("repos") or []
+r = next((x for x in repos if x.get("name") == sys.argv[2]), repos[0] if repos else None)
+if r:
+    print(f"{r.get('branch','')}\t{r.get('pushed','')}")
+EOF
+)"
+        [ -n "$BD_ROW" ] && {
+          BD_BRANCH="$(printf '%s' "$BD_ROW" | cut -f1)"
+          BD_PUSHED="$(printf '%s' "$BD_ROW" | cut -f2)"
+        }
+      fi
+      BD_QA="$(BABYSIT_TICKET="$BD_T" "$0" verdict-status --skill qa 2>/dev/null || true)"
+      BD_RV="$(BABYSIT_TICKET="$BD_T" "$0" verdict-status --skill review-pr 2>/dev/null || true)"
+      BD_SESSION="$(bd_session_for "$BD_T")"
+      BD_PRURL="$(json_read "$BD_IDX" pointers.pr)"
+      BD_PRDISP="-" BD_MERGED=""
+      if [ -n "$BD_PRURL" ]; then
+        BD_PRDISP="$(printf '%s' "$BD_PRURL" | sed -n 's|.*/pull/|#|p')"
+        [ -n "$BD_PRDISP" ] || BD_PRDISP="$BD_PRURL"
+        if [ "$BD_PR" = "1" ]; then
+          BD_PRSTATE="$(gh pr view "$BD_PRURL" --json state -q .state 2>/dev/null || true)"
+          [ -n "$BD_PRSTATE" ] && BD_PRDISP="$BD_PRDISP $BD_PRSTATE"
+          [ "$BD_PRSTATE" = "MERGED" ] && BD_MERGED=1
+        fi
+      fi
+      printf '%-14s %-12s %-9s %-9s %-7s %-16s %-12s %s\n' \
+        "$BD_T" "$BD_STATUS" "${BD_QA:-none}" "${BD_RV:-none}" "$BD_PUSHED" \
+        "${BD_SESSION:--}" "$BD_PRDISP" "$BD_BRANCH"
+      [ -n "$BD_MERGED" ] && \
+        echo "  ↳ PR merged — next: bbs-ticket reset-base; BABYSIT_TICKET=$BD_T bbs-ticket set-status done"
+      BD_SIBS="$(bd_sib_tsv "$(json_read "$BD_IDX" siblings)")"
+      while IFS="$(printf '\t')" read -r bd_role bd_repo bd_st; do
+        [ -n "$bd_st" ] || continue
+        bd_path="$(_related_repo_path "$bd_role" "$BD_PRIMARY")" || {
+          echo "  └─ $bd_role:$bd_st ($bd_repo) — path unresolved (RELATED repo env unset)"
+          continue
+        }
+        if [ ! -d "$bd_path" ]; then
+          echo "  └─ $bd_role:$bd_st ($bd_repo) — path '$bd_path' missing"
+          continue
+        fi
+        bd_slug="$(cd "$bd_path" 2>/dev/null && eval "$("$SLUG_BIN" env 2>/dev/null)" && printf '%s' "${SLUG:-}")"
+        bd_home="${BABYSIT_HOME:-$HOME/.babysit}/projects/$bd_slug"
+        bd_sst="$(json_read "$bd_home/tickets/$bd_st/index.json" status)"
+        bd_sqa="$(BABYSIT_PROJECT_HOME="$bd_home" BABYSIT_TICKET="$bd_st" "$0" verdict-status --skill qa 2>/dev/null || true)"
+        echo "  └─ $bd_role:$bd_st ($(basename "$bd_path")) status=${bd_sst:-?} qa=${bd_sqa:-none}"
+      done <<EOF
+$BD_SIBS
+EOF
+    done
+    if [ -n "$BD_GITDIR" ]; then
+      if [ -d "$BD_GITDIR/bbs-qa-lease" ]; then
+        bd_owner="$(sed -n 's/^owner=//p' "$BD_GITDIR/bbs-qa-lease/owner" 2>/dev/null | head -1)"
+        bd_since="$(sed -n 's/^since_epoch=//p' "$BD_GITDIR/bbs-qa-lease/owner" 2>/dev/null | head -1)"
+        bd_ttl="$(sed -n 's/^ttl_min=//p' "$BD_GITDIR/bbs-qa-lease/owner" 2>/dev/null | head -1)"
+        echo "QA-LEASE: ${bd_owner:-unknown} ($(( (BD_NOW - ${bd_since:-$BD_NOW}) / 60 ))min into ${bd_ttl:-60}min ttl)"
+      else
+        echo "QA-LEASE: FREE"
+      fi
+      BD_SERVING="$(cat "$BD_GITDIR/bbs-serving" 2>/dev/null || true)"
+      echo "SERVING: ${BD_SERVING:-(base only)}"
+    fi
+    exit 0
+    ;;
+
+  assert-cwd)
+    # Historical product-mode cwd guard. Single-repo mode never enforced a
+    # cwd (worktree identity flows through BABYSIT_TICKET / manifest.yaml),
+    # so with product mode removed this is a compatibility no-op — skills
+    # still call it at step 0.
+    exit 0
+    ;;
+
+  *)
+    echo "unknown subcommand: $SUB" >&2
+    exit 2
+    ;;
+esac
