@@ -1,0 +1,67 @@
+# goreleaser config for the bbs CLI.
+#
+# What ships: the Go `bbs` multicall binary (subcommands `config` + `env` today).
+# The babysit skill pack and the 18 bash bins are NOT in these artifacts — they
+# install via `git clone` + `bin/setup-skills` (see README / docs/install.md).
+#
+# The pipeline is built but never fired here: the human tags a release
+# (`git tag vX.Y.Z && git push --tags`) and the release workflow runs goreleaser.
+#
+# Verify locally without a tag:  goreleaser build --snapshot --clean
+version: 2
+
+project_name: bbs
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: bbs
+    main: ./cmd/bbs
+    binary: bbs
+    env:
+      - CGO_ENABLED=0
+    # No version is injected: `bbs` exposes no version symbol (wiring one needs
+    # internal/cmd/root.go, an intentional off-limits union-conflict hotspot).
+    ldflags:
+      - -s -w
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - id: bbs
+    ids:
+      - bbs
+    formats:
+      - tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - README.md
+      - CHANGELOG.md
+
+checksum:
+  name_template: "checksums.txt"
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-snapshot"
+
+# NOTE: goreleaser's built-in formula generator (`brews:`) is deprecated in
+# goreleaser v2 and its replacement (`homebrew_casks`) emits a Cask in Casks/
+# installed via `brew install --cask` — not the Formula/bbs.rb + `brew install
+# bbs` this repo requires (and casks are macOS-only, so they can't serve Linux).
+# So the committed Formula/bbs.rb is the source of truth; the release workflow
+# injects the real per-platform sha256 from `checksums.txt` into it on tag. See
+# .github/workflows/release.yml (sync-formula step) and docs/install.md.
+
+release:
+  github:
+    owner: lohi-ai
+    name: babysit
+  # The pipeline builds artifacts; a human reviews the draft before it goes live.
+  draft: true
+  prerelease: auto

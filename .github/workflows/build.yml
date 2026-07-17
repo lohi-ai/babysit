@@ -1,0 +1,61 @@
+name: Build
+
+# Regression guard for the bbs CLI. Cross-compiles every target — including
+# GOOS=windows — so a change that breaks a platform is caught at PR time.
+# NOTE: windows is compiled ONLY to catch regressions; NO windows artifact is
+# ever published (the release pipeline ships darwin + linux only).
+on:
+  push:
+    branches: [main]
+    paths:
+      - '**.go'
+      - go.mod
+      - go.sum
+      - .goreleaser.yaml
+      - .github/workflows/build.yml
+  pull_request:
+    paths:
+      - '**.go'
+      - go.mod
+      - go.sum
+      - .goreleaser.yaml
+      - .github/workflows/build.yml
+
+jobs:
+  cross-compile:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { goos: darwin,  goarch: arm64 }
+          - { goos: darwin,  goarch: amd64 }
+          - { goos: linux,   goarch: arm64 }
+          - { goos: linux,   goarch: amd64 }
+          # Regression check only — output discarded, never released.
+          - { goos: windows, goarch: amd64 }
+          - { goos: windows, goarch: arm64 }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build ${{ matrix.goos }}/${{ matrix.goarch }}
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: '0'
+        run: go build -o /dev/null ./cmd/bbs
+
+  goreleaser-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Validate .goreleaser.yaml
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          version: '~> v2'
+          args: check
