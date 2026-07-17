@@ -1,0 +1,117 @@
+#!/usr/bin/env bash
+# bbs-analytics-cron — weekly unattended /bbs:analytics-review dispatch.
+#
+# Closes roadmap weak-point 5 ("telemetry is written, not read"): the
+# analytics-review skill exists but nothing runs it on a cadence. This is the
+# cadence. It headlessly dispatches the skill, captures the ticket-ready report
+# to a dated file under ~/.babysit/analytics/reviews/, and logs a telemetry row.
+#
+# The run is read-only by contract (analytics-review never edits the pack), so
+# it is scoped to read-only tools rather than bypassing permissions. AGENT_ROLE
+# is cleared so the skill renders a plain report instead of an orchestrator
+# relay block.
+#
+# Usage:
+#   bbs-analytics-cron            # run the weekly review now
+#   bbs-analytics-cron --dry-run  # print what it would run, don't call claude
+#   bbs-analytics-cron --install  # register the weekly schedule (launchd/cron)
+#   bbs-analytics-cron --uninstall
+set -uo pipefail
+
+BABYSIT_HOME="${BABYSIT_HOME:-$HOME/.babysit}"
+REVIEW_DIR="$BABYSIT_HOME/analytics/reviews"
+LOG="$BABYSIT_HOME/analytics/skill-usage.jsonl"
+CLAUDE_BIN="${CLAUDE_BIN:-claude}"
+ALLOWED_TOOLS="${BBS_ANALYTICS_TOOLS:-Bash Read Glob Grep Skill}"
+LABEL="dev.babysit.analytics"
+PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
+
+# Resolve this script's real path (survives the setup-skills symlink) so the
+# scheduler points at a stable target.
+self_path() {
+  local src="${BASH_SOURCE[0]}"
+  while [ -h "$src" ]; do src="$(readlink "$src")"; done
+  printf '%s' "$(cd "$(dirname "$src")" && pwd)/$(basename "$src")"
+}
+SELF="$(self_path)"
+
+install_schedule() {
+  if [ "$(uname)" = "Darwin" ]; then
+    mkdir -p "$(dirname "$PLIST")"
+    cat > "$PLIST" <<PLIST_EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>$LABEL</string>
+  <key>ProgramArguments</key>
+  <array><string>$SELF</string></array>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Weekday</key><integer>1</integer>
+    <key>Hour</key><integer>9</integer>
+    <key>Minute</key><integer>0</integer>
+  </dict>
+  <key>StandardOutPath</key><string>$BABYSIT_HOME/analytics/reviews/cron.out.log</string>
+  <key>StandardErrorPath</key><string>$BABYSIT_HOME/analytics/reviews/cron.err.log</string>
+</dict>
+</plist>
+PLIST_EOF
+    launchctl unload "$PLIST" 2>/dev/null || true
+    launchctl load "$PLIST" && echo "installed launchd agent $LABEL (Mondays 09:00) → $PLIST"
+  else
+    local line="0 9 * * 1 $SELF"
+    if crontab -l 2>/dev/null | grep -Fq "$SELF"; then
+      echo "cron entry for $SELF already present"
+    else
+      (crontab -l 2>/dev/null; echo "$line") | crontab - \
+        && echo "installed cron entry (Mondays 09:00): $line"
+    fi
+  fi
+}
+
+uninstall_schedule() {
+  if [ "$(uname)" = "Darwin" ]; then
+    launchctl unload "$PLIST" 2>/dev/null || true
+    rm -f "$PLIST" && echo "removed launchd agent $LABEL"
+  else
+    crontab -l 2>/dev/null | grep -Fv "$SELF" | crontab - \
+      && echo "removed cron entry for $SELF"
+  fi
+}
+
+case "${1:-}" in
+  --install)   install_schedule; exit $? ;;
+  --uninstall) uninstall_schedule; exit $? ;;
+esac
+
+command -v "$CLAUDE_BIN" >/dev/null 2>&1 || { echo "bbs-analytics-cron: claude CLI not found in PATH" >&2; exit 1; }
+
+mkdir -p "$REVIEW_DIR"
+STAMP="$(date +%Y-%m-%d)"
+OUT="$REVIEW_DIR/$STAMP.md"
+
+# AGENT_ROLE unset → report mode, no orchestrator relay (would hang headless).
+unset AGENT_ROLE GT_ROLE 2>/dev/null || true
+
+if [ "${1:-}" = "--dry-run" ]; then
+  echo "would write: $OUT"
+  echo "would run:   $CLAUDE_BIN -p '/bbs:analytics-review' --allowedTools $ALLOWED_TOOLS"
+  exit 0
+fi
+
+# shellcheck disable=SC2086
+if "$CLAUDE_BIN" -p "/bbs:analytics-review" --allowedTools $ALLOWED_TOOLS > "$OUT" 2>"$OUT.err"; then
+  RESULT=success
+else
+  RESULT=error
+fi
+rm -f "$OUT.err" 2>/dev/null || true
+
+TS="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+mkdir -p "$(dirname "$LOG")" 2>/dev/null || true
+printf '{"ts":"%s","event":"analytics-cron","outcome":"%s","report":"%s"}\n' \
+  "$TS" "$RESULT" "$OUT" >> "$LOG" 2>/dev/null || true
+
+echo "analytics review ($RESULT) → $OUT"
+[ "$RESULT" = success ]
