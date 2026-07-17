@@ -29,6 +29,7 @@ core bins are now Go and ship inside this one binary, reachable as `bbs <sub>`:
 | `bbs codex-competitive …` | `codex-competitive` | competitive-analysis helper |
 | `bbs analytics-cron …` | `analytics-cron` | install/uninstall/run the weekly `/bbs:analytics-review` schedule |
 | `bbs secrets …` | `secrets` | project-local `.babysit/.env` credential loader (`load` / `seed` / `ensure-gitignore`) |
+| `bbs design …` | `design` | design-intelligence broker (`tokens` / `suggest` / `components` / `ux-check`) — the CSV/DESIGN.md data files ship with the skill pack |
 
 **Strangler note on `ticket`:** the Go `ticket` command owns the identity core
 (resolve, verdicts, session, board) and **delegates every other subcommand**
@@ -38,10 +39,13 @@ That bash sibling ships **only** with the skill pack (`bin/setup-skills`), so a
 brew-only `bbs ticket <delegated-sub>` will not find it. Use the skill-pack
 install for full ticket operations.
 
+**Note on `design`:** the `design` command itself is Go (ships in the binary),
+but its CSV/DESIGN.md data files live in the skill pack, so a brew-only
+`bbs design suggest` needs `--data <dir>` pointed at a skill-pack checkout.
+
 Still bash and **not** in the brew/tarball artifact at all: `bbs-autopilot`,
-`bbs-dashboard`, `bbs-design`. Those install with the skill pack
-via `bin/setup-skills`. `brew install bbs` does not, and is not meant to, give
-you the whole toolkit.
+`bbs-dashboard`. Those install with the skill pack via `bin/setup-skills`.
+`brew install bbs` does not, and is not meant to, give you the whole toolkit.
 
 There is no `bbs --version` yet.
 

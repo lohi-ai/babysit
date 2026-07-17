@@ -8,11 +8,11 @@ on `argv[0]` (`bbs-config` → `bbs config`, etc.). The bins ported to Go —
 `bbs-config`, `bbs-env`, `bbs-slug`, `bbs-ticket`, `bbs-update-check`,
 `bbs-upgrade`, `bbs-learnings-log`, `bbs-learnings-search`, `bbs-qa-config`,
 `bbs-telemetry-log`, `bbs-codex-competitive`, `bbs-analytics-cron`,
-`bbs-secrets` — behave identically to the bash they replaced (guarded by the
-differential harnesses in `tests/`). `bbs-ticket` is a strangler: its Go core
-owns identity/verdict/session/board and delegates the remaining subcommands to
-a `bbs-ticket.bash` sibling. Still pure bash: `bbs-autopilot`, `bbs-dashboard`,
-`bbs-design`.
+`bbs-secrets`, `bbs-design` — behave identically to the bash they replaced
+(guarded by the differential harnesses in `tests/`). `bbs-ticket` is a
+strangler: its Go core owns identity/verdict/session/board and delegates the
+remaining subcommands to a `bbs-ticket.bash` sibling. Still pure bash:
+`bbs-autopilot`, `bbs-dashboard`.
 
 | Bin | Purpose |
 |-----|---------|
@@ -29,3 +29,4 @@ a `bbs-ticket.bash` sibling. Still pure bash: `bbs-autopilot`, `bbs-dashboard`,
 | `bbs-codex-competitive` | Competitive-analysis helper the analytics skills call |
 | `bbs-analytics-cron` | `--install` / `--uninstall` / `--dry-run` the weekly `/bbs:analytics-review` schedule (launchd on macOS, cron on Linux) |
 | `bbs-secrets` | `load` (emit `export KEY='…'` for `.babysit/.env` keys not already in shell env) / `seed` / `ensure-gitignore` — project-local credential auto-loader for the qa skill |
+| `bbs-design` | `tokens` (DESIGN.md frontmatter → JSON, `--field` for a leaf) / `suggest --product <type>` / `components` / `ux-check` — design-intelligence broker for the design-ui skill |
