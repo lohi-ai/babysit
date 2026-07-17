@@ -12,19 +12,35 @@ users use the tarball.
 ## What `bbs` gives you today
 
 `bbs` is a [multicall binary](#how-the-aliases-work): one executable that
-behaves differently depending on the name it's invoked as. As of this release it
-ships **two subcommands**, because only two of babysit's ~20 bins are ported to
-Go so far:
+behaves differently depending on the name it's invoked as. Most of babysit's
+core bins are now Go and ship inside this one binary, reachable as `bbs <sub>`:
 
 | You run | Runs | What it does |
 |---------|------|--------------|
 | `bbs config …` / `bbs-config …` | `config` | read/write `~/.babysit/config.yaml` |
 | `bbs env …` / `bbs-env …` | `env` | env resolution for babysit skills (`.env.base` auto-load) |
+| `bbs slug …` | `slug` | derive `<slug>` / `<ticket>` / `<branch>` from git remote + branch |
+| `bbs ticket …` | `ticket` | ticket identity core (`resolve`, `set-verdict`, `verdict-status`, `session`, `board`) — see the strangler note below |
+| `bbs update-check` | `update-check` | print `UPGRADE_AVAILABLE` when a newer release exists |
+| `bbs upgrade` | `upgrade` | `git pull` + `setup-skills`, writes a `JUST_UPGRADED` marker |
+| `bbs learnings-log …` / `learnings-search …` | `learnings-log` / `learnings-search` | append/query the decisions log |
+| `bbs qa-config …` | `qa-config` | read `.babysit/qa.yaml` fields |
+| `bbs telemetry-log …` | `telemetry-log` | append skill-usage telemetry rows |
+| `bbs codex-competitive …` | `codex-competitive` | competitive-analysis helper |
+| `bbs analytics-cron …` | `analytics-cron` | install/uninstall/run the weekly `/bbs:analytics-review` schedule |
 
-Everything else in babysit — `bbs-autopilot`, `bbs-ticket`, `bbs-slug`,
-`bbs-db`, and the rest — is still a bash script and is **not** in the brew/tarball
-artifact. Those install with the skill pack via `bin/setup-skills`. `brew install
-bbs` does not, and is not meant to, give you the whole toolkit.
+**Strangler note on `ticket`:** the Go `ticket` command owns the identity core
+(resolve, verdicts, session, board) and **delegates every other subcommand**
+(`merge-base`, `switch`, `reset-base`, `qa-lease`, `safe-cut`, `serve`,
+`refresh`, `manifest`, …) to a `bbs-ticket.bash` sitting next to the binary.
+That bash sibling ships **only** with the skill pack (`bin/setup-skills`), so a
+brew-only `bbs ticket <delegated-sub>` will not find it. Use the skill-pack
+install for full ticket operations.
+
+Still bash and **not** in the brew/tarball artifact at all: `bbs-autopilot`,
+`bbs-dashboard`, `bbs-db`, `bbs-design`, `bbs-secrets`. Those install with the
+skill pack via `bin/setup-skills`. `brew install bbs` does not, and is not meant
+to, give you the whole toolkit.
 
 There is no `bbs --version` yet.
 

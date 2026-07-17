@@ -141,10 +141,15 @@ brew tap lohi-ai/babysit https://github.com/lohi-ai/babysit
 brew install bbs
 ```
 
-**What `brew install bbs` gives you today:** the `bbs` binary with the `config`
-and `env` subcommands, plus the `bbs-config` / `bbs-env` aliases — the two bins
-ported to Go so far. It does **not** install the skill pack, `bbs-autopilot`,
-`bbs-ticket`, or the other bash bins; those still come from the clone +
+**What `brew install bbs` gives you today:** the compiled `bbs` binary. Most of
+babysit's core bins are now Go — reachable as `bbs <sub>` (e.g. `bbs config`,
+`bbs ticket resolve`): `config`, `env`, `slug`, `ticket`, `update-check`,
+`upgrade`, `learnings-log`, `learnings-search`, `qa-config`, `telemetry-log`,
+`codex-competitive`, `analytics-cron`. The formula also drops `bbs-config` /
+`bbs-env` argv0 aliases. It does **not** install the skill pack, and the bins
+still in bash (`bbs-autopilot`, `bbs-dashboard`, `bbs-db`, `bbs-design`,
+`bbs-secrets`) — plus the un-ported half of `bbs-ticket`, which the Go `ticket`
+command delegates to a `bbs-ticket.bash` sibling — come only from the clone +
 `bin/setup-skills` above. Linux users use the tarball instead. Full platform
 matrix and the linux path: [docs/install.md](docs/install.md).
 
