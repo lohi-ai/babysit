@@ -51,12 +51,16 @@ func Resolve() (*Info, error) {
 	home := os.Getenv("HOME")
 	cacheDir := filepath.Join(home, ".babysit", "slug-cache")
 
-	// Key the cache by the repo's PRIMARY worktree, not the cwd. Outside a
-	// repo, git fails and bin/bbs-slug's `set -e` aborts the whole script —
-	// so we short-circuit before touching env, cache, or output.
+	// Key the cache by the repo's PRIMARY worktree, not the cwd. bin/bbs-slug
+	// distinguishes two outcomes here and so must we: git failing means we are
+	// outside a repo and its `set -e` aborts the whole script (ErrNoRepo);
+	// git succeeding with no worktree line falls back to the cwd.
 	projectDir, ok := git.PrimaryWorktree()
 	if !ok {
 		return nil, ErrNoRepo
+	}
+	if projectDir == "" {
+		projectDir, _ = os.Getwd()
 	}
 	cacheKey := strings.ReplaceAll(projectDir, "/", "_")
 	cacheFile := filepath.Join(cacheDir, cacheKey)
