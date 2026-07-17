@@ -26,9 +26,30 @@
 # Every case below stages a bin/bbs-config into BABYSIT_DIR so the two agree;
 # see cfg_* cases. This is the ONE accepted divergence in the port.
 #
+# Two further divergences, both on corrupt/hostile input only, both argued in
+# comments at internal/cmd/update_check.go (stripSpace, checkSnooze):
+#   - invalid UTF-8 in VERSION/marker/remote: BSD tr under a UTF-8 locale exits
+#     "Illegal byte sequence", which pipefail+set -e turn into a silent exit 1;
+#     under LC_ALL=C it passes the bytes through. The port matches the C locale,
+#     because an exit code that depends on the caller's $LANG is not a contract.
+#   - a >19-digit snooze epoch: bash's arithmetic wraps (C overflow), the port
+#     reports "not snoozed".
+# Neither is exercised below: the oracle's own answer is locale- or UB-dependent,
+# so there is nothing stable to diff against.
+#
 # The $0 bug (reference:15 derives BABYSIT_DIR from `dirname "$0"` with no
 # readlink -f, unlike bin/bbs-env) is NOT a divergence — it is reproduced
-# faithfully and pinned by the argv0_* cases.
+# faithfully. The argv0_subcommand cases pin the invocation shape; the c0 cases
+# pin the derivation itself, with BABYSIT_DIR UNSET — including the fact that a
+# ~/.claude-style shim makes it resolve to the WRONG directory, and that a bare
+# PATH invocation must still agree with a script's always-path-ful $0.
+#
+# Caveat, so the next reader does not trust these cases for more than they
+# prove: on darwin os.Executable() does NOT resolve symlinks, so it and
+# os.Args[0] derive the same directory for every shape an oracle run can
+# produce — no case here can tell them apart. They diverge on linux, where
+# /proc/self/exe resolves the shim and would "fix" the bug. The argument for
+# os.Args[0] lives in babysitDir's comment; it is not pinned by a test.
 
 set -u
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
@@ -45,8 +66,8 @@ T="$(mktemp -d)"
 BIN="$T/bbs"
 (cd "$REPO" && go build -o "$BIN" ./cmd/bbs) || { echo "FAIL: go build" >&2; exit 1; }
 
-# ─── Local VERSION server (curl supports file://, Go's http.Client does not,
-#     so the oracle URL has to be real HTTP for both sides) ──────────────────
+# ─── Local VERSION server (most cases need real HTTP: status codes, redirects
+#     and connection-refused have no file:// equivalent) ─────────────────────
 DOC="$T/doc"
 mkdir -p "$DOC/same" "$DOC/newer" "$DOC/html" "$DOC/empty" "$DOC/junk"
 printf '1.2.3\n'                      > "$DOC/same/VERSION"
@@ -58,9 +79,18 @@ printf 'not-a-version\n'              > "$DOC/junk/VERSION"
 python3 -c '
 import http.server, socketserver, sys, os
 os.chdir(sys.argv[1])
-h = http.server.SimpleHTTPRequestHandler
-h.log_message = lambda *a, **k: None
-s = socketserver.TCPServer(("127.0.0.1", 0), h)
+class H(http.server.SimpleHTTPRequestHandler):
+    def log_message(self, *a, **k): pass
+    def do_GET(self):
+        # /redirect ⇒ 302 to a VALID VERSION, so following vs not following
+        # give different answers (UPGRADE_AVAILABLE vs CHECK_FAILED).
+        if self.path == "/redirect":
+            self.send_response(302)
+            self.send_header("Location", "/newer/VERSION")
+            self.end_headers()
+            return
+        return super().do_GET()
+s = socketserver.TCPServer(("127.0.0.1", 0), H)
 print(s.server_address[1], flush=True)
 s.serve_forever()
 ' "$DOC" > "$T/port" 2>/dev/null &
@@ -91,10 +121,15 @@ snapshot() {
 #   <root>/state is BABYSIT_STATE_DIR. Both sides get an identical fresh tree.
 #   MODE=sub  → invoke the Go side as `bbs update-check` instead of via the
 #               bbs-update-check compat-symlink argv[0].
+#   LOOSE_STDERR=1 → compare stdout + exit code + state, but not stderr text.
+#               Only for the set -e abort cases: there the bash's stderr is
+#               whatever mkdir/rm/bash happened to emit, so the wording is not
+#               contractual (the caller runs this with 2>/dev/null anyway).
 MODE=symlink
+LOOSE_STDERR=0
 c() {
   local desc="$1" setup="$2" urlpath="$3"; shift 3
-  local A B ao an ac nc as ns url NOW
+  local A B ao an ac nc as ns url NOW aerr nerr
   A="$T/a.$$.$RANDOM"; B="$T/b.$$.$RANDOM"
   # One timestamp per case, shared by both sides: seeding the snooze file from
   # $(date +%s) inside _setup would give A and B different epochs whenever the
@@ -110,27 +145,84 @@ c() {
     _setup "$r"
   done
   case "$urlpath" in
-    DEAD) url="http://127.0.0.1:$DEAD_PORT/VERSION" ;;
-    NONE) url="$BASE/nope/VERSION" ;;
-    *)    url="$BASE/$urlpath/VERSION" ;;
+    DEAD)     url="http://127.0.0.1:$DEAD_PORT/VERSION" ;;
+    NONE)     url="$BASE/nope/VERSION" ;;
+    FILE)     url="file://$DOC/newer/VERSION" ;;
+    FILEMISS) url="file://$DOC/nope/VERSION" ;;
+    REDIR)    url="$BASE/redirect" ;;  # 302 → /newer/VERSION (a valid version)
+    *)        url="$BASE/$urlpath/VERSION" ;;
   esac
 
   ao=$(env HOME="$A/home" BABYSIT_DIR="$A/dir" BABYSIT_STATE_DIR="$A/state" \
-        BABYSIT_REMOTE_URL="$url" bash "$REFERENCE" "$@" 2>&1); ac=$?
+        BABYSIT_REMOTE_URL="$url" bash "$REFERENCE" "$@" 2>"$T/aerr"); ac=$?
   if [ "$MODE" = "sub" ]; then
     an=$(env HOME="$B/home" BABYSIT_DIR="$B/dir" BABYSIT_STATE_DIR="$B/state" \
-          BABYSIT_REMOTE_URL="$url" "$BIN" update-check "$@" 2>&1); nc=$?
+          BABYSIT_REMOTE_URL="$url" "$BIN" update-check "$@" 2>"$T/nerr"); nc=$?
   else
     an=$(env HOME="$B/home" BABYSIT_DIR="$B/dir" BABYSIT_STATE_DIR="$B/state" \
           BABYSIT_REMOTE_URL="$url" \
-          sh -c 'exec -a bbs-update-check "$0" "$@"' "$BIN" "$@" 2>&1); nc=$?
+          sh -c 'exec -a bbs-update-check "$0" "$@"' "$BIN" "$@" 2>"$T/nerr"); nc=$?
   fi
+  aerr="$(cat "$T/aerr")"; nerr="$(cat "$T/nerr")"
   as="$(snapshot "$A/state")"; ns="$(snapshot "$B/state")"
+  [ "$LOOSE_STDERR" = "1" ] && { aerr=""; nerr=""; }
 
-  if [ "$ao" = "$an" ] && [ "$ac" = "$nc" ] && [ "$as" = "$ns" ]; then
+  if [ "$ao" = "$an" ] && [ "$ac" = "$nc" ] && [ "$as" = "$ns" ] && [ "$aerr" = "$nerr" ]; then
     ok "$desc (rc=$ac)"
   else
-    fail "$desc" "old rc=$ac out=[$ao]" "new rc=$nc out=[$an]" \
+    fail "$desc" "old rc=$ac out=[$ao] err=[$aerr]" "new rc=$nc out=[$an] err=[$nerr]" \
+         "old state: $(echo "$as" | tr '\n' ' ')" "new state: $(echo "$ns" | tr '\n' ' ')"
+  fi
+  chmod -R u+rwX "$A" "$B" 2>/dev/null
+  rm -rf "$A" "$B"
+}
+
+# ─── argv[0] runner (BABYSIT_DIR UNSET) ──────────────────────────────────────
+# c0 <desc> <invoke-path-under-root> <version-dir-under-root|none> <urlpath>
+# Every c() case pins BABYSIT_DIR, so the reference:15 fallback
+# `$(cd "$(dirname "$0")/.." && pwd)` is never exercised there. These cases
+# unset it and stage a realistic install instead — the script/binary lives at
+# <root>/repo/bin/bbs-update-check, with a ~/.claude-style shim symlinked at
+# <root>/claude/bbs-update-check. Because neither side resolves the symlink,
+# invoking via the shim derives <root> rather than <root>/repo: the $0 bug.
+# The port reproduces it (os.Args[0], not os.Executable), and these cases are
+# what hold it in place.
+c0() {
+  local desc="$1" invoke="$2" vloc="$3" urlpath="$4"
+  local A B ao an ac nc url aerr nerr as ns r
+  A="$T/a0.$$.$RANDOM"; B="$T/b0.$$.$RANDOM"
+  for r in "$A" "$B"; do
+    mkdir -p "$r/repo/bin" "$r/claude" "$r/state" "$r/home"
+    ln -sf "$REPO/bin/bbs-config" "$r/repo/bin/bbs-config" 2>/dev/null
+    [ "$vloc" = "none" ] || printf '1.2.3\n' > "$r/$vloc/VERSION"
+    ln -s "$r/repo/bin/bbs-update-check" "$r/claude/bbs-update-check"
+  done
+  cp "$REFERENCE" "$A/repo/bin/bbs-update-check"; chmod +x "$A/repo/bin/bbs-update-check"
+  cp "$BIN"       "$B/repo/bin/bbs-update-check"; chmod +x "$B/repo/bin/bbs-update-check"
+  case "$urlpath" in NONE) url="$BASE/nope/VERSION" ;; *) url="$BASE/$urlpath/VERSION" ;; esac
+
+  # invoke=PATH ⇒ bare name found on PATH, run from <root>/work/sub. This is the
+  # shape the session preamble actually uses, and the only one where argv[0] and
+  # a script's $0 disagree (see babysitDir in internal/cmd/update_check.go).
+  if [ "$invoke" = "PATH" ]; then
+    mkdir -p "$A/work/sub" "$B/work/sub"
+    ao=$(cd "$A/work/sub" && env -u BABYSIT_DIR HOME="$A/home" BABYSIT_STATE_DIR="$A/state" \
+          PATH="$A/claude:$PATH" BABYSIT_REMOTE_URL="$url" bbs-update-check 2>"$T/aerr"); ac=$?
+    an=$(cd "$B/work/sub" && env -u BABYSIT_DIR HOME="$B/home" BABYSIT_STATE_DIR="$B/state" \
+          PATH="$B/claude:$PATH" BABYSIT_REMOTE_URL="$url" bbs-update-check 2>"$T/nerr"); nc=$?
+  else
+    ao=$(env -u BABYSIT_DIR HOME="$A/home" BABYSIT_STATE_DIR="$A/state" \
+          BABYSIT_REMOTE_URL="$url" "$A/$invoke" 2>"$T/aerr"); ac=$?
+    an=$(env -u BABYSIT_DIR HOME="$B/home" BABYSIT_STATE_DIR="$B/state" \
+          BABYSIT_REMOTE_URL="$url" "$B/$invoke" 2>"$T/nerr"); nc=$?
+  fi
+  aerr="$(cat "$T/aerr")"; nerr="$(cat "$T/nerr")"
+  as="$(snapshot "$A/state")"; ns="$(snapshot "$B/state")"
+
+  if [ "$ao" = "$an" ] && [ "$ac" = "$nc" ] && [ "$as" = "$ns" ] && [ "$aerr" = "$nerr" ]; then
+    ok "$desc (rc=$ac)"
+  else
+    fail "$desc" "old rc=$ac out=[$ao] err=[$aerr]" "new rc=$nc out=[$an] err=[$nerr]" \
          "old state: $(echo "$as" | tr '\n' ' ')" "new state: $(echo "$ns" | tr '\n' ' ')"
   fi
   rm -rf "$A" "$B"
@@ -249,6 +341,47 @@ c "argv0_subcommand up-to-date"      "$V123"      same
 c "argv0_subcommand upgrade"         "$V123"      newer
 c "argv0_subcommand --force"         "$FRESH_UTD" newer --force
 MODE=symlink
+
+# ─── file:// and redirects ───────────────────────────────────────────────────
+# curl handles file:// natively; the port registers an http.NewFileTransport to
+# match. Without it these would be CHECK_FAILED on the Go side only.
+c "remote file:// URL"          "$V123" FILE
+c "remote file:// missing"      "$V123" FILEMISS
+# curl has no -L, so a 302 yields an empty body and rc 0 ⇒ CHECK_FAILED. The
+# port's CheckRedirect returns ErrUseLastResponse to match; a default
+# http.Client would follow to a valid 9.9.9 and print UPGRADE_AVAILABLE.
+c "remote 302 not followed"     "$V123" REDIR
+
+# ─── set -e aborts on unwritable state (stdout+rc only; see LOOSE_STDERR) ────
+# reference:128 writes the cache BEFORE echoing the line, so a failed write
+# means rc=1 with NO stdout — the port must propagate the error, not swallow it.
+if [ "$(id -u)" != 0 ]; then
+  LOOSE_STDERR=1
+  RO_STATE='_setup(){ printf "1.2.3\n" > "$1/dir/VERSION"; chmod 500 "$1/state"; }'
+  RO_PARENT='_setup(){ printf "1.2.3\n" > "$1/dir/VERSION"; rmdir "$1/state"; chmod 500 "$1"; }'
+  RO_FORCE='_setup(){ printf "1.2.3\n" > "$1/dir/VERSION"; printf "UP_TO_DATE 1.2.3\n" > "$1/state/last-update-check"; chmod 500 "$1/state"; }'
+  c "state dir read-only ⇒ cache write fails" "$RO_STATE"  newer
+  c "state dir absent + parent read-only"     "$RO_PARENT" newer
+  c "--force rm -f fails on read-only state"  "$RO_FORCE"  newer --force
+  LOOSE_STDERR=0
+else
+  echo "  (skipped 3 read-only cases: running as root)"
+fi
+
+# ─── argv[0] → BABYSIT_DIR derivation (the $0 bug) ───────────────────────────
+c0 "argv0 direct invoke derives <root>/repo"     "repo/bin/bbs-update-check" repo newer
+# The bug: the shim's dirname is <root>/claude, so ".." lands on <root> and the
+# real VERSION at <root>/repo/VERSION is never seen ⇒ both sides exit silently.
+c0 "argv0 shim: \$0 bug misses the real VERSION" "claude/bbs-update-check"   repo newer
+# Same shim, decoy VERSION at the (wrong) dir both sides derive: both find it,
+# proving they agree on <root> rather than merely both failing.
+c0 "argv0 shim: both derive the same wrong dir"  "claude/bbs-update-check"   .    newer
+c0 "argv0 direct, no VERSION anywhere"           "repo/bin/bbs-update-check" none newer
+# Bare PATH invoke: a script's $0 carries the PATH hit, a binary's argv[0] does
+# not. Without the LookPath step in babysitDir, Go derives the CALLER'S cwd's
+# parent (<root>/work) while bash derives <root> — so the VERSION at <root> is
+# found by bash and missed by Go, silently disabling the check.
+c0 "argv0 bare on PATH == script \$0"           "PATH"                      .    newer
 
 # ─── Summary ─────────────────────────────────────────────────────────────────
 echo
