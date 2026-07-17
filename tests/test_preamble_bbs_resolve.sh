@@ -16,6 +16,11 @@
 # The execute-it assertions are the real guard — a resolved-path check alone
 # would pass for a bare name that cannot run, which is exactly the false-clean
 # that shipped.
+#
+# SHELL MATRIX: the preamble block runs under whatever shell drives the skill —
+# zsh on a stock macOS box, not just bash. zsh differs on unquoted-$PATH
+# splitting and command hashing, so every case runs the resolver under bash AND
+# (when present) zsh, each in a clean `env -i` shell.
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -28,11 +33,27 @@ check() { # $1=name $2=want $3=got
   else r FAIL; printf '  %s\n      want=[%s] got=[%s]\n' "$1" "$2" "$3"; FAIL=$((FAIL+1)); fi
 }
 
-# Pull _bbs_resolve straight out of the preamble so the test tracks the file,
-# not a copy. The def line through the first column-0 `}` is the whole function
-# (inner `}` are indented). `local` runs only when the function is called.
-eval "$(awk '/^_bbs_resolve\(\) \{/,/^\}/' "$PREAMBLE")"
-[ "$(type -t _bbs_resolve)" = function ] || { r FAIL; echo "  could not extract _bbs_resolve from $PREAMBLE"; exit 1; }
+# Pull _bbs_resolve straight out of the preamble into a sourceable file, so the
+# test tracks the file, not a copy. The def line through the first column-0 `}`
+# is the whole function (inner `}` are indented). `local` runs only on call.
+FN="$T/fn.sh"
+awk '/^_bbs_resolve\(\) \{/,/^\}/' "$PREAMBLE" > "$FN"
+grep -q '^_bbs_resolve() {' "$FN" || { r FAIL; echo "  could not extract _bbs_resolve from $PREAMBLE"; exit 1; }
+
+# Shells to exercise: bash always, zsh when installed (the real macOS default).
+SHELLS=(bash); command -v zsh >/dev/null 2>&1 && SHELLS+=(zsh)
+echo "shell matrix: ${SHELLS[*]}"
+
+# Run _bbs_resolve in a pristine shell: env -i wipes inherited state (incl. a
+# stale command hash), PATH is set explicitly, HOME points at the case fixture.
+# zsh gets -f (skip rc) for determinism. PATH always carries /usr/bin:/bin so
+# the resolver's own mkdir/ln are found.
+resolve() { # $1=shell $2=HOME $3=extra-path-dir("" for none) $4=sub
+  local base="/usr/bin:/bin" p flags=""
+  [ -n "$3" ] && p="$3:$base" || p="$base"
+  [ "$1" = zsh ] && flags="-f"
+  env -i HOME="$2" PATH="$p" FN="$FN" SUB="$4" "$1" $flags -c '. "$FN"; _bbs_resolve "$SUB"' 2>/dev/null
+}
 
 # A stand-in multicall binary. Mirrors bin/bbs: argv[0]-basename dispatch, cobra
 # subcommand routing, and — critically — an UNKNOWN subcommand exits 1 silently
@@ -52,56 +73,55 @@ STUB
   chmod +x "$1"
 }
 
-# Run _bbs_resolve under a scratch HOME/PATH so nothing on the real machine
-# leaks in. Echoes the resolved value.
-resolve() { ( export HOME="$1" PATH="$2"; _bbs_resolve "$3" ); }
+# Build a fixture HOME with dangling shim + dangling plugin copy for <sub>.
+dangle_home() { # $1=dir $2=sub
+  mkdir -p "$1/.claude/skills/babysit/bin"
+  ln -s "$1/.claude/nonexistent-bbs" "$1/.claude/bbs-$2"           # dangling shim
+  ln -s bbs "$1/.claude/skills/babysit/bin/bbs-$2"                 # dangling plugin copy (→ absent bbs)
+}
 
-# ── Case A: dangling compat symlinks + a working `bbs` on PATH → the live bug.
-# bbs-config and bbs-env are symlinks on main today; prove both are fixed.
-for sub in config env; do
-  H="$T/A-$sub"; mkdir -p "$H/.claude/skills/babysit/bin" "$T/pathA"
-  ln -s "$H/.claude/nonexistent-bbs"  "$H/.claude/bbs-$sub"                     # dangling shim
-  ln -s bbs                           "$H/.claude/skills/babysit/bin/bbs-$sub"  # dangling repo copy (→ absent bbs)
-  make_bbs "$T/pathA/bbs"
-  RES="$(resolve "$H" "$T/pathA:/usr/bin:/bin" "bbs-$sub")"
-  # Not the bare, unrunnable name.
-  [ "$RES" != "bbs-$sub" ] && check "A/$sub: resolves to a path, not bare name" runnable runnable \
-                           || check "A/$sub: resolves to a path, not bare name" runnable "$RES"
-  # And it actually executes as a single quoted token → argv[0] dispatch to <sub>.
-  OUT="$("$RES" run-me 2>&1)"
-  check "A/$sub: quoted \"\$RES\" executes via multicall" "RAN sub=$sub args=run-me" "$OUT"
+for sh in "${SHELLS[@]}"; do
+  # ── Case A: dangling symlinks + working `bbs` on PATH → the live bug.
+  # bbs-config and bbs-env are symlinks on main today; prove both are fixed,
+  # and prove the resolved token actually EXECUTES via argv[0] dispatch.
+  for sub in config env; do
+    H="$T/$sh-A-$sub"; PB="$T/$sh-pathA-$sub"; mkdir -p "$PB"
+    dangle_home "$H" "$sub"; make_bbs "$PB/bbs"
+    RES="$(resolve "$sh" "$H" "$PB" "bbs-$sub")"
+    [ "$RES" != "bbs-$sub" ] && check "[$sh] A/$sub: resolves to a path, not bare name" runnable runnable \
+                             || check "[$sh] A/$sub: resolves to a path, not bare name" runnable "$RES"
+    OUT="$("$RES" run-me 2>&1)"
+    check "[$sh] A/$sub: quoted \"\$RES\" executes via multicall" "RAN sub=$sub args=run-me" "$OUT"
+  done
+
+  # ── Case B: an installed shim (real executable) resolves to itself, unchanged.
+  H="$T/$sh-B"; mkdir -p "$H/.claude"; make_bbs "$H/.claude/bbs-config"
+  RES="$(resolve "$sh" "$H" "" bbs-config)"
+  check "[$sh] B: installed shim resolves to itself, unchanged" "$H/.claude/bbs-config" "$RES"
+
+  # ── Case C: `bbs` present but the subcommand is absent (fails --help probe).
+  # Must be REFUSED — never silently accepted — falling through to the bare name.
+  H="$T/$sh-C"; PB="$T/$sh-pathC"; mkdir -p "$PB"
+  dangle_home "$H" ticket; make_bbs "$PB/bbs"          # serves config/env, NOT ticket
+  RES="$(resolve "$sh" "$H" "$PB" bbs-ticket)"
+  check "[$sh] C: probe-fail (ticket unported) refused → bare name" bbs-ticket "$RES"
+
+  # ── Case D: no `bbs` anywhere → honest degraded state, the pre-fix behavior.
+  H="$T/$sh-D"; dangle_home "$H" config
+  RES="$(resolve "$sh" "$H" "" bbs-config)"
+  check "[$sh] D: no bbs at all → bare name (unchanged degraded state)" bbs-config "$RES"
 done
 
-# ── Case B: an installed shim (real executable) resolves to itself, unchanged.
-H="$T/B"; mkdir -p "$H/.claude"
-make_bbs "$H/.claude/bbs-config"          # a real, executable shim
-RES="$(resolve "$H" "/usr/bin:/bin" bbs-config)"
-check "B: installed shim resolves to itself, unchanged" "$H/.claude/bbs-config" "$RES"
-
-# ── Case C: `bbs` present but the subcommand is absent (fails --help probe).
-# Must be REFUSED — never silently accepted — falling through to the bare name.
-H="$T/C"; mkdir -p "$H/.claude/skills/babysit/bin" "$T/pathC"
-ln -s "$H/.claude/nonexistent-bbs" "$H/.claude/bbs-ticket"
-ln -s bbs "$H/.claude/skills/babysit/bin/bbs-ticket"
-make_bbs "$T/pathC/bbs"                    # serves config/env, NOT ticket
-RES="$(resolve "$H" "$T/pathC:/usr/bin:/bin" bbs-ticket)"
-check "C: probe-fail (ticket unported) refused → bare name" bbs-ticket "$RES"
-
-# ── Case D: no `bbs` anywhere → honest degraded state, the pre-fix behavior.
-H="$T/D"; mkdir -p "$H/.claude/skills/babysit/bin"
-ln -s "$H/.claude/nonexistent-bbs" "$H/.claude/bbs-config"
-ln -s bbs "$H/.claude/skills/babysit/bin/bbs-config"
-RES="$(resolve "$H" "/usr/bin:/bin" bbs-config)"
-check "D: no bbs at all → bare name (unchanged degraded state)" bbs-config "$RES"
-
-# ── bash -n the whole preamble bash block (the "run first" snippet).
+# ── Parse the whole preamble bash block under every shell (`bash -n`, `zsh -n`).
 SNIP="$T/preamble-snippet.sh"
 awk '/^## Preamble \(run first\)/{f=1} f&&/^```bash$/{c=1;next} f&&/^```$/{if(c)exit} c' "$PREAMBLE" > "$SNIP"
-if [ -s "$SNIP" ] && bash -n "$SNIP" 2>/dev/null; then
-  check "bash -n: preamble snippet parses" ok ok
-else
-  check "bash -n: preamble snippet parses" ok "parse-error-or-empty($(wc -l <"$SNIP") lines)"
-fi
+for sh in "${SHELLS[@]}"; do
+  if [ -s "$SNIP" ] && "$sh" -n "$SNIP" 2>/dev/null; then
+    check "[$sh] -n: preamble snippet parses" ok ok
+  else
+    check "[$sh] -n: preamble snippet parses" ok "parse-error-or-empty($(wc -l <"$SNIP") lines)"
+  fi
+done
 
 echo
 printf 'PASS=%d FAIL=%d\n' "$PASS" "$FAIL"

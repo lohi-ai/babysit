@@ -62,21 +62,31 @@ _bbs_resolve() { # $1 = bbs-<sub>
   # back to the `bbs` multicall, but only once it actually serves <sub>:
   # `bbs <sub>` on a build lacking that subcommand exits 1 *silently*
   # (internal/cmd/root.go sets SilenceErrors) — byte-identical to a legit
-  # exit 1 — so probe capability up front with `bbs <sub> --help` (exit 0).
-  # `bbs help <sub>` is NOT a usable probe: cobra exits 0 for unknown topics.
-  # Every call site consumes "$BBS_*_BIN" as a single quoted word, so a
-  # two-word `bbs <sub>` value would break them all. Hand back a bbs-<sub>-named
-  # symlink to the multicall instead: argv[0]-basename dispatch (cmd/bbs/main.go)
-  # then routes it to <sub> with no change at any call site.
-  local sub="${1#bbs-}" bbs path link
-  for bbs in "$HOME/.claude/bbs" "$HOME/.claude/skills/babysit/bin/bbs" bbs; do
-    path=$(command -v "$bbs" 2>/dev/null) || continue
-    "$path" "$sub" --help >/dev/null 2>&1 || continue
+  # exit 1 — so the only honest test that <sub> is served is `bbs <sub> --help`
+  # (exit 0). (`bbs help <sub>` is NOT usable: cobra exits 0 for unknown topics.)
+  # Look in the two absolute install locations, then the first `bbs` on PATH.
+  local sub="${1#bbs-}" cand="" c link p d
+  for c in "$HOME/.claude/bbs" "$HOME/.claude/skills/babysit/bin/bbs"; do
+    [ -x "$c" ] && "$c" "$sub" --help >/dev/null 2>&1 && { cand="$c"; break; }
+  done
+  # PATH scan by hand: this block also runs under zsh, where unquoted $PATH does
+  # not word-split and `command -v` reports only *hashed* externals inside a
+  # function — so peel dirs with POSIX ${p%%:*} to stay bash/zsh-identical.
+  p=$PATH
+  while [ -z "$cand" ] && [ -n "$p" ]; do
+    d=${p%%:*}; case "$p" in *:*) p=${p#*:} ;; *) p="" ;; esac
+    [ -n "$d" ] && [ -x "$d/bbs" ] && "$d/bbs" "$sub" --help >/dev/null 2>&1 && cand="$d/bbs"
+  done
+  # Every call site consumes "$BBS_*_BIN" as a single quoted word, so a two-word
+  # `bbs <sub>` value would break them all. Hand back a bbs-<sub>-named symlink
+  # to the multicall instead: argv[0]-basename dispatch (cmd/bbs/main.go) routes
+  # it to <sub> with no change at any call site.
+  if [ -n "$cand" ]; then
     link="$HOME/.babysit/cache/bin/$1"
     mkdir -p "$HOME/.babysit/cache/bin" 2>/dev/null \
-      && ln -sf "$path" "$link" 2>/dev/null \
+      && ln -sf "$cand" "$link" 2>/dev/null \
       && [ -x "$link" ] && { echo "$link"; return; }
-  done
+  fi
   echo "$1"   # honest degraded state — no bbs multicall serves <sub> either
 }
 BBS_SLUG_BIN=$(_bbs_resolve bbs-slug)
