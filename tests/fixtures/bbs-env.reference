@@ -1,0 +1,231 @@
+#!/usr/bin/env bash
+# bbs-env — env resolution for babysit skills
+#
+# Auto-loads .env.base files from config/<app>/ before resolving.
+# Detection priority: --env-file flag > --app flag > BABYSIT_APP env > GT_RIG env > CWD detection.
+# Shell env vars always take priority over .env file values.
+#
+# Usage:
+#   bbs-env [--env-file <path>] [--app <app>] resolve [--prefix] <varname> [<varname>...]
+#   bbs-env [--env-file <path>] [--app <app>] is-set [--prefix] <varname>
+#   bbs-env list-prefix <prefix>
+#   bbs-env prompt <varname> [<varname>...]
+set -euo pipefail
+
+# Resolve symlinks to find the real script location
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "$0" 2>/dev/null || python3 -c "import os; print(os.path.realpath('$0'))")")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# ─── Env file auto-loading ────────────────────────────────────
+# _load_env_file is defined in lib/load-env-file.sh — shared with bbs-secrets.
+. "$PROJECT_ROOT/lib/load-env-file.sh"
+
+# Detect which app (config dir) to load env for.
+# Priority: BABYSIT_APP > GT_RIG (via rig-map) > CWD detection
+_detect_app() {
+  if [ -n "${BABYSIT_APP:-}" ]; then
+    echo "$BABYSIT_APP"
+    return 0
+  fi
+
+  if [ -n "${GT_RIG:-}" ]; then
+    local rig_map="$PROJECT_ROOT/config/rig-map.sh"
+    if [ -f "$rig_map" ]; then
+      local PROJECT="" APP=""
+      source "$rig_map"
+      if resolve_rig "$GT_RIG" 2>/dev/null; then
+        echo "$APP"
+        return 0
+      fi
+    fi
+  fi
+
+  local cwd="$PWD"
+  for app_dir in "$PROJECT_ROOT"/config/*/; do
+    [ -d "$app_dir" ] || continue
+    local app_name
+    app_name="$(basename "$app_dir")"
+    local rig_pattern="${app_name//-/_}"
+    if [[ "$cwd" == */"$rig_pattern"/* ]] || [[ "$cwd" == */"$rig_pattern" ]] || \
+       [[ "$cwd" == */"$app_name"/* ]] || [[ "$cwd" == */"$app_name" ]]; then
+      echo "$app_name"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+_load_project_env() {
+  if [ -n "${BABYSIT_ENV_FILE:-}" ]; then
+    _load_env_file "$BABYSIT_ENV_FILE"
+    return
+  fi
+
+  local app
+  app="$(_detect_app 2>/dev/null)" || app=""
+
+  if [ -n "$app" ]; then
+    _load_env_file "$PROJECT_ROOT/config/$app/.env.base"
+  else
+    for app_dir in "$PROJECT_ROOT"/config/*/; do
+      [ -d "$app_dir" ] || continue
+      _load_env_file "$app_dir/.env.base"
+    done
+  fi
+}
+
+usage() {
+  cat <<EOF
+bbs-env — env resolution for babysit skills
+
+Usage:
+  bbs-env [--env-file <path>] [--app <app>] resolve [--prefix] <varname> [<varname>...]
+                                              Resolve first set var (priority order)
+  bbs-env [--env-file <path>] [--app <app>] is-set [--prefix] <varname>
+                                              Check if var is set (yes/no)
+  bbs-env list-prefix <prefix>                List all vars with given prefix (LOCAL_, STG_, etc.)
+  bbs-env prompt <varname> [<varname>...]     Prompt user for missing vars (developer mode)
+
+Auto-loading:
+  Auto-loads .env.base files from config/<app>/ before resolving.
+  Priority: --env-file flag > --app flag > BABYSIT_APP env > GT_RIG env > CWD detection.
+  If no app is detected, all config/*/.env.base files are loaded.
+  Shell env vars always take priority over .env file values.
+
+Examples:
+  bbs-env resolve --prefix QA_EMAIL
+  bbs-env --app my-app resolve --prefix QA_EMAIL
+  bbs-env --env-file ./my.env resolve DB_URL
+  bbs-env is-set --prefix DB_URL
+EOF
+}
+
+# resolve [--prefix] <varname> [<varname>...]
+# With --prefix: applies LOCAL_ > STG_ > (base) priority to each varname
+# Without --prefix: returns first set variable's value (legacy behavior)
+cmd_resolve() {
+  if [ $# -eq 0 ]; then
+    echo "bbs-env resolve: requires at least one varname" >&2
+    exit 1
+  fi
+
+  local use_prefix=false
+  if [ "$1" = "--prefix" ]; then
+    use_prefix=true
+    shift
+  fi
+
+  if [ "$use_prefix" = true ]; then
+    for var in "$@"; do
+      for p in LOCAL_ STG_ ""; do
+        local val
+        val="$(printenv "${p}${var}" 2>/dev/null || true)"
+        if [ -n "$val" ]; then
+          echo "$val"
+          return 0
+        fi
+      done
+    done
+    return 1
+  else
+    for var in "$@"; do
+      if [ -n "$(printenv "$var" 2>/dev/null || true)" ]; then
+        printenv "$var"
+        return 0
+      fi
+    done
+    return 1
+  fi
+}
+
+# is-set [--prefix] <varname>
+cmd_is_set() {
+  if [ $# -eq 0 ]; then
+    echo "bbs-env is-set: requires a varname" >&2
+    exit 1
+  fi
+
+  local use_prefix=false
+  if [ "$1" = "--prefix" ]; then
+    use_prefix=true
+    shift
+  fi
+
+  if [ "$use_prefix" = true ]; then
+    for p in LOCAL_ STG_ ""; do
+      if [ -n "$(printenv "${p}$1" 2>/dev/null || true)" ]; then
+        echo "yes"
+        return 0
+      fi
+    done
+    echo "no"
+  else
+    if [ -n "$(printenv "$1" 2>/dev/null || true)" ]; then
+      echo "yes"
+    else
+      echo "no"
+    fi
+  fi
+}
+
+cmd_list_prefix() {
+  if [ $# -eq 0 ]; then
+    echo "bbs-env list-prefix: requires a prefix" >&2
+    exit 1
+  fi
+
+  env | awk -v prefix="$1" 'index($0, prefix) == 1' | sort
+}
+
+cmd_prompt() {
+  if [ $# -eq 0 ]; then
+    exit 0
+  fi
+
+  MISSING=""
+  for var in "$@"; do
+    if [ -z "$(printenv "$var" 2>/dev/null || true)" ]; then
+      MISSING="$MISSING $var"
+    fi
+  done
+
+  if [ -n "$MISSING" ]; then
+    echo "MISSING:$MISSING"
+  fi
+}
+
+# ─── Main ──────────────────────────────────────────────────────
+# Parse global env flags before subcmd
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --env-file)
+      [ $# -ge 2 ] || { echo "bbs-env: --env-file requires a path" >&2; exit 1; }
+      BABYSIT_ENV_FILE="$2"; shift 2 ;;
+    --app)
+      [ $# -ge 2 ] || { echo "bbs-env: --app requires an app name" >&2; exit 1; }
+      BABYSIT_APP="$2"; shift 2 ;;
+    *)  break ;;
+  esac
+done
+
+SUBCMD="${1:-}"
+shift || true
+
+_load_project_env
+
+case "$SUBCMD" in
+  resolve)     cmd_resolve "$@" ;;
+  is-set)      cmd_is_set "$@" ;;
+  list-prefix) cmd_list_prefix "$@" ;;
+  prompt)      cmd_prompt "$@" ;;
+  help|--help|-h|"")
+    usage
+    [ -z "$SUBCMD" ] && exit 1 || exit 0
+    ;;
+  *)
+    echo "bbs-env: unknown subcommand '$SUBCMD'" >&2
+    usage >&2
+    exit 1
+    ;;
+esac
