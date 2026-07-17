@@ -51,12 +51,33 @@ _TEL_START=$(date +%s)
 
 # ── Bin resolver ─────────────────────────────────────────────────
 # BBS_<NAME>_BIN resolves once here: home shim (~/.claude/bbs-*) first,
-# repo copy (~/.claude/skills/babysit/bin/bbs-*) as plugin fallback.
-_bbs_resolve() {
+# repo copy (~/.claude/skills/babysit/bin/bbs-*) as plugin fallback, then the
+# `bbs` multicall binary when both compat symlinks dangle.
+_bbs_resolve() { # $1 = bbs-<sub>
   local shim="$HOME/.claude/$1" repo="$HOME/.claude/skills/babysit/bin/$1"
-  if [ -x "$shim" ]; then echo "$shim"
-  elif [ -x "$repo" ]; then echo "$repo"
-  else echo "$1"; fi
+  if [ -x "$shim" ]; then echo "$shim"; return; fi
+  if [ -x "$repo" ]; then echo "$repo"; return; fi
+  # Both compat paths dangle — typically a bin/bbs-<sub> symlink → the
+  # gitignored bin/bbs on a checkout where nothing built the binary yet. Fall
+  # back to the `bbs` multicall, but only once it actually serves <sub>:
+  # `bbs <sub>` on a build lacking that subcommand exits 1 *silently*
+  # (internal/cmd/root.go sets SilenceErrors) — byte-identical to a legit
+  # exit 1 — so probe capability up front with `bbs <sub> --help` (exit 0).
+  # `bbs help <sub>` is NOT a usable probe: cobra exits 0 for unknown topics.
+  # Every call site consumes "$BBS_*_BIN" as a single quoted word, so a
+  # two-word `bbs <sub>` value would break them all. Hand back a bbs-<sub>-named
+  # symlink to the multicall instead: argv[0]-basename dispatch (cmd/bbs/main.go)
+  # then routes it to <sub> with no change at any call site.
+  local sub="${1#bbs-}" bbs path link
+  for bbs in "$HOME/.claude/bbs" "$HOME/.claude/skills/babysit/bin/bbs" bbs; do
+    path=$(command -v "$bbs" 2>/dev/null) || continue
+    "$path" "$sub" --help >/dev/null 2>&1 || continue
+    link="$HOME/.babysit/cache/bin/$1"
+    mkdir -p "$HOME/.babysit/cache/bin" 2>/dev/null \
+      && ln -sf "$path" "$link" 2>/dev/null \
+      && [ -x "$link" ] && { echo "$link"; return; }
+  done
+  echo "$1"   # honest degraded state — no bbs multicall serves <sub> either
 }
 BBS_SLUG_BIN=$(_bbs_resolve bbs-slug)
 BBS_TICKET_BIN=$(_bbs_resolve bbs-ticket)
