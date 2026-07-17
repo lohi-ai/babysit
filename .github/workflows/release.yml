@@ -54,18 +54,22 @@ jobs:
       - name: Sync Formula/bbs.rb with release checksums
         run: |
           set -euo pipefail
+          # Read the version from the tagged commit before switching branches
+          # (the guard above already asserted it equals the tag).
           version="$(cat VERSION)"
+          # goreleaser wrote dist/checksums.txt as an untracked file; it survives
+          # the branch switch. Move to the default branch FIRST, then regenerate
+          # there, so the working tree is never dirtied across the checkout.
+          default="${GITHUB_EVENT_REPOSITORY_DEFAULT_BRANCH:-main}"
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin "$default"
+          git checkout "$default"
           scripts/gen-formula.sh "$version" dist/checksums.txt > Formula/bbs.rb
           if git diff --quiet -- Formula/bbs.rb; then
             echo "Formula already current — nothing to commit"
             exit 0
           fi
-          git config user.name  "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          default="${GITHUB_EVENT_REPOSITORY_DEFAULT_BRANCH:-main}"
-          git fetch origin "$default"
-          git checkout "$default"
-          scripts/gen-formula.sh "$version" dist/checksums.txt > Formula/bbs.rb
           git add Formula/bbs.rb
           git commit -m "chore(release): sync Formula/bbs.rb checksums for v$version"
           git push origin "$default"
