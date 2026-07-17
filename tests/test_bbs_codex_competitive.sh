@@ -5,6 +5,10 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
+# bin/bbs-codex-competitive is a symlink to the gitignored bin/bbs, so a clean
+# checkout has nothing to exec until the binary is built.
+(cd "$ROOT" && go build -o bin/bbs ./cmd/bbs) || { echo "FAIL: go build" >&2; exit 1; }
+
 mkdir -p "$TMP/home"
 mkdir -p "$TMP/.claude/skills/example"
 

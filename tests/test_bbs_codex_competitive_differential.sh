@@ -124,8 +124,8 @@ diff_case() {
   # Filesystem parity: the tree each implementation left behind must match,
   # symlink targets included. This is what catches an apply path that prints
   # the right words and links the wrong thing.
-  ( cd "$base/o" && find . -exec sh -c 'printf "%s %s\n" "$1" "$(readlink "$1" 2>/dev/null)"' _ {} \; | sed "s|$base/o|ROOT|g" | sort ) > "$base/o.tree"
-  ( cd "$base/g" && find . -exec sh -c 'printf "%s %s\n" "$1" "$(readlink "$1" 2>/dev/null)"' _ {} \; | sed "s|$base/g|ROOT|g" | sort ) > "$base/g.tree"
+  ( cd "$base/o" && find . -exec sh -c 'for f; do printf "%s %s\n" "$f" "$(readlink "$f" 2>/dev/null)"; done' _ {} + | sed "s|$base/o|ROOT|g" | sort ) > "$base/o.tree"
+  ( cd "$base/g" && find . -exec sh -c 'for f; do printf "%s %s\n" "$f" "$(readlink "$f" 2>/dev/null)"; done' _ {} + | sed "s|$base/g|ROOT|g" | sort ) > "$base/g.tree"
   cmp -s "$base/o.tree" "$base/g.tree" || msg="$msg tree[$(diff "$base/o.tree" "$base/g.tree" | tr '\n' '|')]"
 
   if [ -z "$msg" ]; then ok "$desc"; else fail "$desc" "$msg"; fi
@@ -217,9 +217,8 @@ setup_stale_global() {
   mkdir -p "$home/codexhome/skills"
   ln -s /nowhere "$home/codexhome/skills/bbs:alpha"
 }
-# CASE_CODEX points at <sandbox>/codexhome, and setup writes into
-# <home>/codexhome — so this case pins the CODEX_HOME branch specifically.
-CASE_CODEX=""
+# Pins the CODEX_HOME branch by passing it to run_one directly, so only the one
+# home is linked and the repair is unambiguous.
 (
   base="$T/staleglobal"; groot="$base/g/root"; ghome="$base/g/home"; oroot="$base/o/root"; ohome="$base/o/home"
   sandboxed "$oroot" "$ohome" "$groot" "$ghome"
@@ -232,7 +231,6 @@ CASE_CODEX=""
   [ "$ot" = "$oroot/.claude/skills/alpha" ] || { echo "bash didn't repair: $ot"; exit 1; }
   [ "$gt" = "$groot/.claude/skills/alpha" ] || { echo "go didn't repair: $gt"; exit 1; }
 ) && ok "repairs-stale-global-symlink (ln -sfn branch)" || fail "repairs-stale-global-symlink (ln -sfn branch)"
-CASE_CODEX="codexhome"
 
 # `exists and not symlink` — the script's own error, so it must match verbatim.
 setup_blocked_global() {
@@ -242,7 +240,6 @@ setup_blocked_global() {
   mkdir -p "$home/codexhome/skills"
   : > "$home/codexhome/skills/bbs:alpha"   # a real file where a link belongs
 }
-CASE_CODEX=""
 (
   base="$T/blocked"; groot="$base/g/root"; ghome="$base/g/home"; oroot="$base/o/root"; ohome="$base/o/home"
   sandboxed "$oroot" "$ohome" "$groot" "$ghome"
@@ -255,7 +252,6 @@ CASE_CODEX=""
   [ "$oe" = "$ge" ] || { echo "stderr bash=[$oe] go=[$ge]"; exit 1; }
   [ "$ge" = "exists and not symlink: HOME/codexhome/skills/bbs:alpha" ] || { echo "unexpected stderr: [$ge]"; exit 1; }
 ) && ok "global-dst-exists-not-symlink-errors" || fail "global-dst-exists-not-symlink-errors"
-CASE_CODEX="codexhome"
 
 # ── B4: the unconditional rm -rf (data loss, replicated on purpose) ─────
 echo "B4 — unconditional rm -rf (bug-for-bug):"

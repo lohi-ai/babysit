@@ -187,6 +187,12 @@ func runCodexCompetitive(args []string) error {
 		// Bug-for-bug: `rm -rf "$DST_DOC" "$DST_SKILLS"` is unconditional, so a
 		// real AGENTS.md file or a populated .agents/skills directory is deleted
 		// without warning. Replicated deliberately; see the ticket's QA verdict.
+		//
+		// One deliberate gap: rm takes both operands in one call and still tries
+		// the second after the first fails, so a stuck AGENTS.md (EPERM/EBUSY)
+		// does not spare .agents/skills. These two calls do spare it. Matching
+		// bash here would mean destroying more user data on an error path, for a
+		// case no output or exit code can observe; left divergent on purpose.
 		if err := os.RemoveAll(dstDoc); err != nil {
 			return errSilent
 		}
@@ -299,8 +305,11 @@ func codexHomeDirs() ([]string, bool) {
 // after the bash's `[ -d ]` test and references|shared|.* filter.
 //
 // Ordering is byte order (os.ReadDir sorts by name), whereas the bash's glob
-// collates per LC_COLLATE. The two agree under the C locale; nothing consumes
-// this ordering programmatically, and libc collation isn't reachable natively.
+// collates per LC_COLLATE. The two agree under the C locale the harness pins,
+// and libc collation isn't reachable natively. Under a locale like en_US.UTF-8
+// they disagree for mixed-case names (apple, Beta vs Beta, apple), which does
+// reorder the "would link" lines on stdout — every skill dir shipped today is
+// lowercase, so nothing observes it, but the gap is real rather than academic.
 func codexSkillDirs(srcSkills string) []string {
 	entries, err := os.ReadDir(srcSkills)
 	if err != nil {
