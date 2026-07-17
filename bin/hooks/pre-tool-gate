@@ -10,10 +10,16 @@
 #   - verdict missing ("none")                  → ask   (human checkpoint)
 #   - verdict DONE / DONE_WITH_CONCERNS / PASS  → defer (no objection)
 #   - no ticket resolves, or jq unavailable     → defer (never gate ad-hoc work)
+#   - bbs-ticket itself unresolvable            → deny  (gate offline, see below)
 #
 # Score never auto-approves: the gate keys on categorical verdicts, never a
-# number. Fail-open by design — when in doubt, defer; only a concrete
-# not-ready verdict produces a hard deny.
+# number. Fail-open *about the ticket's state* — when in doubt about a verdict,
+# defer; only a concrete not-ready verdict produces a hard deny.
+#
+# But fail CLOSED when the gate cannot run at all: if bbs-ticket is
+# unresolvable there are no verdicts to read, and deferring would disable
+# enforcement in a way that reads exactly like the ordinary ad-hoc-shell defer.
+# An unverifiable stage is denied, not waved through.
 #
 # Input:  hook JSON on stdin (.tool_input.command).
 # Output: PreToolUse permissionDecision JSON on stdout; always exit 0.
@@ -42,23 +48,47 @@ case "$CMD" in
   *) emit defer "pre-tool-gate: not a hard-stage command, deferring" ;;
 esac
 
-# Resolve bbs-ticket the way the preamble / pre-commit hook do.
-_bbs_resolve() {
-  local shim="$HOME/.claude/$1" repo="$HOME/.claude/skills/babysit/bin/$1"
-  if [ -x "$shim" ]; then echo "$shim"
-  elif [ -x "$repo" ]; then echo "$repo"
-  elif command -v "$1" >/dev/null 2>&1; then echo "$1"
-  else echo ""; fi
+# Resolve bbs-ticket the way the preamble / pre-commit hook do, into an argv
+# array (the multicall fallback below is two words, so a bare string won't do).
+# Sets BBS_ARGV; returns 1 when nothing on this checkout can serve "$1".
+_bbs_resolve() { # $1=bbs-<sub>
+  local name="$1" sub="${1#bbs-}" c
+  BBS_ARGV=()
+  for c in "$HOME/.claude/$name" "$HOME/.claude/skills/babysit/bin/$name"; do
+    if [ -x "$c" ]; then BBS_ARGV=("$c"); return 0; fi
+  done
+  if command -v "$name" >/dev/null 2>&1; then BBS_ARGV=("$name"); return 0; fi
+
+  # The bbs-<sub> alias is unresolvable — typically a dangling bin/bbs-<sub>
+  # symlink → the gitignored bin/bbs on a checkout where nothing built it yet.
+  # Fall back to the multicall binary, but only once it actually serves <sub>:
+  # `bbs <sub>` on a binary lacking that subcommand exits 1 *silently*
+  # (internal/cmd/root.go sets SilenceErrors), which is indistinguishable from
+  # bbs-ticket's own "no ticket" exit 1. Probing capability up front is what
+  # keeps an unusable binary from being mistaken for a working one. `bbs help
+  # <sub>` is NOT a usable probe — cobra exits 0 for unknown help topics.
+  for c in "$HOME/.claude/bbs" "$HOME/.claude/skills/babysit/bin/bbs" bbs; do
+    if command -v "$c" >/dev/null 2>&1 && "$c" "$sub" --help >/dev/null 2>&1; then
+      BBS_ARGV=("$c" "$sub"); return 0
+    fi
+  done
+  return 1
 }
-TICKET_BIN="$(_bbs_resolve bbs-ticket)"
-[ -n "$TICKET_BIN" ] || emit defer "pre-tool-gate: bbs-ticket not found, deferring"
+
+# Fail CLOSED: with no way to read the ticket's verdicts, this gate cannot tell
+# a reviewed branch from an unreviewed one. Deferring here would silently
+# disable the enforcement boundary while looking exactly like the legitimate
+# "ad-hoc shell, no ticket" defer below — that indistinguishability is the bug
+# this guards. Deny loudly instead, in wording no defer path shares.
+_bbs_resolve bbs-ticket || emit deny "pre-tool-gate: GATE OFFLINE — cannot resolve bbs-ticket, so the $STAGE cannot be checked against its verdicts. Blocking rather than allowing an unverified $STAGE. Fix: run bin/setup-skills (or 'go build -o bin/bbs ./cmd/bbs'), then retry."
+TICKET_BIN=("${BBS_ARGV[@]}")
 
 # Resolve the ticket. exit 0 = id; 1 = no ticket; 2 = conflict. Only gate
 # workflow tickets — ad-hoc shells (no ticket) push freely.
-TICKET="$("$TICKET_BIN" resolve 2>/dev/null)" || emit defer "pre-tool-gate: no ticket resolved, deferring"
+TICKET="$("${TICKET_BIN[@]}" resolve 2>/dev/null)" || emit defer "pre-tool-gate: no ticket resolved, deferring"
 [ -n "$TICKET" ] || emit defer "pre-tool-gate: empty ticket, deferring"
 
-vs() { "$TICKET_BIN" verdict-status --skill "$1" 2>/dev/null || echo none; }
+vs() { "${TICKET_BIN[@]}" verdict-status --skill "$1" 2>/dev/null || echo none; }
 
 # A verdict is "ready" if DONE or DONE_WITH_CONCERNS. "BLOCKED"/"NEEDS_CONTEXT" = not ready.
 ready() { case "$1" in DONE|DONE_WITH_CONCERNS) return 0 ;; *) return 1 ;; esac; }
@@ -70,7 +100,7 @@ QA="$(vs qa)"
 # qa-evidence classifies the qa verdict *body* (freshness, rubric, e2e evidence),
 # not just its STATUS token — a PASS can be well-formed yet contradict its own
 # rubric or carry no e2e run. Only consulted once QA reads as ready.
-qa_evidence() { "$TICKET_BIN" qa-evidence 2>/dev/null || echo none; }
+qa_evidence() { "${TICKET_BIN[@]}" qa-evidence 2>/dev/null || echo none; }
 
 case "$STAGE" in
   push)

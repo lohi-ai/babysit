@@ -55,16 +55,29 @@ case "${NAME#bbs:}" in
 esac
 EVIDENCE_STATUS=""
 if [ -n "$EVIDENCE_KIND" ]; then
-  _resolve() {
-    local shim="$HOME/.claude/$1" repo="$HOME/.claude/skills/babysit/bin/$1"
-    if [ -x "$shim" ]; then echo "$shim"
-    elif [ -x "$repo" ]; then echo "$repo"
-    elif command -v "$1" >/dev/null 2>&1; then echo "$1"
-    else echo ""; fi
+  # Sets BBS_ARGV to the argv that serves "$1"; returns 1 if nothing does. The
+  # multicall fallback (`bbs <sub>`) is two words, hence an array. Audit-only
+  # hook: an unresolvable bin is skipped quietly — never block on it.
+  _resolve() { # $1=bbs-<sub>
+    local name="$1" sub="${1#bbs-}" c
+    BBS_ARGV=()
+    for c in "$HOME/.claude/$name" "$HOME/.claude/skills/babysit/bin/$name"; do
+      if [ -x "$c" ]; then BBS_ARGV=("$c"); return 0; fi
+    done
+    if command -v "$name" >/dev/null 2>&1; then BBS_ARGV=("$name"); return 0; fi
+    # bin/bbs-<sub> dangles (symlink → the gitignored bin/bbs, not built here).
+    # Probe the multicall binary for <sub> before trusting it: `bbs <sub>` on a
+    # binary without that subcommand exits 1 silently (root.go SilenceErrors).
+    # `bbs help <sub>` is not a usable probe — cobra exits 0 for unknown topics.
+    for c in "$HOME/.claude/bbs" "$HOME/.claude/skills/babysit/bin/bbs" bbs; do
+      if command -v "$c" >/dev/null 2>&1 && "$c" "$sub" --help >/dev/null 2>&1; then
+        BBS_ARGV=("$c" "$sub"); return 0
+      fi
+    done
+    return 1
   }
-  TB="$(_resolve bbs-ticket)"
-  if [ -n "$TB" ] && "$TB" resolve >/dev/null 2>&1; then
-    EVIDENCE_STATUS="$("$TB" evidence-status --kind "$EVIDENCE_KIND" 2>/dev/null || echo none)"
+  if _resolve bbs-ticket && "${BBS_ARGV[@]}" resolve >/dev/null 2>&1; then
+    EVIDENCE_STATUS="$("${BBS_ARGV[@]}" evidence-status --kind "$EVIDENCE_KIND" 2>/dev/null || echo none)"
   fi
 fi
 
