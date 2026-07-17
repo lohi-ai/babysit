@@ -9,11 +9,16 @@
 # boundary silently off. The reason string was indistinguishable from the
 # legitimate ad-hoc-shell defer, so nothing looked wrong.
 #
-# Both halves matter. The bug was invisible to every developer with an install
-# (`command -v` found the global shim and rescued it), and only bit fresh clones
-# and CI. A green run on the with-install half alone is exactly the false-clean
-# that let this through the first time — so half 1 is the real guard, and half 2
-# proves we didn't fix it by breaking everyone else.
+# Both halves matter. The bug was invisible to every developer whose install
+# still resolved (`command -v` found a working global shim and rescued it), and
+# bit fresh clones, CI, and anyone who switched branches without rebuilding. A
+# green run on the with-install half alone is exactly the false-clean that let
+# this through the first time — so the deny cases are the real guard, and the
+# with-install cases prove we didn't fix it by breaking everyone else.
+#
+# Coverage note: the resolver consults only $HOME/.claude/* and PATH, never the
+# repo-local bin/. Every case below therefore varies HOME/PATH — a dangling
+# symlink planted in a scratch repo's bin/ would be inert and prove nothing.
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -22,9 +27,6 @@ T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
 PASS=0; FAIL=0
 g() { printf '\033[0;32m%s\033[0m' "$1"; }; r() { printf '\033[0;31m%s\033[0m' "$1"; }
 
-hook() { # $1=command  → prints permissionDecision; env passed via caller
-  echo "{\"tool_input\":{\"command\":\"$1\"}}" | bash "$GATE" 2>/dev/null
-}
 decision() { printf '%s' "$1" | sed -n 's/.*"permissionDecision":"\([a-z]*\)".*/\1/p'; }
 reason()   { printf '%s' "$1" | sed -n 's/.*"permissionDecisionReason":"\([^"]*\)".*/\1/p'; }
 
@@ -33,11 +35,13 @@ check() { # $1=name $2=want $3=got
   else r FAIL; printf '  %s\n      want=%s got=%s\n' "$1" "$2" "$3"; FAIL=$((FAIL+1)); fi
 }
 
-# A repo whose bin/bbs-ticket is a dangling symlink → bin/bbs, reproducing
-# bs-6sck3n02 without needing that branch checked out.
+# Run the gate from a scratch copy. NOTE: a repo-local bin/bbs-ticket is
+# deliberately absent — the resolver only ever consults $HOME/.claude/* and
+# PATH, so planting a dangling symlink in the rig's bin/ would prove nothing.
+# The dangling-symlink case is exercised via $HOME below, which is where it
+# actually bites.
 RIG="$T/rig"; mkdir -p "$RIG/bin/hooks"
 cp "$GATE" "$RIG/bin/hooks/pre-tool-gate"
-ln -sf bbs "$RIG/bin/bbs-ticket"   # dangles: bin/bbs not built
 GATE="$RIG/bin/hooks/pre-tool-gate"
 
 # ── Half 1: no install, no PATH shim → the dangling symlink is the only
@@ -62,6 +66,18 @@ case "$(reason "$out")" in
   *defer*|*"not found"*) check "deny reason never reads as a defer" clean "$(reason "$out")" ;;
   *) check "deny reason never reads as a defer" clean clean ;;
 esac
+
+# ── The real bs-6sck3n02 shape: an INSTALLED machine that simply hasn't rebuilt.
+# ~/.claude/bbs-ticket → repo/bin/bbs-ticket → bbs, and bbs was never built, so
+# the whole chain dangles. This is the case that actually ships (a developer
+# switches branches without running setup-skills); `[ -x ]` follows the chain and
+# is false, so the shim must not be trusted just because the path exists.
+CH="$T/chainhome"; mkdir -p "$CH/.claude" "$T/chainrepo/bin"
+ln -sf bbs "$T/chainrepo/bin/bbs-ticket"          # → unbuilt bin/bbs
+ln -sf "$T/chainrepo/bin/bbs-ticket" "$CH/.claude/bbs-ticket"
+out="$(echo '{"tool_input":{"command":"git push origin HEAD"}}' | \
+  env -i PATH=/usr/bin:/bin HOME="$CH" bash "$GATE" 2>/dev/null)"
+check "installed shim → dangling chain still denies" deny "$(decision "$out")"
 
 # ── Half 2: with a working bbs-ticket on PATH → behavior unchanged from today.
 # Stub it: `resolve` yields a ticket, verdicts are absent → today's answer is ask.

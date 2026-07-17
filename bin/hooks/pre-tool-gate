@@ -48,9 +48,15 @@ case "$CMD" in
   *) emit defer "pre-tool-gate: not a hard-stage command, deferring" ;;
 esac
 
-# Resolve bbs-ticket the way the preamble / pre-commit hook do, into an argv
-# array (the multicall fallback below is two words, so a bare string won't do).
-# Sets BBS_ARGV; returns 1 when nothing on this checkout can serve "$1".
+# Resolve bbs-ticket into an argv array (the multicall fallback below is two
+# words, so a bare string won't do). Sets BBS_ARGV; returns 1 when nothing on
+# this checkout can serve "$1".
+#
+# Deliberately NOT the same shape as the preamble / pre-commit resolver: those
+# still return a bare string and fall back to `echo "$1"`, handing back a name
+# that may not run. This gate cannot use that contract — an unrunnable bin here
+# means unverified verdicts, so it must be distinguishable from a working one.
+# Don't "unify" them by copying the string version back over this.
 _bbs_resolve() { # $1=bbs-<sub>
   local name="$1" sub="${1#bbs-}" c
   BBS_ARGV=()
