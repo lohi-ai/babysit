@@ -2,3 +2,5 @@
 base_branch: main
 branch_prefix: feat
 push: true
+mode: worktree
+land: local
