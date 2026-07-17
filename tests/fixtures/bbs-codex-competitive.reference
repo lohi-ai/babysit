@@ -1,0 +1,158 @@
+#!/usr/bin/env bash
+# Link Codex-facing Babysit artifacts to the Claude-facing source.
+set -euo pipefail
+
+ROOT=""
+CHECK=0
+DRY_RUN=0
+PROJECT_ONLY=0
+GLOBAL_ONLY=0
+
+usage() {
+  cat <<'EOF'
+Usage: bbs-codex-competitive [--root DIR] [--check] [--dry-run] [--project-only|--global-only]
+
+Project links:
+  AGENTS.md      -> CLAUDE.md
+  .agents/skills -> ../.claude/skills
+
+Global skill links:
+  ~/.codex/skills/bbs:<name> -> <root>/.claude/skills/<name>
+  ~/.Codex/skills/bbs:<name> -> <root>/.claude/skills/<name>  (if present)
+
+The source of truth stays Claude-facing; this command gives Codex the global
+skill entries and repo-local filenames it expects without copying content.
+
+Options:
+  --root DIR  Repository root. Defaults to git top-level or current directory.
+  --check     Fail if the Codex-facing symlinks are missing or incorrect.
+  --dry-run   Print what would change without writing links.
+  --project-only  Only manage AGENTS.md and .agents/skills.
+  --global-only   Only manage global Codex skills.
+EOF
+}
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --root) ROOT="${2:-}"; shift 2 ;;
+    --check) CHECK=1; shift ;;
+    --dry-run) DRY_RUN=1; shift ;;
+    --project-only) PROJECT_ONLY=1; shift ;;
+    --global-only) GLOBAL_ONLY=1; shift ;;
+    --help|-h) usage; exit 0 ;;
+    *) echo "unknown option: $1" >&2; usage >&2; exit 2 ;;
+  esac
+done
+
+if [ "$PROJECT_ONLY" -eq 1 ] && [ "$GLOBAL_ONLY" -eq 1 ]; then
+  echo "--project-only and --global-only are mutually exclusive" >&2
+  exit 2
+fi
+
+if [ -z "$ROOT" ]; then
+  ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+fi
+
+ROOT="$(cd "$ROOT" && pwd)"
+SRC_DOC="$ROOT/CLAUDE.md"
+SRC_SKILLS="$ROOT/.claude/skills"
+DST_DOC="$ROOT/AGENTS.md"
+DST_AGENTS_DIR="$ROOT/.agents"
+DST_SKILLS="$ROOT/.agents/skills"
+DOC_TARGET="CLAUDE.md"
+SKILLS_TARGET="../.claude/skills"
+
+[ -f "$SRC_DOC" ] || { echo "missing source: $SRC_DOC" >&2; exit 1; }
+[ -d "$SRC_SKILLS" ] || { echo "missing source: $SRC_SKILLS" >&2; exit 1; }
+
+link_points_to() {
+  local path="$1" target="$2"
+  [ -L "$path" ] && [ "$(readlink "$path")" = "$target" ]
+}
+
+changed=0
+
+if [ "$GLOBAL_ONLY" -eq 0 ]; then
+  if ! link_points_to "$DST_DOC" "$DOC_TARGET"; then
+    changed=1
+    echo "would link AGENTS.md -> $DOC_TARGET"
+  fi
+
+  if ! link_points_to "$DST_SKILLS" "$SKILLS_TARGET"; then
+    changed=1
+    echo "would link .agents/skills -> $SKILLS_TARGET"
+  fi
+fi
+
+codex_homes=()
+if [ -n "${CODEX_HOME:-}" ]; then
+  codex_homes+=("$CODEX_HOME")
+else
+  codex_homes+=("$HOME/.codex")
+  [ "$HOME/.Codex" = "$HOME/.codex" ] || codex_homes+=("$HOME/.Codex")
+fi
+
+skill_count=0
+if [ "$PROJECT_ONLY" -eq 0 ]; then
+  for skill_dir in "$SRC_SKILLS"/*; do
+    [ -d "$skill_dir" ] || continue
+    name="$(basename "$skill_dir")"
+    case "$name" in references|shared|.*) continue ;; esac
+    skill_count=$((skill_count + 1))
+
+    for codex_home in "${codex_homes[@]}"; do
+      dst="$codex_home/skills/bbs:$name"
+      if ! link_points_to "$dst" "$skill_dir"; then
+        changed=1
+        echo "would link $dst -> $skill_dir"
+      fi
+    done
+  done
+fi
+
+if [ "$CHECK" -eq 1 ]; then
+  if [ "$changed" -eq 0 ]; then
+    echo "Codex symlinks are current"
+    exit 0
+  fi
+  echo "Codex symlinks are stale; run bin/bbs-codex-competitive" >&2
+  exit 1
+fi
+
+if [ "$DRY_RUN" -eq 1 ]; then
+  [ "$changed" -eq 0 ] && echo "Codex symlinks are current"
+  exit 0
+fi
+
+if [ "$GLOBAL_ONLY" -eq 0 ]; then
+  mkdir -p "$DST_AGENTS_DIR"
+  rm -rf "$DST_DOC" "$DST_SKILLS"
+  ln -s "$DOC_TARGET" "$DST_DOC"
+  ln -s "$SKILLS_TARGET" "$DST_SKILLS"
+fi
+
+if [ "$PROJECT_ONLY" -eq 0 ]; then
+  for codex_home in "${codex_homes[@]}"; do
+    mkdir -p "$codex_home/skills"
+  done
+
+  for skill_dir in "$SRC_SKILLS"/*; do
+    [ -d "$skill_dir" ] || continue
+    name="$(basename "$skill_dir")"
+    case "$name" in references|shared|.*) continue ;; esac
+
+    for codex_home in "${codex_homes[@]}"; do
+      dst="$codex_home/skills/bbs:$name"
+      if [ -L "$dst" ]; then
+        ln -sfn "$skill_dir" "$dst"
+      elif [ -e "$dst" ]; then
+        echo "exists and not symlink: $dst" >&2
+        exit 1
+      else
+        ln -s "$skill_dir" "$dst"
+      fi
+    done
+  done
+fi
+
+echo "Codex symlinks updated"
