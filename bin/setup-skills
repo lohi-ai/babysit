@@ -177,17 +177,17 @@ if [ -d "$CODEX_SKILLS" ]; then
 fi
 
 # ─── Step 1c: Build the bbs Go CLI ────────────────────────────
-# bin/bbs-config is a compat symlink → the built bin/bbs (multicall binary);
-# it only resolves once the binary exists.
+# bin/bbs-config and bin/bbs-update-check are compat symlinks → the built
+# bin/bbs (multicall binary); they only resolve once the binary exists.
 info "Building bbs Go CLI..."
 if ! command -v go >/dev/null 2>&1; then
-  warn "go not found — skipping bbs build (install Go to enable the bbs CLI / bbs-config)"
+  warn "go not found — skipping bbs build (install Go to enable the bbs CLI / bbs-config / bbs-update-check)"
 elif [ "$DRY_RUN" -eq 1 ]; then
   echo "  [dry-run] go build -o bin/bbs ./cmd/bbs"
 elif (cd "$PROJECT_DIR" && go build -o bin/bbs ./cmd/bbs); then
   ok "bbs built → bin/bbs"
 else
-  warn "go build failed — bbs-config compat symlink will not resolve until built"
+  warn "go build failed — bbs-config / bbs-update-check compat symlinks will not resolve until built"
 fi
 
 # ─── Step 2: Symlink babysit CLI + bbs-* bins ───────────────
