@@ -35,23 +35,21 @@ core bins are now Go and ship inside this one binary, reachable as `bbs <sub>`:
 (resolve, verdicts, session, board), the index.json state-accessors
 (`env`, `get`, `set-status`, `set-phase`, `set-parent`, `add-child`,
 `add-relation`, `set-sibling`, `add-label`, `set-pointer`, `get-pointer`,
-`ensure-size`, `append-history`), and the file-only manifest.yaml ops
-(`init`, `get-manifest`, `set-branch`). It still **delegates** the base-ops
-family (`merge-base`, `switch`, `reset-base`, `qa-lease`, `serve`, `refresh`),
-`ensure` (it cuts git branches), and `path`/`list`/`reconcile` to a
-`bbs-ticket.bash` sitting next to the binary. That bash sibling ships **only**
-with the skill pack (`bin/setup-skills`), so a brew-only `bbs ticket
-<delegated-sub>` will not find it. Use the skill-pack install for full ticket
-operations.
+`ensure-size`, `append-history`), the file-only manifest.yaml ops
+(`init`, `get-manifest`, `set-branch`), the base-ops family (`merge-base`,
+`switch`, `reset-base`, `qa-lease`, `serve`, `refresh`), `ensure`, and
+`path`/`list`/`reconcile`/`find-similar`. `bbs ticket` is now entirely
+self-contained in the binary — a brew-only install runs every subcommand
+without the skill pack.
 
 **Note on `design`:** the `design` command itself is Go (ships in the binary),
 but its CSV/DESIGN.md data files live in the skill pack, so a brew-only
 `bbs design suggest` needs `--data <dir>` pointed at a skill-pack checkout.
 
-Every standalone bin is now Go. The only bash left is the `bbs-ticket.bash`
-sibling the Go `ticket` command delegates its un-ported half to; it installs
-with the skill pack via `bin/setup-skills`.
-`brew install bbs` does not, and is not meant to, give you the whole toolkit.
+Every standalone bin is now Go, `bbs-ticket` included — no production bash
+remains. `brew install bbs` still does not, and is not meant to, give you the
+whole toolkit: the skill pack (skills, workflows, DESIGN.md/CSV data) comes
+only from the clone + `bin/setup-skills`.
 
 There is no `bbs --version` yet.
 

@@ -3,25 +3,23 @@ package cmd
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
-	"syscall"
 
 	"github.com/reallongnguyen/babysit/internal/identity"
 	"github.com/spf13/cobra"
 )
 
-// newTicketCmd ports the identity core of bin/bbs-ticket.bash as `bbs ticket`.
+// newTicketCmd is the full Go port of the former bin/bbs-ticket.bash as
+// `bbs ticket`; the bin/bbs-ticket compat symlink dispatches on argv[0].
 //
-// This is a strangler port: the identity core (resolve/verdicts/session/board),
-// the index.json state-accessors (env/get/set-status/set-phase/set-parent/
-// add-child/add-relation/set-sibling/add-label/set-pointer/get-pointer/
-// ensure-size/append-history), and the file-only manifest.yaml ops (init/
-// get-manifest/set-branch) run natively. Everything still on bash — the base-ops
-// family (merge-base/refresh/reset-base/switch/serve/qa-lease), `ensure` (it cuts
-// git branches), and path/list/reconcile — is delegated to bin/bbs-ticket.bash,
-// which stays the source of truth until it is ported. The bin/bbs-ticket compat
-// symlink serves them all.
+// Every subcommand now runs natively: the identity core (resolve/verdicts/
+// session/board), the index.json state-accessors (env/get/set-status/set-phase/
+// set-parent/add-child/add-relation/set-sibling/add-label/set-pointer/
+// get-pointer/ensure-size/append-history), the file-only manifest.yaml ops
+// (init/get-manifest/set-branch), the git-mutating base-ops family (merge-base/
+// refresh/reset-base/switch/serve/qa-lease), `ensure`, and path/list/reconcile/
+// find-similar. A byte-identical frozen copy of the retired script survives at
+// tests/fixtures/bbs-ticket.reference as the differential-harness oracle.
 //
 // Flag parsing is disabled and each subcommand hand-parses its argv, because
 // the bash original hand-parses too and its quirks are part of the contract
@@ -34,9 +32,13 @@ func newTicketCmd() *cobra.Command {
 		Args:               cobra.ArbitraryArgs,
 		RunE: func(_ *cobra.Command, args []string) error {
 			if len(args) == 0 {
-				delegate(args) // bash prints usage and exits 2
+				ticketUsage()
+				os.Exit(2)
 			}
 			switch args[0] {
+			case "-h", "--help", "help":
+				ticketUsage()
+				os.Exit(0)
 			case "resolve":
 				runResolve(args[1:])
 			case "verdict-status":
@@ -116,32 +118,86 @@ func newTicketCmd() *cobra.Command {
 			case "assert-cwd":
 				runAssertCwd()
 			default:
-				delegate(args)
+				fmt.Fprintf(os.Stderr, "unknown subcommand: %s\n", args[0])
+				os.Exit(2)
 			}
 			return nil
 		},
 	}
 }
 
-// delegate hands the invocation to bin/bbs-ticket.bash, which sits next to the
-// real binary (bin/bbs) regardless of which bbs-* symlink we were called
-// through. syscall.Exec replaces this process, so argv, env, cwd, stdio, signals
-// and the exit code all pass through untouched.
-func delegate(args []string) {
-	exe, err := os.Executable()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "bbs ticket: cannot locate own binary: %v\n", err)
-		os.Exit(1)
-	}
-	if real, err := filepath.EvalSymlinks(exe); err == nil {
-		exe = real
-	}
-	bash := filepath.Join(filepath.Dir(exe), "bbs-ticket.bash")
-	if err := syscall.Exec(bash, append([]string{bash}, args...), os.Environ()); err != nil {
-		fmt.Fprintf(os.Stderr, "bbs ticket: cannot exec %s: %v\n", bash, err)
-		os.Exit(1)
-	}
+// ticketUsage prints the subcommand listing (bbs-ticket.bash:170-237) to stderr.
+// help/-h/--help exit 0 after this; empty and unknown subcommands exit 2.
+func ticketUsage() {
+	fmt.Fprint(os.Stderr, ticketUsageText)
 }
+
+const ticketUsageText = `usage: bbs-ticket <subcommand> [args...]
+
+Subcommands:
+  ensure            idempotent: no-op on ticket branch, else cut one + init
+                    mode trunk|branch|worktree (--mode > git-flow.yaml mode:):
+                    trunk = no cut; branch = in-place from clean base else
+                    worktree divert; worktree = always divert, primary stays
+                    on base; diverts print WORKTREE=<path>; developer role
+                    asks before in-place — exit 3; --cut-branch/--no-branch
+  init              initialize index.json + manifest.yaml for the current ticket
+  resolve [--explain]   print ticket id (env → manifest cwd-match → branch);
+                        exit 0 resolved, 1 no resolution, 2 conflict-BLOCKED
+  get-manifest <ticket> emit manifest.yaml as JSON
+  set-branch <ticket> <repo> <branch>
+                        rewrite manifest.yaml — update branch on the named repo row
+  get <path>        print a field (dotted path)
+  set-status <s>    set ticket status
+  set-phase <s>     set current owning skill
+  set-parent <t>    set parent ticket
+  add-child <t>     append a child ticket id
+  add-relation <type> <target>
+  set-sibling --role R --repo REPO --ticket T
+  add-label <label>
+  set-pointer <key> <value>
+  get-pointer <key>             print pointers.<key> ("" if unset)
+  ensure-size                   resolve ticket_size (XS|S|M|L); estimate from diff if unset
+  add-handoff --skill S --status STATUS [--body MD | --body-file FILE]
+  latest-handoff [--skill S]    print latest handoff filename (optionally filtered by skill)
+  set-verdict --skill S [--body MD | --body-file FILE]
+  verdict-status --skill S       print {none|DONE|DONE_WITH_CONCERNS|BLOCKED|NEEDS_CONTEXT}
+  set-review  --skill S [--body MD | --body-file FILE]
+  set-evidence --kind K (--json STR | --json-file FILE)   K ∈ verification|risk-gate|adversarial
+  evidence-status --kind K       print {none|valid|malformed}
+  qa-evidence                    audit qa verdict body: {none|ok|contradiction:<d>|thin:<d>|unexplained}
+  append-history --event E [--actor A] [--extra-json JSON]
+  merge-base [--base BRANCH]     from a ticket worktree: merge the ticket branch
+                                 into the primary checkout (dev-server tree);
+                                 BLOCKs on dirty/diverged state or conflict
+  refresh [--base BRANCH]        bring the ticket branch up to date: fetch +
+                                 merge origin/<base> into it (never local base);
+                                 BLOCKs on dirty tree or conflict
+  reset-base [--base BRANCH]     reset the primary checkout's base branch to
+                                 origin/<base> (drops local integration merges);
+                                 BLOCKs on dirty/off-base/non-merge local commits
+  switch <ticket>... [--base BRANCH]
+                                 test surface = base + exactly these tickets:
+                                 reset-base then merge each ticket branch in;
+                                 the fast QA hop between worktree tickets
+  qa-lease <acquire|release|status> [--ticket ID] [--ttl-min N] [--force]
+                                 exclusive QA-session lease on the test surface;
+                                 other tickets' merge-base/switch/reset-base
+                                 BLOCK while held; stale (> ttl) is stolen
+  serve [<ticket>...] [--ttl-min N]
+                                 human review: long qa-lease (240min) + switch,
+                                 here and in each sibling repo; bare = every
+                                 finished ticket (qa + review-pr DONE); re-run
+                                 after each fix; serve --release frees leases
+  board [--all] [--pr]           read-only ticket board: status, branch, qa/
+                                 review verdicts, session, PR, qa-lease, serving
+  path <kind> [selectors] --read|--write   resolve a ticket file path (canonical → legacy)
+  list <kind> [selectors]                  list ticket files of a kind
+  reconcile [--ticket <id> | --all] [--dry-run] [--quiet]
+                    advance index.json.status from observable filesystem state
+  session <list|attach|end>      inspect/rehydrate ~/.babysit/sessions/
+  env               print TICKET / TICKET_HOME / INDEX for eval
+`
 
 // ─── shared helpers ──────────────────────────────────────────────────────
 

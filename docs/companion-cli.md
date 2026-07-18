@@ -8,14 +8,16 @@ on `argv[0]` (`bbs-config` → `bbs config`, etc.). The bins ported to Go —
 `bbs-config`, `bbs-env`, `bbs-slug`, `bbs-ticket`, `bbs-update-check`,
 `bbs-upgrade`, `bbs-learnings-log`, `bbs-learnings-search`, `bbs-qa-config`,
 `bbs-telemetry-log`, `bbs-codex-competitive`, `bbs-analytics-cron`,
-`bbs-secrets`, `bbs-design`, `bbs-dashboard`, `bbs-autopilot` — behave
-identically to the bash they replaced (guarded by the differential harnesses in
-`tests/`). `bbs-ticket` is a strangler: its Go core owns
-identity/verdict/session/board, the index.json state-accessors
-(`get`/`set-*`/`add-*`/`ensure-size`/`append-history`/`env`), and the file-only
-manifest.yaml ops (`init`/`get-manifest`/`set-branch`); it delegates the
-remaining subcommands (base-ops, `ensure`, path/list/reconcile) to a
-`bbs-ticket.bash` sibling — the only bash left.
+`bbs-secrets`, `bbs-design`, `bbs-dashboard`, `bbs-autopilot`, `bbs-ticket` —
+behave identically to the bash they replaced (guarded by the differential
+harnesses in `tests/`). `bbs-ticket` was the last strangler: every subcommand
+now runs natively in Go — identity/verdict/session/board, the index.json
+state-accessors (`get`/`set-*`/`add-*`/`ensure-size`/`append-history`/`env`),
+the file-only manifest.yaml ops (`init`/`get-manifest`/`set-branch`), the
+git-mutating base-ops (`merge-base`/`refresh`/`reset-base`/`switch`/`serve`/
+`qa-lease`), `ensure`, and `path`/`list`/`reconcile`/`find-similar`. No bash
+remains in production; a frozen byte-identical copy of the old script lives at
+`tests/fixtures/bbs-ticket.reference` purely as the differential oracle.
 
 | Bin | Purpose |
 |-----|---------|
