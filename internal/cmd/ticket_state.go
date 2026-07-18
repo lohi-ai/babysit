@@ -29,14 +29,21 @@ func actorRole() string {
 	return "developer"
 }
 
-// mutateLocked mirrors `acquire_lock || exit 1` + the EXIT-trap release: fn must
-// not call os.Exit (the lock would leak), so it returns errors instead.
-func mutateLocked(st *ticket.Store, fn func() error) {
+// acquireOrDie mirrors bash `acquire_lock || exit 1`, printing the stale-lock
+// hint. Used where the caller manages the release + its own exit codes (init,
+// set-branch); mutateLocked wraps it for the common return-error case.
+func acquireOrDie(st *ticket.Store) {
 	if err := st.AcquireLock(); err != nil {
 		fmt.Fprintln(os.Stderr, "bbs-ticket: failed to acquire lock after 5s — stale?")
 		fmt.Fprintf(os.Stderr, "bbs-ticket: remove %s if no writer is active\n", st.LockPath())
 		os.Exit(1)
 	}
+}
+
+// mutateLocked mirrors `acquire_lock || exit 1` + the EXIT-trap release: fn must
+// not call os.Exit (the lock would leak), so it returns errors instead.
+func mutateLocked(st *ticket.Store, fn func() error) {
+	acquireOrDie(st)
 	err := fn()
 	st.ReleaseLock()
 	if err != nil {

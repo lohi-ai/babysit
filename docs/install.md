@@ -32,16 +32,17 @@ core bins are now Go and ship inside this one binary, reachable as `bbs <sub>`:
 | `bbs design …` | `design` | design-intelligence broker (`tokens` / `suggest` / `components` / `ux-check`) — the CSV/DESIGN.md data files ship with the skill pack |
 
 **Strangler note on `ticket`:** the Go `ticket` command owns the identity core
-(resolve, verdicts, session, board) and the index.json state-accessors
+(resolve, verdicts, session, board), the index.json state-accessors
 (`env`, `get`, `set-status`, `set-phase`, `set-parent`, `add-child`,
 `add-relation`, `set-sibling`, `add-label`, `set-pointer`, `get-pointer`,
-`ensure-size`, `append-history`). It still **delegates** the base-ops family
-(`merge-base`, `switch`, `reset-base`, `qa-lease`, `serve`, `refresh`), the
-manifest.yaml ops (`init`, `ensure`, `get-manifest`, `set-branch`), and
-`path`/`list`/`reconcile` to a `bbs-ticket.bash` sitting next to the binary.
-That bash sibling ships **only** with the skill pack (`bin/setup-skills`), so a
-brew-only `bbs ticket <delegated-sub>` will not find it. Use the skill-pack
-install for full ticket operations.
+`ensure-size`, `append-history`), and the file-only manifest.yaml ops
+(`init`, `get-manifest`, `set-branch`). It still **delegates** the base-ops
+family (`merge-base`, `switch`, `reset-base`, `qa-lease`, `serve`, `refresh`),
+`ensure` (it cuts git branches), and `path`/`list`/`reconcile` to a
+`bbs-ticket.bash` sitting next to the binary. That bash sibling ships **only**
+with the skill pack (`bin/setup-skills`), so a brew-only `bbs ticket
+<delegated-sub>` will not find it. Use the skill-pack install for full ticket
+operations.
 
 **Note on `design`:** the `design` command itself is Go (ships in the binary),
 but its CSV/DESIGN.md data files live in the skill pack, so a brew-only

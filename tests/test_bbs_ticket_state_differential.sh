@@ -5,8 +5,9 @@
 # Covers the slice ported in internal/cmd/ticket_state.go + internal/ticket/
 # index.go: env, get, set-status, set-phase, set-parent, add-child,
 # add-relation, set-sibling, add-label, set-pointer, get-pointer, ensure-size,
-# append-history. Manifest.yaml ops and base-ops stay bash-delegated and are
-# out of scope here.
+# append-history. Manifest.yaml ops have their own differential harness
+# (test_bbs_ticket_manifest_differential.sh); base-ops stay bash-delegated. Both
+# are out of scope here.
 #
 # Method: replay one identical command sequence against the Go binary
 # (bin/bbs-ticket) and the frozen bash reference (tests/fixtures/

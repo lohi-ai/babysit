@@ -13,14 +13,15 @@ import (
 
 // newTicketCmd ports the identity core of bin/bbs-ticket.bash as `bbs ticket`.
 //
-// This is a strangler port: the identity core (resolve/verdicts/session/board)
-// and the index.json state-accessors (env/get/set-status/set-phase/set-parent/
+// This is a strangler port: the identity core (resolve/verdicts/session/board),
+// the index.json state-accessors (env/get/set-status/set-phase/set-parent/
 // add-child/add-relation/set-sibling/add-label/set-pointer/get-pointer/
-// ensure-size/append-history) run natively. Everything still on bash — the
-// base-ops family (merge-base/refresh/reset-base/switch/serve/qa-lease), the
-// manifest.yaml ops (init/ensure/get-manifest/set-branch), and path/list/
-// reconcile — is delegated to bin/bbs-ticket.bash, which stays the source of
-// truth until it is ported. The bin/bbs-ticket compat symlink serves them all.
+// ensure-size/append-history), and the file-only manifest.yaml ops (init/
+// get-manifest/set-branch) run natively. Everything still on bash — the base-ops
+// family (merge-base/refresh/reset-base/switch/serve/qa-lease), `ensure` (it cuts
+// git branches), and path/list/reconcile — is delegated to bin/bbs-ticket.bash,
+// which stays the source of truth until it is ported. The bin/bbs-ticket compat
+// symlink serves them all.
 //
 // Flag parsing is disabled and each subcommand hand-parses its argv, because
 // the bash original hand-parses too and its quirks are part of the contract
@@ -72,6 +73,12 @@ func newTicketCmd() *cobra.Command {
 				runEnsureSize()
 			case "append-history":
 				runAppendHistory(args[1:])
+			case "init":
+				runInit(args[1:])
+			case "get-manifest":
+				runGetManifest(args[1:])
+			case "set-branch":
+				runSetBranch(args[1:])
 			default:
 				delegate(args)
 			}
