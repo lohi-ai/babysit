@@ -79,6 +79,42 @@ func newTicketCmd() *cobra.Command {
 				runGetManifest(args[1:])
 			case "set-branch":
 				runSetBranch(args[1:])
+			case "ensure":
+				runEnsure(args[1:])
+			case "merge-base":
+				runMergeBase(args[1:])
+			case "refresh":
+				runRefresh(args[1:])
+			case "reset-base":
+				runResetBase(args[1:])
+			case "switch":
+				runSwitch(args[1:])
+			case "serve":
+				runServe(args[1:])
+			case "qa-lease":
+				runQALease(args[1:])
+			case "add-handoff":
+				runAddHandoff(args[1:])
+			case "latest-handoff":
+				runLatestHandoff(args[1:])
+			case "set-review":
+				runSetReview(args[1:])
+			case "set-evidence":
+				runSetEvidence(args[1:])
+			case "evidence-status":
+				runEvidenceStatus(args[1:])
+			case "qa-evidence":
+				runQAEvidence(args[1:])
+			case "path":
+				runPath(args[1:])
+			case "list":
+				runList(args[1:])
+			case "reconcile":
+				runReconcile(args[1:])
+			case "find-similar":
+				runFindSimilar(args[1:])
+			case "assert-cwd":
+				runAssertCwd()
 			default:
 				delegate(args)
 			}
