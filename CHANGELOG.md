@@ -42,6 +42,23 @@
 
 ### Fixed
 
+- **`update-check` and `upgrade` were dead on every real install** —
+  `babysitDir()` walked up from `argv[0]` without resolving symlinks, but no
+  install invokes `<checkout>/bin/bbs` directly: `setup-skills` links
+  `~/.local/bin/bbs` and `~/.claude/bbs` at it and the preamble puts both on
+  `PATH`. The lexical parent of whichever won was `~/.local` or `$HOME`,
+  neither holding a `VERSION` — so `update-check` exited 0 silently (the
+  preamble's upgrade notification never fired, and `auto_upgrade: true` did
+  nothing) and `upgrade` told a healthy clone it was "not installed via git
+  clone". `babysitDir()` now calls `EvalSymlinks`. A Homebrew install still
+  resolves outside a checkout, which is correct: there is no clone to pull.
+  This was inherited from the bash original (`$0` without `readlink -f`) and
+  ported faithfully, so it is the one place the port now deliberately diverges
+  from the retired oracle — the three `tests/test_bbs_update_check.sh` cases
+  that pinned the bug became absolute `g0` assertions, joined by a new
+  `TestBabysitDir`. It survived this long because every existing case in
+  `test_bbs_update_check.sh` and `test_bbs_upgrade.sh` pins `BABYSIT_DIR` for
+  sandbox safety, short-circuiting the `argv[0]` path that real installs take.
 - **`--uninstall` left `bbs-analytics-cron` behind** — the bin was in the
   install list but missing from the uninstall list, so it survived as a
   dangling symlink.

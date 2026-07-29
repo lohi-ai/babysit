@@ -38,18 +38,23 @@
 # so there is nothing stable to diff against.
 #
 # The $0 bug (reference:15 derives BABYSIT_DIR from `dirname "$0"` with no
-# readlink -f, unlike bin/bbs-env) is NOT a divergence — it is reproduced
-# faithfully. The argv0_subcommand cases pin the invocation shape; the c0 cases
-# pin the derivation itself, with BABYSIT_DIR UNSET — including the fact that a
-# ~/.claude-style shim makes it resolve to the WRONG directory, and that a bare
-# PATH invocation must still agree with a script's always-path-ful $0.
+# readlink -f, unlike bin/bbs-env) IS now a deliberate divergence — the one
+# place the port stops matching the oracle. The bash never resolved the symlink,
+# so a ~/.claude-style shim derived $HOME instead of the checkout: update-check
+# found no VERSION and exited 0 silently, and upgrade told a healthy clone it
+# was "not installed via git clone". Since no real install invokes
+# <checkout>/bin/bbs directly — setup-skills links ~/.local/bin/bbs and
+# ~/.claude/bbs at it — that disabled both commands for everyone. babysitDir now
+# calls EvalSymlinks, and the bash it diverges from is retired (deleted
+# 2026-07-18), so parity here would only preserve a dead binary's bug.
 #
-# Caveat, so the next reader does not trust these cases for more than they
-# prove: on darwin os.Executable() does NOT resolve symlinks, so it and
-# os.Args[0] derive the same directory for every shape an oracle run can
-# produce — no case here can tell them apart. They diverge on linux, where
-# /proc/self/exe resolves the shim and would "fix" the bug. The argument for
-# os.Args[0] lives in babysitDir's comment; it is not pinned by a test.
+# The c0 cases below still diff against the oracle where the fix changes
+# nothing (a direct invoke resolves to the same place either way). The three
+# shapes the fix *does* change moved to g0, which pins the Go binary's output
+# absolutely — a bug fix has no oracle to diff against.
+#
+# The argv0_subcommand cases pin the invocation shape; the c0/g0 cases pin the
+# derivation itself, with BABYSIT_DIR UNSET.
 
 set -u
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
@@ -183,10 +188,9 @@ c() {
 # `$(cd "$(dirname "$0")/.." && pwd)` is never exercised there. These cases
 # unset it and stage a realistic install instead — the script/binary lives at
 # <root>/repo/bin/bbs-update-check, with a ~/.claude-style shim symlinked at
-# <root>/claude/bbs-update-check. Because neither side resolves the symlink,
-# invoking via the shim derives <root> rather than <root>/repo: the $0 bug.
-# The port reproduces it (os.Args[0], not os.Executable), and these cases are
-# what hold it in place.
+# <root>/claude/bbs-update-check. Use c0 only for shapes where resolving that
+# symlink changes nothing, so the oracle is still a valid answer; g0 (below)
+# covers the shapes the fix deliberately changes.
 c0() {
   local desc="$1" invoke="$2" vloc="$3" urlpath="$4"
   local A B ao an ac nc url aerr nerr as ns r
@@ -226,6 +230,38 @@ c0() {
          "old state: $(echo "$as" | tr '\n' ' ')" "new state: $(echo "$ns" | tr '\n' ' ')"
   fi
   rm -rf "$A" "$B"
+}
+
+# ─── argv[0] runner, Go-only expectation (BABYSIT_DIR UNSET) ─────────────────
+# g0 <desc> <invoke-path-under-root> <version-dir-under-root|none> <urlpath> <want-stdout>
+# Same staging as c0, but asserts the Go binary's stdout against a literal
+# instead of the oracle: these are the shapes where resolving the shim symlink
+# is the whole point, so the oracle's answer is the bug, not the contract.
+g0() {
+  local desc="$1" invoke="$2" vloc="$3" urlpath="$4" want="$5"
+  local B out rc url
+  B="$T/g0.$$.$RANDOM"
+  mkdir -p "$B/repo/bin" "$B/claude" "$B/state" "$B/home"
+  [ "$vloc" = "none" ] || printf '1.2.3\n' > "$B/$vloc/VERSION"
+  ln -s "$B/repo/bin/bbs-update-check" "$B/claude/bbs-update-check"
+  cp "$BIN" "$B/repo/bin/bbs-update-check"; chmod +x "$B/repo/bin/bbs-update-check"
+  url="$BASE/$urlpath/VERSION"
+
+  if [ "$invoke" = "PATH" ]; then
+    mkdir -p "$B/work/sub"
+    out=$(cd "$B/work/sub" && env -u BABYSIT_DIR HOME="$B/home" BABYSIT_STATE_DIR="$B/state" \
+           PATH="$B/claude:$PATH" BABYSIT_REMOTE_URL="$url" bbs-update-check 2>/dev/null); rc=$?
+  else
+    out=$(env -u BABYSIT_DIR HOME="$B/home" BABYSIT_STATE_DIR="$B/state" \
+           BABYSIT_REMOTE_URL="$url" "$B/$invoke" 2>/dev/null); rc=$?
+  fi
+
+  if [ "$out" = "$want" ] && [ "$rc" = 0 ]; then
+    ok "$desc (rc=$rc)"
+  else
+    fail "$desc" "want rc=0 out=[$want]" "got  rc=$rc out=[$out]"
+  fi
+  rm -rf "$B"
 }
 
 echo "bbs-update-check parity (oracle: tests/fixtures/bbs-update-check.reference)"
@@ -368,20 +404,28 @@ else
   echo "  (skipped 3 read-only cases: running as root)"
 fi
 
-# ─── argv[0] → BABYSIT_DIR derivation (the $0 bug) ───────────────────────────
+# ─── argv[0] → BABYSIT_DIR derivation ────────────────────────────────────────
+# Still parity: a direct invoke has no symlink to resolve, so the fix is a no-op
+# and the oracle remains a valid answer.
 c0 "argv0 direct invoke derives <root>/repo"     "repo/bin/bbs-update-check" repo newer
-# The bug: the shim's dirname is <root>/claude, so ".." lands on <root> and the
-# real VERSION at <root>/repo/VERSION is never seen ⇒ both sides exit silently.
-c0 "argv0 shim: \$0 bug misses the real VERSION" "claude/bbs-update-check"   repo newer
-# Same shim, decoy VERSION at the (wrong) dir both sides derive: both find it,
-# proving they agree on <root> rather than merely both failing.
-c0 "argv0 shim: both derive the same wrong dir"  "claude/bbs-update-check"   .    newer
 c0 "argv0 direct, no VERSION anywhere"           "repo/bin/bbs-update-check" none newer
-# Bare PATH invoke: a script's $0 carries the PATH hit, a binary's argv[0] does
-# not. Without the LookPath step in babysitDir, Go derives the CALLER'S cwd's
-# parent (<root>/work) while bash derives <root> — so the VERSION at <root> is
-# found by bash and missed by Go, silently disabling the check.
-c0 "argv0 bare on PATH == script \$0"           "PATH"                      .    newer
+
+# Go-only: the shim is the shape every real install takes (~/.claude/bbs and
+# ~/.local/bin/bbs both symlink into the checkout). Resolving it is what makes
+# the real VERSION at <root>/repo/VERSION reachable; the oracle exited silently
+# here, which is precisely the bug.
+g0 "argv0 shim resolves to the real checkout"    "claude/bbs-update-check"   repo newer \
+   "UPGRADE_AVAILABLE 1.2.3 9.9.9"
+# Same shim, decoy VERSION at <root> — the dir the unresolved walk used to land
+# on. Staying silent proves it now reads the checkout and not whatever happens
+# to sit beside the shim (in a real install, $HOME).
+g0 "argv0 shim ignores a VERSION beside the shim" "claude/bbs-update-check"  .    newer ""
+# Bare PATH invoke: LookPath recovers the path the shell resolved, then
+# EvalSymlinks follows it into the checkout — so this agrees with the shim case
+# above rather than with the caller's cwd or <root>.
+g0 "argv0 bare on PATH resolves like the shim"   "PATH"                      .    newer ""
+g0 "argv0 bare on PATH finds the checkout"       "PATH"                      repo newer \
+   "UPGRADE_AVAILABLE 1.2.3 9.9.9"
 
 # ─── Summary ─────────────────────────────────────────────────────────────────
 echo

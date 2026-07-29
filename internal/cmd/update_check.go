@@ -178,24 +178,30 @@ func rmF(path string) error {
 	return nil
 }
 
-// babysitDir ports bin/bbs-update-check:15 — `cd "$(dirname "$0")/.." && pwd`.
+// babysitDir locates the babysit checkout that `update-check` reads VERSION
+// from and that `upgrade` git-pulls, by walking up from the running binary.
 //
-// Note it uses $0 *without* readlink -f, unlike bin/bbs-env (whose Go port
-// resolves the symlink chain in internal/env.projectRoot). Reached through the
-// ~/.claude/bbs-update-check shim that makes BABYSIT_DIR resolve to $HOME, so
-// $HOME/VERSION is missing and the check silently exits 0. That is a latent bug
-// in the bash, tracked as a follow-up; this port reproduces it exactly, so it
-// must NOT call os.Executable/EvalSymlinks (either would resolve the shim and
-// "fix" the bug).
+// Two resolution steps stand between argv[0] and that checkout, and both are
+// load-bearing:
 //
-// Reproducing it does take one step the bash gets for free. A script's $0 is
-// never bare: the kernel hands the interpreter the path execve resolved, so a
-// PATH-found script sees $0=/path/to/bbs-update-check. A *binary* gets argv[0]
-// verbatim, so the same PATH invocation leaves os.Args[0]="bbs-update-check" —
-// and Dir()+".." would then resolve against the caller's cwd, deriving a
-// BABYSIT_DIR that changes with wherever the user happened to cd. LookPath
-// redoes the shell's PATH search to recover the path bash would have seen. It
-// does not resolve symlinks, so the shim bug survives intact.
+// LookPath, because a *binary* gets argv[0] verbatim — a PATH invocation
+// leaves os.Args[0]="bbs", and Dir()+".." would resolve against the caller's
+// cwd, deriving a checkout that changes with wherever the user happened to cd.
+// (A script gets this free: the kernel hands the interpreter the path execve
+// resolved, which is why the bash this replaced needed no such step.)
+//
+// EvalSymlinks, because no real install invokes <checkout>/bin/bbs directly.
+// setup-skills links ~/.local/bin/bbs and ~/.claude/bbs at it, and the preamble
+// puts both on PATH — so the lexical parent of whichever wins is ~/.local or
+// $HOME, neither of which holds a VERSION. Untouched, that made update-check
+// silently exit 0 (no upgrade notification ever fires) and made upgrade report
+// "not installed via git clone" against a perfectly healthy clone. The bash
+// original had the same bug — it used $0 without readlink -f — and the port
+// inherited it faithfully; resolving the chain is the fix for both.
+//
+// A brew install still lands outside a checkout (/opt/homebrew has no VERSION),
+// which is correct: there is no clone to pull, and upgrade's "not installed via
+// git clone" is the honest answer there.
 func babysitDir() string {
 	if d := os.Getenv("BABYSIT_DIR"); d != "" {
 		return d
@@ -206,7 +212,11 @@ func babysitDir() string {
 			argv0 = p
 		}
 	}
-	// bash's `cd X/.. && pwd` is a lexical (logical) walk, so Join+Abs match it.
+	// Best-effort: a missing or unreadable argv[0] leaves the lexical path,
+	// which is still right for a direct <checkout>/bin/bbs invocation.
+	if resolved, err := filepath.EvalSymlinks(argv0); err == nil {
+		argv0 = resolved
+	}
 	parent := filepath.Join(filepath.Dir(argv0), "..")
 	abs, err := filepath.Abs(parent)
 	if err != nil {
