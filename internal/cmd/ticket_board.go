@@ -107,7 +107,7 @@ func runBoard(args []string) {
 
 		fmt.Printf(boardRowFmt, tid, status, qa, review, pushed, session, prDisp, branch)
 		if merged {
-			fmt.Printf("  ↳ PR merged — next: bbs-ticket reset-base; BABYSIT_TICKET=%s bbs-ticket set-status done\n", tid)
+			fmt.Printf(retarget("  ↳ PR merged — next: bbs-ticket reset-base; BABYSIT_TICKET=%s bbs-ticket set-status done\n"), tid)
 		}
 
 		for _, sib := range idx.Siblings {

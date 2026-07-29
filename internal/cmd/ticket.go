@@ -204,7 +204,7 @@ Subcommands:
 // needTicket mirrors bash need_ticket() (bbs-ticket.bash:262-266).
 func needTicket(env identity.Env) {
 	if env.Ticket == "" {
-		fmt.Fprintf(os.Stderr, "bbs-ticket: no ticket in scope (branch='%s'; set BBS_TICKET to override)\n", env.Branch)
+		fmt.Fprintf(os.Stderr, retarget("bbs-ticket: no ticket in scope (branch='%s'; set BBS_TICKET to override)\n"), env.Branch)
 		os.Exit(2)
 	}
 }
@@ -213,16 +213,16 @@ func needTicket(env identity.Env) {
 // with _PATH_KIND=verdict: traversal exits 3, other validation exits 2.
 func safePathComponent(kind, label, value string) string {
 	if value == "" {
-		fmt.Fprintf(os.Stderr, "bbs-ticket path: %s: --%s is empty (try: bbs-ticket path)\n", kind, label)
+		fmt.Fprintf(os.Stderr, retarget("bbs-ticket path: %s: --%s is empty (try: bbs-ticket path)\n"), kind, label)
 		os.Exit(2)
 	}
 	if strings.Contains(value, "/") || strings.Contains(value, "..") || strings.HasPrefix(value, "/") {
-		fmt.Fprintf(os.Stderr, "bbs-ticket path: %s: --%s '%s' rejected (path traversal)\n", kind, label, value)
+		fmt.Fprintf(os.Stderr, retarget("bbs-ticket path: %s: --%s '%s' rejected (path traversal)\n"), kind, label, value)
 		os.Exit(3)
 	}
 	cleaned := keepChars(value, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-")
 	if cleaned != value {
-		fmt.Fprintf(os.Stderr, "bbs-ticket path: %s: --%s '%s' contains forbidden characters (allowed: a-zA-Z0-9._-)\n", kind, label, value)
+		fmt.Fprintf(os.Stderr, retarget("bbs-ticket path: %s: --%s '%s' contains forbidden characters (allowed: a-zA-Z0-9._-)\n"), kind, label, value)
 		os.Exit(2)
 	}
 	return value

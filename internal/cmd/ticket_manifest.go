@@ -45,7 +45,7 @@ func runGetManifest(args []string) {
 func runSetBranch(args []string) {
 	sticket, srepo, sbranch := argAt(args, 0), argAt(args, 1), argAt(args, 2)
 	if sticket == "" || srepo == "" || sbranch == "" {
-		fmt.Fprintln(os.Stderr, "set-branch: usage: bbs-ticket set-branch <ticket> <repo> <branch>")
+		fmt.Fprintln(os.Stderr, retarget("set-branch: usage: bbs-ticket set-branch <ticket> <repo> <branch>"))
 		os.Exit(2)
 	}
 	env := identity.Resolve()
@@ -53,7 +53,7 @@ func runSetBranch(args []string) {
 	st := ticket.New(env)
 	m := st.ManifestPath()
 	if !fileExists(m) {
-		fmt.Fprintf(os.Stderr, "set-branch: no manifest at %s (ticket may not exist; run 'bbs-ticket ensure' first)\n", m)
+		fmt.Fprintf(os.Stderr, retarget("set-branch: no manifest at %s (ticket may not exist; run 'bbs-ticket ensure' first)\n"), m)
 		os.Exit(1)
 	}
 	acquireOrDie(st)

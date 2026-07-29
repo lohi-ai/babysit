@@ -7,9 +7,9 @@ The layer between mechanical retry and human escalation: read the wreckage,
 classify recoverable vs needs-human, then restart the run or hand the human
 a precise ask.
 ## Flow
-1. Resolve the ticket (`bbs-ticket resolve`, or the id from the invocation)
+1. Resolve the ticket (`bbs ticket resolve`, or the id from the invocation)
    and collect the evidence: `checkpoint.json` (status, step, note), the
-   latest handoff, `bbs-ticket verdict-status --skill <blocking skill>`, the
+   latest handoff, `bbs ticket verdict-status --skill <blocking skill>`, the
    history tail, and the recent `clean-handoff-audit` rows for this ticket
    (`grep '"clean-handoff-audit"' ~/.babysit/analytics/skill-usage.jsonl |
    grep '"<ticket>"' | tail`) — a run of `clean:false` with the same `issues`
@@ -24,13 +24,13 @@ a precise ask.
      ran). A fresh dispatch from the checkpoint clears these. A
      `clean-handoff-audit clean:false` is recoverable by construction:
      `uncommitted changes` → re-dispatch instructing a commit-first pass;
-     `checkpoint predates the last commit` → run `bbs-autopilot checkpoint
+     `checkpoint predates the last commit` → run `bbs autopilot checkpoint
      --refresh` and the audit clears without a re-run.
    - **Needs-human** — missing input only the human has (credentials, an
      ambiguous requirement, a product decision), or a verdict that BLOCKED on
      a genuine finding. Retrying reproduces the block.
 4. Post the triage handoff to the ticket
-   (`bbs-ticket add-handoff --skill triage`): cause, classification, evidence
+   (`bbs ticket add-handoff --skill triage`): cause, classification, evidence
    pointers, and the action taken.
 5. Act:
    - Recoverable → clear the mechanical cause if trivial (never `--force`,

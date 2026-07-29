@@ -51,7 +51,7 @@ func newSlugCmd() *cobra.Command {
 				fmt.Println(info.ProjectHome)
 			case "ticket-home":
 				if info.Ticket == "" {
-					fmt.Fprintf(os.Stderr, "bbs-slug: no ticket in branch '%s'\n", info.Branch)
+					fmt.Fprintf(os.Stderr, retarget("bbs-slug: no ticket in branch '%s'\n"), info.Branch)
 					return errSilent
 				}
 				th := filepath.Join(info.ProjectHome, "tickets", info.Ticket)
@@ -64,7 +64,7 @@ func newSlugCmd() *cobra.Command {
 			case "ticket":
 				fmt.Println(info.Ticket)
 			default:
-				fmt.Fprintln(os.Stderr, slugUsage)
+				fmt.Fprintln(os.Stderr, retarget(slugUsage))
 				os.Exit(2)
 			}
 			return nil

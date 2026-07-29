@@ -25,7 +25,7 @@ func newConfigCmd() *cobra.Command {
 		// Bare `config` or an unknown subcommand mirrors bin/bbs-config's
 		// default case: print usage to stdout, exit 1.
 		RunE: func(_ *cobra.Command, _ []string) error {
-			fmt.Println(configUsage)
+			fmt.Println(retarget(configUsage))
 			return errSilent
 		},
 	}
@@ -39,7 +39,7 @@ func newConfigGetCmd() *cobra.Command {
 		Short: "read a config value",
 		RunE: func(_ *cobra.Command, args []string) error {
 			if len(args) < 1 {
-				fmt.Fprintln(os.Stderr, "Usage: bbs-config get <key>")
+				fmt.Fprintln(os.Stderr, retarget("Usage: bbs-config get <key>"))
 				return errSilent
 			}
 			key := args[0]
@@ -61,7 +61,7 @@ func newConfigSetCmd() *cobra.Command {
 		Short: "write a config value",
 		RunE: func(_ *cobra.Command, args []string) error {
 			if len(args) < 2 {
-				fmt.Fprintln(os.Stderr, "Usage: bbs-config set <key> <value>")
+				fmt.Fprintln(os.Stderr, retarget("Usage: bbs-config set <key> <value>"))
 				return errSilent
 			}
 			key, value := args[0], args[1]

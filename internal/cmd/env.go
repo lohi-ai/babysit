@@ -61,13 +61,13 @@ flags:
 		switch args[0] {
 		case "--env-file":
 			if len(args) < 2 {
-				fmt.Fprintln(os.Stderr, "bbs-env: --env-file requires a path")
+				fmt.Fprintln(os.Stderr, retarget("bbs-env: --env-file requires a path"))
 				return errSilent
 			}
 			envFile, args = args[1], args[2:]
 		case "--app":
 			if len(args) < 2 {
-				fmt.Fprintln(os.Stderr, "bbs-env: --app requires an app name")
+				fmt.Fprintln(os.Stderr, retarget("bbs-env: --app requires an app name"))
 				return errSilent
 			}
 			app, args = args[1], args[2:]
@@ -95,15 +95,15 @@ flags:
 	case "prompt":
 		return runEnvPrompt(args)
 	case "help", "--help", "-h", "":
-		fmt.Print(envUsage)
+		fmt.Print(retarget(envUsage))
 		// A bare invocation prints usage but still fails.
 		if sub == "" {
 			return errSilent
 		}
 		return nil
 	default:
-		fmt.Fprintf(os.Stderr, "bbs-env: unknown subcommand '%s'\n", sub)
-		fmt.Fprint(os.Stderr, envUsage)
+		fmt.Fprintf(os.Stderr, retarget("bbs-env: unknown subcommand '%s'\n"), sub)
+		fmt.Fprint(os.Stderr, retarget(envUsage))
 		return errSilent
 	}
 }
@@ -119,7 +119,7 @@ func takePrefixFlag(args []string) ([]string, bool) {
 
 func runEnvResolve(args []string) error {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "bbs-env resolve: requires at least one varname")
+		fmt.Fprintln(os.Stderr, retarget("bbs-env resolve: requires at least one varname"))
 		return errSilent
 	}
 	args, prefix := takePrefixFlag(args)
@@ -134,7 +134,7 @@ func runEnvResolve(args []string) error {
 
 func runEnvIsSet(args []string) error {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "bbs-env is-set: requires a varname")
+		fmt.Fprintln(os.Stderr, retarget("bbs-env is-set: requires a varname"))
 		return errSilent
 	}
 	args, prefix := takePrefixFlag(args)
@@ -154,7 +154,7 @@ func runEnvIsSet(args []string) error {
 
 func runEnvListPrefix(args []string) error {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "bbs-env list-prefix: requires a prefix")
+		fmt.Fprintln(os.Stderr, retarget("bbs-env list-prefix: requires a prefix"))
 		return errSilent
 	}
 	for _, kv := range env.ListPrefix(args[0]) {

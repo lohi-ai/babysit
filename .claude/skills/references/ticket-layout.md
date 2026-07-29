@@ -15,11 +15,11 @@ tickets/<ticket>/
 ├── history.jsonl                    append-only event timeline (`tail -20` = what happened)
 ├── evidence/<skill>/…               per-skill blobs
 ├── sub-tickets/<N>-<slug>.md        decomposition seeds (only if split)
-├── checkpoint.json                  bbs-autopilot workflow-step state
+├── checkpoint.json                  workflow-step state, owned by `bbs autopilot`
 └── .index.lock/                     mkdir lock for index.json mutations
 ```
 Every writable file is name-partitioned by skill, append-only, or
-lock-protected; all metadata mutations go through `bbs-ticket` — never edit
+lock-protected; all metadata mutations go through `bbs ticket` — never edit
 `index.json` by hand.
 ## index.json
 All fields optional except `id`; unknown fields preserved. Key fields:
@@ -27,7 +27,7 @@ All fields optional except `id`; unknown fields preserved. Key fields:
 `duplicate_of`, `related`), `siblings` (`{role, repo, ticket}` for cross-repo),
 `labels`, `assignee`, `origin`, `pointers` (`branch`, `pr`, `plan`, `design`,
 `requirement`, `manifest`).
-**Status enum** (set via `bbs-ticket set-status`, never derived from
+**Status enum** (set via `bbs ticket set-status`, never derived from
 verdicts): `triage` → `backlog` → `planned` / `decomposed` → `in_progress` →
 `in_review` → `done`; plus `blocked`, `cancelled`, `duplicate`.
 **`origin.type`**: `standalone` (default) | `sub_ticket` (has `parent`,
@@ -35,10 +35,10 @@ verdicts): `triage` → `backlog` → `planned` / `decomposed` → `in_progress`
 ## Bootstrap: how tickets come into being
 Tickets exist when the branch matches
 `(feat|fix|chore|bug|refactor)/<id>_<slug>` — the preamble derives `$TICKET`
-and runs `bbs-ticket init`. Entry-point skills invoked without a ticket (e.g.
+and runs `bbs ticket init`. Entry-point skills invoked without a ticket (e.g.
 from `main`) run the universal entry hook early instead of failing:
 ```bash
-eval "$("${BBS_TICKET_BIN:-$HOME/.claude/bbs-ticket}" ensure \
+eval "$(bbs ticket ensure \
   --from-input "$USER_REQUEST" \
   --type feat \
   --reason <skill-name>-entry)"
@@ -59,7 +59,7 @@ branch in place silently: without `--cut-branch` it exits 3. Render one
 `--cut-branch` or `--no-branch`. Worktree diverts proceed without asking;
 autonomous roles never see exit 3.
 ## Accessing ticket files
-**Construct paths via `bbs-ticket path` / `bbs-ticket list` — never by
+**Construct paths via `bbs ticket path` / `bbs ticket list` — never by
 concatenating `$TH/`, `$TICKET_HOME/`, etc.** The broker resolves canonical →
 legacy (pre-Layout-C tickets keep working) and validates selectors.
 Kinds: `home`; single files `index requirement design plan manifest history
@@ -69,13 +69,13 @@ checkpoint`; `handoff` (`--skill`, `--seq N` or `--latest`); `verdict` /
 `--write` returns the canonical target and mkdir-ps the parent; append-only
 kinds reject `--write` — use `add-handoff` / `set-verdict` / `set-review`.
 ```bash
-# Exit codes from `bbs-ticket path … --read`:
+# Exit codes from `bbs ticket path … --read`:
 #   0 — found (canonical or legacy hit)
 #   1 — not found (canonical AND every legacy candidate missing)
 #   2 — usage / missing required selector
 #   3 — security (selector failed _safe_path_component)
 # Treat 0/1 as data signals; let 2/3 propagate.
-PLAN="$(bbs-ticket path plan --read 2>/dev/null)"; rc=$?
+PLAN="$(bbs ticket path plan --read 2>/dev/null)"; rc=$?
 case $rc in
   0) ;;             # found — $PLAN is the path
   1) PLAN="" ;;     # absent — fall back / skip
@@ -88,19 +88,19 @@ esac
 genuinely needed bypass takes a trailing `# lint:allow-direct-path <why>`.
 ## Typical skill usage
 ```bash
-bbs-ticket init                                  # startup — idempotent
+bbs ticket init                                  # startup — idempotent
 
-cp "$PLAN_DRAFT" "$(bbs-ticket path plan --write)"   # primary artifact
-bbs-ticket set-pointer plan plan.md
-bbs-ticket set-status planned
-bbs-ticket set-phase plan-draft
+cp "$PLAN_DRAFT" "$(bbs ticket path plan --write)"   # primary artifact
+bbs ticket set-pointer plan plan.md
+bbs ticket set-status planned
+bbs ticket set-phase plan-draft
 
-bbs-ticket add-handoff --skill plan-draft --status DONE --body-file /tmp/brief.md
-bbs-ticket set-verdict  --skill plan-draft --body-file /tmp/verdict.md
+bbs ticket add-handoff --skill plan-draft --status DONE --body-file /tmp/brief.md
+bbs ticket set-verdict  --skill plan-draft --body-file /tmp/verdict.md
 
-ORIGIN_TYPE="$(bbs-ticket get origin.type)"      # reads, e.g. sub-ticket check
+ORIGIN_TYPE="$(bbs ticket get origin.type)"      # reads, e.g. sub-ticket check
 ```
-Custom timeline events: `bbs-ticket append-history --event <e> --extra-json
+Custom timeline events: `bbs ticket append-history --event <e> --extra-json
 '{…}'` (core fields `ts ticket branch event actor` are protected).
 `evidence/quality/` is shared between the `quality` workflow and `bbs:qa` —
 grep by filename, don't assume one writer.

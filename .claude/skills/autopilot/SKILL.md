@@ -16,13 +16,13 @@ status prints.
    autopilot owns every git operation (repo init, branch, commit, land,
    push) — never bounce one to the user or a step skill.
    Then ensure a ticket dir with `requirement.md` and `checkpoint.json`
-   (`bbs-ticket ensure`; git-flow `mode` from `.babysit/git-flow.yaml`, one-run
+   (`bbs ticket ensure`; git-flow `mode` from `.babysit/git-flow.yaml`, one-run
    override `--mode=<m>` — see [references/git-flow.md](../references/git-flow.md)).
    When seeding `requirement.md` from free text, list open decisions
    explicitly instead of papering over them
    ([references/finding-unknowns.md](../references/finding-unknowns.md)).
    If `ensure` printed `WORKTREE=<path>`, cd there — every later step runs in
-   the worktree, and QA lands the branch via `bbs-ticket merge-base`.
+   the worktree, and QA lands the branch via `bbs ticket merge-base`.
    Stop here on `--stop-after=requirement`.
 3. Pick the archetype workflow ([references/archetypes.md](../references/archetypes.md)):
    named one wins; else route by the shape of the work; ambiguous or ordinary
@@ -41,7 +41,7 @@ status prints.
    XS change still gets the step-2 ticket + worktree and the verdict gates —
    there is no inline path, and under `mode: worktree` nothing is ever
    committed in the primary checkout (code reaches it only via
-   `bbs-ticket merge-base`/`switch`).
+   `bbs ticket merge-base`/`switch`).
 5. Hand the work to `/goal` (below). Init never executes workflow steps.
 ## The work loop (`/goal`)
 `/goal <condition>` arms a Stop hook that blocks the session from stopping
@@ -64,7 +64,7 @@ Redirect the design now if it's wrong — otherwise you're one paste from done.
 
 👉 Copy the block below and paste it into Claude Code to build it:
 
-/goal <ticket> is done: qa verdict PASS/FIXED persisted via bbs-ticket set-verdict,
+/goal <ticket> is done: qa verdict PASS/FIXED persisted via bbs ticket set-verdict,
 review-pr verdict persisted, branch pushed, handoff note written — or a
 NEEDS_CONTEXT / BLOCKED status block printed verbatim.
 Work it: /bbs:autopilot <workflow> <ticket>
@@ -110,13 +110,13 @@ the human runs it after reviewing the handoff.
   the build moving without knowing git.
 - Never force-push, drop data, send external messages, or create PRs.
 - Always run QA before final handoff and persist the verdict with
-  `bbs-ticket set-verdict --skill qa` (real PASS/FIXED, or
+  `bbs ticket set-verdict --skill qa` (real PASS/FIXED, or
   DONE_WITH_CONCERNS naming the blocker). "Implemented but not QA'd" is
   incomplete; happy-path-only QA is incomplete — include at least one
   validation/error/empty/responsive case.
 - Leave a clean handoff: work committed, no debug leftovers in the diff,
   checkpoint current. When a commit lands after the step's checkpoint, run
-  `bbs-autopilot checkpoint --refresh` or the Stop-time audit flags it stale.
+  `bbs autopilot checkpoint --refresh` or the Stop-time audit flags it stale.
 - Keep the final handoff short: branch, files changed, QA evidence, next
   human action. A truly human-only decision → `NEEDS_CONTEXT` naming the
   exact missing input.

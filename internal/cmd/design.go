@@ -49,7 +49,7 @@ Subcommands:
 `
 
 func designDie(format string, a ...interface{}) error {
-	fmt.Fprintf(os.Stderr, "bbs-design: "+format+"\n", a...)
+	fmt.Fprintf(os.Stderr, retarget("bbs-design: ")+format+"\n", a...)
 	os.Exit(2)
 	return nil
 }

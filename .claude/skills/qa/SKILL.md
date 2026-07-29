@@ -6,23 +6,23 @@ description: Systematically test a web application, fix issues caused by the cur
 Exercise the application like a user and leave reproducible evidence.
 ## Flow
 1. Load what to test — disk first, conversation as fallback. Resolve the
-   ticket (`bbs-ticket resolve`); when it resolves, read whichever exist:
-   - `bbs-ticket path requirement --read` — acceptance criteria
-   - `bbs-ticket path plan --read` — especially its `**Verify:**` line
-   - `bbs-ticket path handoff --skill implement --latest --read` — and its
+   ticket (`bbs ticket resolve`); when it resolves, read whichever exist:
+   - `bbs ticket path requirement --read` — acceptance criteria
+   - `bbs ticket path plan --read` — especially its `**Verify:**` line
+   - `bbs ticket path handoff --skill implement --latest --read` — and its
      `## Deviations`: each deviation is where the plan diverged from reality,
      the likeliest home of a wrong guess
-   - `bbs-ticket path verdict --skill review-pr --read` — unresolved
+   - `bbs ticket path verdict --skill review-pr --read` — unresolved
      `FINDINGS` go into the case matrix; `RISK_AREAS`/`FIXED` seed security
      and regression cases
    Missing docs are not a gate — fall back to conversation. Change surface:
-   `BASE=$(bbs-autopilot base-branch)`;
+   `BASE=$(bbs autopilot base-branch)`;
    `git diff $(git merge-base origin/"$BASE" HEAD)`. Target URL and login
    from `.babysit/qa.yaml`:
    ```bash
-   eval "$(bbs-secrets load)"                         # exports .babysit/.env values
-   ENV=$(bbs-qa-config default-env); ENV=${ENV:-local}
-   eval "$(bbs-qa-config probe --env "$ENV" 2>/dev/null)"  # QA_ENV_URL, QA_ENV_{USERNAME,PASSWORD}_ENV, …
+   eval "$(bbs secrets load)"                         # exports .babysit/.env values
+   ENV=$(bbs qa-config default-env); ENV=${ENV:-local}
+   eval "$(bbs qa-config probe --env "$ENV" 2>/dev/null)"  # QA_ENV_URL, QA_ENV_{USERNAME,PASSWORD}_ENV, …
    QA_USER=$(printenv "${QA_ENV_USERNAME_ENV:-QA_USER}" 2>/dev/null || true)  # standard: QA_USER / QA_PASS
    QA_PASS=$(printenv "${QA_ENV_PASSWORD_ENV:-QA_PASS}" 2>/dev/null || true)
    ```
@@ -66,7 +66,7 @@ Exercise the application like a user and leave reproducible evidence.
    code walk surfaced that the requirement never mentions gets a *derived
    criterion* case with the gap named in `SUMMARY`; an uncoverable criterion
    is named as a gap now, never silently dropped. Save the matrix:
-   `bbs-ticket path evidence --skill qa --name test-matrix.md --write`.
+   `bbs ticket path evidence --skill qa --name test-matrix.md --write`.
    Mirror the matrix into the native task list (TaskCreate) — one task per
    case, closed only when its evidence lands.
 5. Execute the flows end-to-end with a real client. Web UI: the `browse`
@@ -81,7 +81,7 @@ Exercise the application like a user and leave reproducible evidence.
    final code state — any code change after it invalidates the verdict.
    Screenshot this verdict-bearing pass — and each failure or fixed
    reproducer — to
-   `bbs-ticket path evidence --skill qa --name <f>.png --write`; list the
+   `bbs ticket path evidence --skill qa --name <f>.png --write`; list the
    paths in `EVIDENCE:`. (Ad-hoc `browse` checks stay screenshot-light; the
    QA verdict's screenshots are the durable proof a human audits later.)
 ## Case design
@@ -139,7 +139,7 @@ the PR/merge gate **denies** a PASS that contradicts its own rubric
 when full QA was impossible (`DONE_WITH_CONCERNS` with the named blocker; a
 concerns verdict with no named blocker is flagged `unexplained`):
 ```bash
-bbs-ticket set-verdict --skill qa --body "$(cat <<'EOF'
+bbs ticket set-verdict --skill qa --body "$(cat <<'EOF'
 STATUS: ...
 VERDICT: ...
 SUMMARY: ...

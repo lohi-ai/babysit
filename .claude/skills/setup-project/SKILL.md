@@ -17,7 +17,7 @@ Set up only the config the repo needs. Re-running should be safe.
   - Pair-programming assistant — a human watches every run → `trunk`: ride the current branch, no cuts, no PRs.
   - Background worker — one ticket at a time (freelance / client repo) → `branch-pr`: cut per ticket, straight PR — the client-facing work trail.
   - Background worker — parallel tickets, composed local review (small team, or solo + foreman) → `worktree-review`: parallel worktree tickets, review the composed surface on local dev (`serve`), then `create-pr`.
-  - Background worker — parallel tickets, straight PRs (big team / enterprise) → `worktree-pr`: parallel worktree tickets, straight per-ticket PRs; review lives on GitHub, browser-test any PR locally on demand (`bbs-ticket serve <ticket>`).
+  - Background worker — parallel tickets, straight PRs (big team / enterprise) → `worktree-pr`: parallel worktree tickets, straight per-ticket PRs; review lives on GitHub, browser-test any PR locally on demand (`bbs ticket serve <ticket>`).
   Write the resulting knobs (not a `profile:` key) into `git-flow.yaml`, with the profile name as a comment.
 - Re-run on a configured repo = switch: read the current profile from `git-flow.yaml`, ask the same question with the current answer marked as current, and on change rewrite only the git-flow knobs and walk the user through the transition steps (`references/git-flow.md § Profiles`, "Switching later"). Leave `qa.yaml`, `.env`, and the landing doc untouched unless they're missing.
 - Prefer the simple top-level `qa.yaml` shape with a localhost `url`; hosted
@@ -66,7 +66,7 @@ Capture the minimum future agents need:
 When the app has a login, seed the credential placeholders into the gitignored
 `.babysit/.env` (idempotent — never overwrites existing values):
 ```bash
-bbs-secrets seed --repo-root "$(git rev-parse --show-toplevel)" QA_USER QA_PASS
+bbs secrets seed --repo-root "$(git rev-parse --show-toplevel)" QA_USER QA_PASS
 ```
 On machines with multiple GitHub accounts, also seed `GH_ACCOUNT=<login>` into
 `.babysit/.env` — `create-pr` and `fix-pr` run `gh auth switch -u "$GH_ACCOUNT"`

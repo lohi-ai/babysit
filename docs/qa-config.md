@@ -48,8 +48,8 @@ QA_USER=alice@example.com
 QA_PASS='...'
 ```
 
-`/bbs:qa` loads them at runtime with `eval "$(bbs-secrets load)"` and resolves
-the names via `bbs-qa-config probe`. Shell-exported vars win over the file, so
+`/bbs:qa` loads them at runtime with `eval "$(bbs secrets load)"` and resolves
+the names via `bbs qa-config probe`. Shell-exported vars win over the file, so
 CI can inject `QA_USER` / `QA_PASS` without touching `.babysit/.env`.
 
 ## Advanced Named Envs
@@ -76,7 +76,7 @@ Use the simple top-level shape unless the project truly has multiple QA targets.
 ## Checks
 
 ```bash
-bbs-qa-config default-env
-bbs-qa-config probe --env local
-bbs-qa-config check
+bbs qa-config default-env
+bbs qa-config probe --env local
+bbs qa-config check
 ```

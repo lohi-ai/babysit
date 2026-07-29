@@ -176,7 +176,7 @@ func qaLeaseGuard(gitdir, cmd, ownerTicket string) int {
 	}
 	fmt.Fprintln(os.Stderr, "STATUS: BLOCKED")
 	fmt.Fprintf(os.Stderr, "REASON: shared test surface is qa-leased by '%s' (%dmin into a %dmin lease) — %s would change it mid-QA.\n", owner, age, ttl, cmd)
-	fmt.Fprintf(os.Stderr, "RECOMMENDATION: wait for '%s' to run 'bbs-ticket qa-lease release', or 'bbs-ticket qa-lease release --force' if that run is dead.\n", owner)
+	fmt.Fprintf(os.Stderr, retarget("RECOMMENDATION: wait for '%s' to run 'bbs-ticket qa-lease release', or 'bbs-ticket qa-lease release --force' if that run is dead.\n"), owner)
 	return 2
 }
 
@@ -332,7 +332,7 @@ func runMergeBase(args []string) {
 		fmt.Fprintln(os.Stderr, "STATUS: BLOCKED")
 		fmt.Fprintf(os.Stderr, "REASON: merge conflict landing '%s' on '%s' (%s); merge aborted, primary untouched.\n", branch, base, primary)
 		fmt.Fprintf(os.Stderr, "RECOMMENDATION: in the worktree, merge 'origin/%s' into '%s' (never local '%s' — it carries other tickets), resolve, commit, re-run merge-base.\n", base, branch, base)
-		fmt.Fprintf(os.Stderr, "  If origin/%s merges clean, the conflict is with another in-flight ticket — QA solo via 'bbs-ticket switch %s' and land the PRs in sequence.\n", base, env.Ticket)
+		fmt.Fprintf(os.Stderr, retarget("  If origin/%s merges clean, the conflict is with another in-flight ticket — QA solo via 'bbs-ticket switch %s' and land the PRs in sequence.\n"), base, env.Ticket)
 		os.Exit(2)
 	}
 	post := gitCOut(primary, "rev-parse", "HEAD")
@@ -558,7 +558,7 @@ func runSwitch(args []string) {
 		}
 	}
 	if len(tickets) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: bbs-ticket switch <ticket> [<ticket>...] [--base BRANCH]")
+		fmt.Fprintln(os.Stderr, retarget("usage: bbs-ticket switch <ticket> [<ticket>...] [--base BRANCH]"))
 		os.Exit(2)
 	}
 	if !haveGit() {
@@ -591,7 +591,7 @@ func runSwitch(args []string) {
 		if b == "" {
 			fmt.Fprintln(os.Stderr, "STATUS: BLOCKED")
 			fmt.Fprintf(os.Stderr, "REASON: no local branch matches '*/%s_*' — unknown ticket or branch never cut.\n", t)
-			fmt.Fprintln(os.Stderr, "RECOMMENDATION: check the id (bbs-ticket session list), or run ensure for it first.")
+			fmt.Fprintln(os.Stderr, retarget("RECOMMENDATION: check the id (bbs-ticket session list), or run ensure for it first."))
 			os.Exit(2)
 		}
 		branches = append(branches, b)
@@ -743,7 +743,7 @@ func runServe(args []string) {
 				tickets = append(tickets, t)
 			}
 			if len(tickets) == 0 {
-				fmt.Fprintln(os.Stderr, "serve: nothing finished to serve — no open ticket has qa + review-pr DONE (see bbs-ticket board)")
+				fmt.Fprintln(os.Stderr, retarget("serve: nothing finished to serve — no open ticket has qa + review-pr DONE (see bbs-ticket board)"))
 				os.Exit(0)
 			}
 		}
@@ -839,8 +839,8 @@ func runServe(args []string) {
 		}
 	}
 	if svRC == 0 {
-		fmt.Fprintf(os.Stderr, "serve: review on the dev server(s); fixes commit in the ticket worktree, then re-run 'bbs-ticket serve %s'.\n", strings.Join(tickets, " "))
-		fmt.Fprintln(os.Stderr, "  Done reviewing → bbs-ticket serve --release")
+		fmt.Fprintf(os.Stderr, retarget("serve: review on the dev server(s); fixes commit in the ticket worktree, then re-run 'bbs-ticket serve %s'.\n"), strings.Join(tickets, " "))
+		fmt.Fprintln(os.Stderr, retarget("  Done reviewing → bbs-ticket serve --release"))
 	}
 	os.Exit(svRC)
 }
@@ -946,7 +946,7 @@ func runQALease(args []string) {
 		}
 		fmt.Fprintln(os.Stderr, "STATUS: BLOCKED")
 		fmt.Fprintf(os.Stderr, "REASON: qa-lease held by '%s' (%dmin into a %dmin lease) — one QA session at a time on the shared surface.\n", orUnknown(owner), age, heldTTL)
-		fmt.Fprintln(os.Stderr, "RECOMMENDATION: wait and re-run acquire, or 'bbs-ticket qa-lease release --force' if that run is dead.")
+		fmt.Fprintln(os.Stderr, retarget("RECOMMENDATION: wait and re-run acquire, or 'bbs-ticket qa-lease release --force' if that run is dead."))
 		os.Exit(2)
 	case "release":
 		if fi, err := os.Stat(qlDir); err != nil || !fi.IsDir() {
@@ -981,7 +981,7 @@ func runQALease(args []string) {
 		fmt.Printf("TTL_MIN=%s\n", read("ttl_min"))
 		os.Exit(0)
 	default:
-		fmt.Fprintln(os.Stderr, "usage: bbs-ticket qa-lease <acquire|release|status> [--ticket ID] [--ttl-min N] [--force]")
+		fmt.Fprintln(os.Stderr, retarget("usage: bbs-ticket qa-lease <acquire|release|status> [--ticket ID] [--ttl-min N] [--force]"))
 		os.Exit(2)
 	}
 }

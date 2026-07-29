@@ -5,7 +5,7 @@ description: Address unresolved review comments on an open pull request — fix 
 # fix-pr
 Work a PR's unresolved review threads to zero. One repo's PR per invocation — a cross-repo ticket's sibling PR needs its own run in that repo.
 ## Flow
-1. Resolve the PR: `bbs-ticket get-pointer pr`, else a PR URL/number from conversation, else the current branch's PR (`gh pr view --json url,number`). None → `NEEDS_CONTEXT` naming what's missing. Resolve `GH_ACCOUNT` the same way create-pr does (`eval "$(bbs-secrets load)"` → `gh auth switch -u "$GH_ACCOUNT"` when set).
+1. Resolve the PR: `bbs ticket get-pointer pr`, else a PR URL/number from conversation, else the current branch's PR (`gh pr view --json url,number`). None → `NEEDS_CONTEXT` naming what's missing. Resolve `GH_ACCOUNT` the same way create-pr does (`eval "$(bbs secrets load)"` → `gh auth switch -u "$GH_ACCOUNT"` when set).
 2. Fetch unresolved threads — GraphQL only; REST cannot list resolution state:
    ```bash
    gh api graphql -f query='
@@ -18,7 +18,7 @@ Work a PR's unresolved review threads to zero. One repo's PR per invocation — 
      -F owner="$OWNER" -F repo="$REPO" -F pr="$NUMBER" \
      --jq '.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved|not)'
    ```
-3. Fix each thread in the ticket's **own worktree** (`bbs-ticket resolve` gives the path), never the primary checkout. Same discipline as `review-pr --fix`: apply what's right, skip with a stated reason what isn't (wrong, out of scope, or a genuine disagreement — those go back to the reviewer as a reply, not a silent skip).
+3. Fix each thread in the ticket's **own worktree** (`bbs ticket resolve` gives the path), never the primary checkout. Same discipline as `review-pr --fix`: apply what's right, skip with a stated reason what isn't (wrong, out of scope, or a genuine disagreement — those go back to the reviewer as a reply, not a silent skip).
 4. Fixes that change behavior get re-verified before push: re-run the surface's check, and when other tickets are in flight follow the qa-lease protocol (`qa-lease acquire` → `switch <ticket>` → check → `release`).
 5. Commit in the worktree and `git push` the ticket branch.
 6. Close the loop per thread: reply in-thread via REST, resolve via GraphQL (resolution is GraphQL-only):

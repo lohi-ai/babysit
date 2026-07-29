@@ -27,12 +27,12 @@ func newLearningsLogCmd() *cobra.Command {
 
 func runLearningsLog(args []string) error {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, learningsLogUsage)
+		fmt.Fprintln(os.Stderr, retarget(learningsLogUsage))
 		os.Exit(2)
 	}
 	sub, args := args[0], args[1:]
 	if sub != "decision" {
-		fmt.Fprintf(os.Stderr, "bbs-learnings-log: unknown subcommand '%s'\n", sub)
+		fmt.Fprintf(os.Stderr, retarget("bbs-learnings-log: unknown subcommand '%s'\n"), sub)
 		os.Exit(2)
 	}
 

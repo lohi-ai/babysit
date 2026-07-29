@@ -16,6 +16,7 @@ PROJECT_SKILLS="$PROJECT_DIR/.claude/skills"
 GLOBAL_CLAUDE="$HOME/.claude"
 GLOBAL_SKILLS="$GLOBAL_CLAUDE/skills"
 CODEX_SKILLS="$HOME/.codex/skills"
+LOCAL_BIN="$HOME/.local/bin"
 
 # ─── Colors ───────────────────────────────────────────────────
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[0;33m'; BLUE='\033[0;34m'; CYAN='\033[0;36m'; NC='\033[0m'
@@ -35,13 +36,13 @@ while [ $# -gt 0 ]; do
     --help|-h)
       echo "Usage: setup-skills [--dry-run] [--full] [--uninstall]"
       echo ""
-      echo "Install Babysit CLI bins into ~/.claude/."
+      echo "Install Babysit CLI bins into ~/.claude/, plus bbs into ~/.local/bin/."
       echo "Skills are installed separately via Claude Code's plugin system:"
       echo "  /plugin marketplace add <path-to-this-repo>"
       echo "  /plugin install bbs@babysit"
       echo ""
       echo "  --dry-run    Show what would be done without making changes"
-      echo "  --full       Run all steps + doctor + print plugin commands"
+      echo "  --full       Run all steps + print the Claude Code plugin commands"
       echo "  --uninstall  Remove all installed bin symlinks"
       exit 0
       ;;
@@ -78,10 +79,11 @@ if [ "$UNINSTALL" -eq 1 ]; then
     ok "Removed env-resolve (deprecated)"
   fi
 
-  # Remove bbs shim from ~/.local/bin/
-  if [ -f "$HOME/.local/bin/bbs" ]; then
-    run rm "$HOME/.local/bin/bbs"
-    ok "Removed bbs shim from ~/.local/bin/"
+  # Remove bbs from ~/.local/bin/ (our symlink, or a legacy shim). -L catches
+  # a symlink left dangling by a removed/rebuilt bin/bbs.
+  if [ -f "$LOCAL_BIN/bbs" ] || [ -L "$LOCAL_BIN/bbs" ]; then
+    run rm "$LOCAL_BIN/bbs"
+    ok "Removed bbs from ~/.local/bin/"
   fi
   # Legacy: remove old babysit shim name
   if [ -f "$HOME/.local/bin/babysit" ]; then
@@ -90,7 +92,7 @@ if [ "$UNINSTALL" -eq 1 ]; then
   fi
 
   # Remove bbs-* bins (include legacy names from pre-rename installs: bbs-formula, bbs-pipeline, babysit)
-  for BIN in bbs babysit bbs-config bbs-dashboard bbs-design bbs-env bbs-learnings-log bbs-learnings-search bbs-autopilot bbs-pipeline bbs-formula bbs-run bbs-slug bbs-telemetry-log bbs-ticket bbs-qa-config bbs-secrets bbs-update-check bbs-upgrade bbs-codex-competitive; do
+  for BIN in bbs babysit bbs-config bbs-dashboard bbs-design bbs-env bbs-learnings-log bbs-learnings-search bbs-autopilot bbs-pipeline bbs-formula bbs-run bbs-slug bbs-telemetry-log bbs-ticket bbs-qa-config bbs-secrets bbs-update-check bbs-upgrade bbs-codex-competitive bbs-analytics-cron; do
     if [ -L "$GLOBAL_CLAUDE/$BIN" ]; then
       run rm "$GLOBAL_CLAUDE/$BIN"
       ok "Removed $BIN"
@@ -197,8 +199,12 @@ INSTALLED_BINS=()
 
 link_bin() {
   local name="$1"
+  local dst_dir="${2:-$GLOBAL_CLAUDE}"
   local src="$SCRIPT_DIR/$name"
-  local dst="$GLOBAL_CLAUDE/$name"
+  local dst="$dst_dir/$name"
+  # Only bins under ~/.claude/ feed the summary line.
+  local track=0
+  if [ "$dst_dir" = "$GLOBAL_CLAUDE" ]; then track=1; fi
 
   if [ ! -f "$src" ]; then
     warn "$name not found in bin/"
@@ -209,12 +215,12 @@ link_bin() {
     local cur; cur="$(readlink "$dst")"
     if [ "$cur" = "$src" ]; then
       ok "$name up-to-date"
-      INSTALLED_BINS+=("$name")
+      if [ "$track" = 1 ]; then INSTALLED_BINS+=("$name"); fi
       return
     fi
     run ln -sf "$src" "$dst"
     warn "$name re-pointed (was → $cur)"
-    INSTALLED_BINS+=("$name")
+    if [ "$track" = 1 ]; then INSTALLED_BINS+=("$name"); fi
     return
   fi
 
@@ -224,13 +230,33 @@ link_bin() {
   fi
 
   run ln -s "$src" "$dst"
-  ok "$name → ~/.claude/$name"
-  INSTALLED_BINS+=("$name")
+  ok "$name → ${dst/#$HOME/\~}"
+  if [ "$track" = 1 ]; then INSTALLED_BINS+=("$name"); fi
 }
 
 for BIN in bbs bbs-config bbs-dashboard bbs-design bbs-env bbs-learnings-log bbs-learnings-search bbs-autopilot bbs-slug bbs-telemetry-log bbs-ticket bbs-qa-config bbs-secrets bbs-update-check bbs-upgrade bbs-codex-competitive bbs-analytics-cron; do
   link_bin "$BIN"
 done
+
+# ─── Step 2b: Put bbs on PATH (~/.local/bin) ────────────────
+# ~/.claude/ is not on PATH — skills resolve bins there directly, but a bare
+# `bbs` in a shell needs this link (or `brew install bbs`).
+info "Linking bbs onto PATH..."
+
+# Pre-Go installs left a bun shim here pointing at the deleted babysitter/ CLI.
+if [ -f "$LOCAL_BIN/bbs" ] && [ ! -L "$LOCAL_BIN/bbs" ] &&
+   grep -q 'babysitter/src/cli' "$LOCAL_BIN/bbs" 2>/dev/null; then
+  run rm "$LOCAL_BIN/bbs"
+  warn "Removed legacy bun shim from ~/.local/bin/bbs"
+fi
+
+[ -d "$LOCAL_BIN" ] || run mkdir -p "$LOCAL_BIN"
+link_bin bbs "$LOCAL_BIN"
+
+case ":$PATH:" in
+  *":$LOCAL_BIN:"*) ;;
+  *) warn "~/.local/bin is not on your PATH — add it to run \`bbs\` from a shell" ;;
+esac
 
 # ─── Step 3: Validate skill integrity ────────────────────────
 info "Validating skills..."
@@ -327,6 +353,9 @@ if [ "${#INSTALLED_BINS[@]}" -gt 0 ]; then
   echo "Bins:        ~/.claude/{$BIN_LIST}"
 else
   echo "Bins:        none linked"
+fi
+if [ -L "$LOCAL_BIN/bbs" ]; then
+  echo "PATH:        ~/.local/bin/bbs"
 fi
 echo "References:  .claude/skills/references/"
 echo ""

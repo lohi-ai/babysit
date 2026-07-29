@@ -1,13 +1,13 @@
 ---
 name: Ticket size rubric
-description: Canonical S/M/L signals used by plan-draft to classify tickets and by `bbs-ticket ensure-size` to self-estimate when the `ticket_size` pointer is absent.
+description: Canonical S/M/L signals used by plan-draft to classify tickets and by `bbs ticket ensure-size` to self-estimate when the `ticket_size` pointer is absent.
 ---
 # Ticket size rubric
 The `ticket_size` pointer (`XS`|`S`|`M`|`L`) controls depth inside heavy
 skills. `plan-draft` sets it at Step 1 against the expected footprint;
-downstream skills read it via `bbs-ticket ensure-size` (returns the pointer,
+downstream skills read it via `bbs ticket ensure-size` (returns the pointer,
 or estimates from the PR diff, persists, and prints — never re-estimate
-inline). When you change thresholds here, update `bbs-ticket`'s `ensure-size`
+inline). When you change thresholds here, update `bbs ticket`'s `ensure-size`
 in the same commit.
 Signals measured against the PR diff (`git diff <base>...HEAD`): **files**
 (name-only count), **loc** (insertions+deletions), **modules** (distinct
@@ -35,7 +35,7 @@ in-scope items deferred to follow-ups) and **B. Files-Modified collapse**
 (`implement` before editing — ≤3 expected files, all trivial doc/comment
 work).
 ```bash
-OLD="$("${BBS_TICKET_BIN:-$HOME/.claude/bbs-ticket}" get pointers.ticket_size)"
+OLD="$(bbs ticket get pointers.ticket_size)"
 case "$OLD" in
   L) NEW=M ;;
   M) NEW=S ;;
@@ -43,7 +43,7 @@ case "$OLD" in
   XS) NEW=XS ;;  # already minimum — no-op, no log entry
 esac
 if [ "$NEW" != "$OLD" ]; then
-  "${BBS_TICKET_BIN:-$HOME/.claude/bbs-ticket}" set-pointer ticket_size "$NEW"
+  bbs ticket set-pointer ticket_size "$NEW"
   _ADIR="${BABYSIT_ANALYTICS_DIR:-$HOME/.babysit/analytics}"
   mkdir -p "$_ADIR"
   printf '{"ts":"%s","skill":"%s","ticket":"%s","kind":"resize","from":"%s","to":"%s","trigger":"%s"}\n' \
@@ -52,4 +52,4 @@ if [ "$NEW" != "$OLD" ]; then
 fi
 ```
 `$TRIGGER` is `deferral_ratio>=40%` (A) or `files_modified<=3_trivial` (B).
-Subsequent skills pick up the new value via `bbs-ticket ensure-size`.
+Subsequent skills pick up the new value via `bbs ticket ensure-size`.

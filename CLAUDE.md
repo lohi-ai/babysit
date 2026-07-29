@@ -188,7 +188,7 @@ Workflows are split along the four points where a human actually adds value:
 
 1. **Requirement accepted** → `requirement.md` on the ticket. Autopilot drafts it in Flow steps 1–2 and stops at `--stop-after=requirement` if requested; requirement drafting is part of autopilot, not a separate skill.
 2. **Plan accepted** → `plan.md` on the ticket. Owner: autopilot init via `plan-draft`; user-facing work routes through `design-ui` inside it, so the plan carries the UI spec + prototype **before** the `/goal` handoff — the handoff is where the human reviews design ahead of implementation (builder build mode covers the case init didn't seed it); stops at `--stop-after=plan` if requested.
-3. **QA ready** → branch implemented, reviewed, checked with `qa` or a named fallback. Owner: `builder` (implement / build / child / verify modes) — the default end-to-end stop. For a batch of *independent* tickets, the `foreman` skill owns this checkpoint batch-wide: one visible tmux worker per ticket (each running autopilot), a design-review gate at the plan handoff (greenlight by pasting the worker's `/goal` block, or escalate taste-heavy designs to the human), QA serialized on `bbs-ticket qa-lease` (one test surface), verdicts verified on disk.
+3. **QA ready** → branch implemented, reviewed, checked with `qa` or a named fallback. Owner: `builder` (implement / build / child / verify modes) — the default end-to-end stop. For a batch of *independent* tickets, the `foreman` skill owns this checkpoint batch-wide: one visible tmux worker per ticket (each running autopilot), a design-review gate at the plan handoff (greenlight by pasting the worker's `/goal` block, or escalate taste-heavy designs to the human), QA serialized on `bbs ticket qa-lease` (one test surface), verdicts verified on disk.
 4. **PR ready** → human reviews the QA handoff and invokes `create-pr`. Autopilot does not create PRs.
 
 When adding or editing a workflow, be explicit about which checkpoint it stops at, and make sure the final step's handoff comment ends with a `Next:` line pointing at the human's next action (read + accept plan, review QA evidence, run `create-pr`, etc.). A workflow that crosses a checkpoint without stopping should say so in its frontmatter description (see `builder.md`).
@@ -221,15 +221,17 @@ Rules of thumb when wiring a workflow:
 ```
 babysit/
 ├── bin/
-│   ├── bbs-env        # env resolve / is-set / list-prefix / prompt (auto-loads .env.base)
-│   ├── bbs-config     # read/write ~/.babysit/config.yaml
-│   ├── bbs-slug       # derive slug / ticket / branch from git remote + branch
-│   ├── bbs-autopilot  # checkpoint + timeline runner behind the autopilot skill
-│   ├── bbs-ticket     # ticket identity (the big bin)
-│   ├── bbs-design     # query DESIGN.md tokens / suggest products / list components / ux-check
-│   ├── bbs-update-check, bbs-upgrade, bbs-telemetry-log, bbs-codex-competitive
+│   ├── bbs            # the multicall binary (gitignored; built by setup-skills from cmd/bbs)
+│   │                  #   bbs env       env resolve / is-set / list-prefix / prompt (auto-loads .env.base)
+│   │                  #   bbs config    read/write ~/.babysit/config.yaml
+│   │                  #   bbs slug      derive slug / ticket / branch from git remote + branch
+│   │                  #   bbs autopilot checkpoint + timeline runner behind the autopilot skill
+│   │                  #   bbs ticket    ticket identity (the big subcommand)
+│   │                  #   bbs design    query DESIGN.md tokens / suggest products / list components / ux-check
+│   │                  #   bbs update-check, upgrade, telemetry-log, codex-competitive, …
+│   ├── bbs-*          # argv0 symlinks to bbs, kept for legacy callers — skills call `bbs <sub>`
 │   ├── hooks/         # plugin hook executables (pre-tool-gate, verify-skill-output, clean-handoff-check)
-│   └── setup-skills   # Symlinks bin/bbs-* into ~/.claude/
+│   └── setup-skills   # Builds bbs, links it into ~/.local/bin/ and the bbs-* aliases into ~/.claude/
 ├── hooks/hooks.json   # plugin hook wiring (artifact-gated approval — see docs/artifact-gated-approval.md)
 ├── tests/             # shell + python suites for bins, workflows, and autopilot integration
 ├── docs/              # roadmap, identity, operations, artifact-gated-approval
@@ -245,13 +247,13 @@ Skills are namespaced with the `bbs:` prefix when installed globally (e.g. `bbs:
 A ticket is identified by three signals, in priority order:
 
 1. **`BABYSIT_TICKET`** env var — set by autopilot's §0.X Workspace phase or
-   by `bbs-ticket session attach <id>`. Always wins.
+   by `bbs ticket session attach <id>`. Always wins.
 2. **`tickets/<ticket>/manifest.yaml`** — durable identity anchor; one row
    per repo with `name / branch / canonical / worktree / base / pushed`.
 3. **Branch regex** `^(feat|fix|chore|bug|refactor|hotfix)/<ticket>_<slug>` —
    the legacy fallback. Pre-`manifest.yaml` ticket dirs still resolve here.
 
-`bbs-ticket resolve` walks the ladder; conflicts (e.g. `BABYSIT_TICKET=A` on
+`bbs ticket resolve` walks the ladder; conflicts (e.g. `BABYSIT_TICKET=A` on
 a `feat/B_…` branch) exit 2 with a 3-line BLOCK. There is exactly one
 identity codepath. Schema lives in [docs/identity.md](docs/identity.md).
 
@@ -259,14 +261,14 @@ Sessions persist at `~/.babysit/sessions/<id>.yaml` via the
 `bin/hooks/session-writer` plugin hook (SessionStart + PostToolUse(Bash),
 ticket derived from the cwd's worktree dir or branch) — the preamble's
 session-writer block is best-effort only, since skills aren't guaranteed to
-execute it. `bbs-ticket session list / attach / end` manage them; `attach`
+execute it. `bbs ticket session list / attach / end` manage them; `attach`
 echoes `export BABYSIT_TICKET=…` so a fresh shell can recover identity after
 a crash.
 
 ## Install
 
 ```
-./bin/setup-skills           # symlinks into ~/.claude/skills/bbs:*
+./bin/setup-skills           # builds bbs → ~/.local/bin/, symlinks skills into ~/.claude/skills/bbs:*
 ./bin/setup-skills --uninstall
 ```
 

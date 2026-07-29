@@ -57,7 +57,7 @@ func runQAConfig(args []string) error {
 		}
 		return qaConfigLeakCheckExit(qaConfigLeakCheck(file))
 	default: // help|*) — any unknown subcommand prints usage, exit 0
-		fmt.Print(qaConfigUsage)
+		fmt.Print(retarget(qaConfigUsage))
 		return nil
 	}
 }
@@ -93,7 +93,7 @@ func runQAConfigProbe(args []string) error {
 	}
 
 	if envName == "" {
-		fmt.Fprintln(os.Stderr, "bbs-qa-config probe: --env <name> required")
+		fmt.Fprintln(os.Stderr, retarget("bbs-qa-config probe: --env <name> required"))
 		os.Exit(2)
 	}
 
@@ -117,7 +117,7 @@ func runQAConfigProbe(args []string) error {
 	}
 
 	if url == "" {
-		fmt.Fprintf(os.Stderr, "bbs-qa-config probe: env '%s' not found\n", envName)
+		fmt.Fprintf(os.Stderr, retarget("bbs-qa-config probe: env '%s' not found\n"), envName)
 		return errSilent
 	}
 
@@ -180,7 +180,7 @@ func runQAConfigCheck() error {
 				continue
 			}
 			if !urlSet[e] {
-				fmt.Fprintf(os.Stderr, "bbs-qa-config check: %s: env '%s' missing url\n", f, e)
+				fmt.Fprintf(os.Stderr, retarget("bbs-qa-config check: %s: env '%s' missing url\n"), f, e)
 				errs++
 			}
 		}
@@ -197,7 +197,7 @@ func runQAConfigCheck() error {
 // qaConfigLeakCheck ports cmd_leak_check, returning its status (0/1/2).
 func qaConfigLeakCheck(file string) int {
 	if file == "" || !qaconfig.FileExists(file) {
-		fmt.Fprintln(os.Stderr, "bbs-qa-config leak-check: file required")
+		fmt.Fprintln(os.Stderr, retarget("bbs-qa-config leak-check: file required"))
 		return 2
 	}
 	// qa.local.yaml is gitignored — operators may put real secrets there.
@@ -206,7 +206,7 @@ func qaConfigLeakCheck(file string) int {
 	}
 	hits := qaconfig.LeakCheckHits(file)
 	if len(hits) > 0 {
-		fmt.Fprintf(os.Stderr, "bbs-qa-config leak-check: %s contains inline credential literals:\n", file)
+		fmt.Fprintf(os.Stderr, retarget("bbs-qa-config leak-check: %s contains inline credential literals:\n"), file)
 		for _, h := range hits {
 			fmt.Fprintln(os.Stderr, h)
 		}

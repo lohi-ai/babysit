@@ -30,10 +30,10 @@ read when a ticket's branch is cut, so a switch affects new tickets only —
 existing manifests keep their recorded shape. Transition care: *into*
 `worktree`, the primary checkout must end up clean on `base_branch` (commit
 or land whatever rides it first); *out of* `worktree`, finish or park
-in-flight worktrees (`bbs-ticket board`) and release any qa-lease first.
+in-flight worktrees (`bbs ticket board`) and release any qa-lease first.
 (`ticket_branch` is a legacy alias for `mode`: `optional`≡`trunk`,
 `required`≡`branch`; `mode:` wins.) `base_branch` fallback ladder:
-`BBS_BASE_BRANCH` → legacy `branches.develop` → `bbs-config get base_branch`
+`BBS_BASE_BRANCH` → legacy `branches.develop` → `bbs config get base_branch`
 → `origin/HEAD` → `main`. Don't add the old nested `branches:`/`pr:` shape
 to new projects.
 ## `mode:` — where tickets get their branch
@@ -42,7 +42,7 @@ on `ensure` or the autopilot invocation overrides one call.
 - **`trunk`** — no branch is ever cut; N sessions ride the current branch,
   identity carried by `BABYSIT_TICKET` env + `manifest.yaml`. Per-call
   escape hatches: `--no-branch` / `--cut-branch`; fresh shells re-attach via
-  `bbs-ticket session attach`.
+  `bbs ticket session attach`.
 - **`branch`** (default) — cuts `feat/<id>_<slug>` in place when safe,
   diverts to a worktree when not (see Cut below).
 - **`worktree`** — `ensure` always diverts: the primary checkout stays
@@ -59,9 +59,9 @@ references `origin/<base>`:
   checkout of `base_branch`; otherwise it diverts to a worktree
   (`<repo>/.babysit/worktrees/<ticket>_<slug>/`, auto-git-excluded) and
   prints `WORKTREE=<path>` — cd there; `manifest.yaml` records the path so
-  `bbs-ticket resolve` re-attaches. Hotfix off production:
+  `bbs ticket resolve` re-attaches. Hotfix off production:
   `BBS_BASE_BRANCH=production`. Escape hatch: `--no-branch`.
-- **Refresh with latest code** — `bbs-ticket refresh` from the ticket
+- **Refresh with latest code** — `bbs ticket refresh` from the ticket
   checkout: fetch + merge `origin/<base>` into the branch (merge, not
   rebase — the branch may be pushed). BLOCKs on dirty tree or conflict.
 - **Conflicts** — resolve by merging `origin/<base>` in (what refresh
@@ -75,16 +75,16 @@ and none of them writes to a ticket branch.
 The dev server runs in the base checkout; the worktree is the source of
 truth:
 1. Implement + commit in the ticket worktree.
-2. `bbs-ticket merge-base` from the worktree — merges the ticket branch
+2. `bbs ticket merge-base` from the worktree — merges the ticket branch
    into the base checkout (locked so parallel runs serialize; BLOCKs on
-   dirty/off-base/conflict — on conflict: `bbs-ticket refresh`, resolve,
+   dirty/off-base/conflict — on conflict: `bbs ticket refresh`, resolve,
    commit, re-run).
 3. QA finds a problem → fix **in the worktree**, commit, re-run
    `merge-base`. Never fix in the base checkout or hand-apply a diff there —
    what QA tests must be a committed ticket state.
 4. The ticket branch holds the complete change; push it; `create-pr`
    targets `base_branch`.
-5. After PRs merge upstream: `bbs-ticket reset-base` from the primary snaps
+5. After PRs merge upstream: `bbs ticket reset-base` from the primary snaps
    the base checkout back to `origin/<base>` (refuses when it would lose
    real work); in-flight worktrees re-run `merge-base`.
 ## Server prep — install, migrate, revert
@@ -99,21 +99,21 @@ tree with node_modules and the running server. By mode:
   `prepare:` in the primary after landing. On leaving the surface (verdict
   set, lease about to release) a ticket that added migrations runs
   `revert:` first — `reset-base` drops the code but not the schema.
-`bbs-ticket switch <ticket> [<ticket>…]` hops the test surface from the
+`bbs ticket switch <ticket> [<ticket>…]` hops the test surface from the
 primary's side: `reset-base` + merge the named tickets in, so the server
 serves exactly base + those tickets (conflicts BLOCK naming the ticket to
 fix). Complement of `merge-base` — same lock, opposite direction.
 ## QA lease — parallel tickets, one test surface
 The merge-base lock serializes single git operations but can't keep the
-surface stable for a whole QA session. `bbs-ticket qa-lease` does: while a
+surface stable for a whole QA session. `bbs ticket qa-lease` does: while a
 ticket holds it, `merge-base` / `switch` / `reset-base` from any *other*
 ticket BLOCK naming the owner. Protocol when tickets run in parallel:
-1. `bbs-ticket qa-lease acquire` (BLOCKs while another ticket QAs).
-2. `bbs-ticket switch <ticket>` — surface = base + exactly this ticket. Run
+1. `bbs ticket qa-lease acquire` (BLOCKs while another ticket QAs).
+2. `bbs ticket switch <ticket>` — surface = base + exactly this ticket. Run
    `prepare:` (§ Server prep) when set.
 3. QA; fixes commit in the worktree, re-run `switch` after each fix.
-4. `bbs-ticket set-verdict --skill qa`; if the ticket added DB migrations
-   run `revert:`; then `bbs-ticket qa-lease release`.
+4. `bbs ticket set-verdict --skill qa`; if the ticket added DB migrations
+   run `revert:`; then `bbs ticket qa-lease release`.
 Reentrant for the owner (`acquire` refreshes). A crashed holder can't wedge
 the queue: past its ttl (default 60 min, `--ttl-min`) the lease is stale —
 the next `acquire` steals it and guard sites clear it, both loudly. The
@@ -124,9 +124,9 @@ change.
 ## Attended parallel review — board / serve / fix-pr
 Human review on the real site is the longest must-do step, and it holds the
 test surface. The attended loop, per ticket:
-1. `bbs-ticket board` — who's on what: status, verdicts, sessions, PR,
+1. `bbs ticket board` — who's on what: status, verdicts, sessions, PR,
    lease holder, what the primary serves. Read-only.
-2. `bbs-ticket serve` — take the surface for human review: a long qa-lease
+2. `bbs ticket serve` — take the surface for human review: a long qa-lease
    (240 min) + `switch`, here **and** in each linked sibling repo
    (`siblings` × `RELATED_*_REPO`), so an FE/BE pair serves the ticket
    together. Three shapes: bare = every finished ticket (qa + review-pr
@@ -136,14 +136,14 @@ test surface. The attended loop, per ticket:
    (reentrant: refreshes the lease, re-switches every repo) → refresh
    browser. Other tickets keep working in their worktrees; only their QA
    waits on the lease.
-4. Approved → `bbs-ticket serve --release` → `create-pr` per repo → review
+4. Approved → `bbs ticket serve --release` → `create-pr` per repo → review
    comments via `fix-pr`.
-5. `board --pr` flags merged PRs; then `bbs-ticket reset-base` and
+5. `board --pr` flags merged PRs; then `bbs ticket reset-base` and
    `set-status done`.
 ## `land:` — composed local review vs straight PRs
 How a *finished batch* reaches the human (read by foreman and workflow
 handoffs). `land: local` (default under `mode: worktree`): compose the
-surface first — bare `bbs-ticket serve` under the review lease — so the
+surface first — bare `bbs ticket serve` under the review lease — so the
 human reviews the combined result on local dev, then lands via per-ticket
 `create-pr` or one compose PR (create-pr § Compose PR); with `push: false`
 the human lands manually, no PRs. Ticket branches stay the source of truth;

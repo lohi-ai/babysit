@@ -53,7 +53,7 @@ func runUpgrade(args []string) error {
 	oldVersion := readVersion(versionFile)
 
 	if _, err := exec.LookPath("git"); err != nil {
-		fmt.Fprintln(os.Stderr, "git is required for bbs-upgrade")
+		fmt.Fprintln(os.Stderr, retarget("git is required for bbs-upgrade"))
 		return errSilent
 	}
 
@@ -73,7 +73,7 @@ func runUpgrade(args []string) error {
 	// operator's only view of why a pull failed.
 	pull.Stdout, pull.Stderr = os.Stdout, os.Stderr
 	if pull.Run() != nil {
-		fmt.Fprintln(os.Stderr, "git pull failed — resolve conflicts then re-run bbs-upgrade")
+		fmt.Fprintln(os.Stderr, retarget("git pull failed — resolve conflicts then re-run bbs-upgrade"))
 		return errSilent
 	}
 

@@ -49,7 +49,7 @@ Env overrides:
                                  tightened to 1000/100 and one retry is attempted.
 `
 
-func dashErr(msg string) { fmt.Fprintf(os.Stderr, "bbs-dashboard: %s\n", msg) }
+func dashErr(msg string) { fmt.Fprintf(os.Stderr, retarget("bbs-dashboard: %s\n"), msg) }
 
 func runDashboard(args []string) error {
 	// ── flag parse ──
@@ -60,7 +60,7 @@ func runDashboard(args []string) error {
 		a := args[i]
 		switch {
 		case a == "--help" || a == "-h":
-			fmt.Print(dashUsage)
+			fmt.Print(retarget(dashUsage))
 			return nil
 		case a == "--no-open":
 			open = false
@@ -209,9 +209,9 @@ func runDashboard(args []string) error {
 	}
 
 	if dev {
-		fmt.Printf("bbs-dashboard: wrote %s\n", dataJS)
+		fmt.Printf(retarget("bbs-dashboard: wrote %s\n"), dataJS)
 	} else {
-		fmt.Printf("bbs-dashboard: wrote %s; open file://%s/index.html\n", dataJS, distDir)
+		fmt.Printf(retarget("bbs-dashboard: wrote %s; open file://%s/index.html\n"), dataJS, distDir)
 	}
 
 	// ── dev mode: vite ──
@@ -318,7 +318,7 @@ func runDevServer(webDir string, size int, open bool) error {
 		dashErr(fmt.Sprintf("WARN: web/public/data.js is %d bytes (>2MB); first paint may be slow", size))
 	}
 	if _, err := os.Stat(filepath.Join(webDir, "node_modules")); err != nil {
-		fmt.Println("bbs-dashboard: installing web/ dependencies (first run)...")
+		fmt.Println(retarget("bbs-dashboard: installing web/ dependencies (first run)..."))
 		_ = runIn(webDir, "npm", "install")
 	}
 	// vite reuse/port detection is a convenience the bash did with lsof; the

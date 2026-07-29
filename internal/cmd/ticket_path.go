@@ -57,7 +57,7 @@ func runPath(args []string) {
 		os.Exit(2)
 	}
 	if !pathKinds[kind] {
-		fmt.Fprintf(os.Stderr, "bbs-ticket path: %s: unknown kind (try: bbs-ticket path)\n", kind)
+		fmt.Fprintf(os.Stderr, retarget("bbs-ticket path: %s: unknown kind (try: bbs-ticket path)\n"), kind)
 		os.Exit(2)
 	}
 
@@ -80,7 +80,7 @@ func runPath(args []string) {
 		case "--latest":
 			platest = true
 		default:
-			fmt.Fprintf(os.Stderr, "bbs-ticket path: %s: unknown selector '%s'\n", kind, args[i])
+			fmt.Fprintf(os.Stderr, retarget("bbs-ticket path: %s: unknown selector '%s'\n"), kind, args[i])
 			printPathKindHelp(kind)
 			os.Exit(2)
 		}
@@ -94,16 +94,16 @@ func runPath(args []string) {
 	if mode == "write" {
 		switch kind {
 		case "handoff":
-			fmt.Fprintln(os.Stderr, "bbs-ticket path: handoff: --write rejected, use `bbs-ticket add-handoff --skill S --status STATUS` instead")
+			fmt.Fprintln(os.Stderr, retarget("bbs-ticket path: handoff: --write rejected, use `bbs-ticket add-handoff --skill S --status STATUS` instead"))
 			os.Exit(2)
 		case "verdict":
-			fmt.Fprintln(os.Stderr, "bbs-ticket path: verdict: --write rejected, use `bbs-ticket set-verdict --skill S` instead")
+			fmt.Fprintln(os.Stderr, retarget("bbs-ticket path: verdict: --write rejected, use `bbs-ticket set-verdict --skill S` instead"))
 			os.Exit(2)
 		case "review":
-			fmt.Fprintln(os.Stderr, "bbs-ticket path: review: --write rejected, use `bbs-ticket set-review --skill S` instead")
+			fmt.Fprintln(os.Stderr, retarget("bbs-ticket path: review: --write rejected, use `bbs-ticket set-review --skill S` instead"))
 			os.Exit(2)
 		case "worktree":
-			fmt.Fprintln(os.Stderr, "bbs-ticket path: worktree: --write rejected; worktree path is derived from manifest.yaml")
+			fmt.Fprintln(os.Stderr, retarget("bbs-ticket path: worktree: --write rejected; worktree path is derived from manifest.yaml"))
 			os.Exit(2)
 		}
 	}
@@ -124,26 +124,26 @@ func runPath(args []string) {
 	switch kind {
 	case "verdict", "review":
 		if pskill == "" {
-			fmt.Fprintf(os.Stderr, "bbs-ticket path: %s: --skill is required (try: bbs-ticket path %s --skill <name> --read)\n", kind, kind)
+			fmt.Fprintf(os.Stderr, retarget("bbs-ticket path: %s: --skill is required (try: bbs-ticket path %s --skill <name> --read)\n"), kind, kind)
 			os.Exit(2)
 		}
 	case "evidence":
 		if pskill == "" {
-			fmt.Fprintln(os.Stderr, "bbs-ticket path: evidence: --skill is required (try: bbs-ticket path evidence --skill <name> --name <file> --write)")
+			fmt.Fprintln(os.Stderr, retarget("bbs-ticket path: evidence: --skill is required (try: bbs-ticket path evidence --skill <name> --name <file> --write)"))
 			os.Exit(2)
 		}
 		if mode == "write" && pname == "" {
-			fmt.Fprintln(os.Stderr, "bbs-ticket path: evidence: --name is required for --write")
+			fmt.Fprintln(os.Stderr, retarget("bbs-ticket path: evidence: --name is required for --write"))
 			os.Exit(2)
 		}
 	case "sub-ticket":
 		if mode == "write" {
 			if pseq == "" {
-				fmt.Fprintln(os.Stderr, "bbs-ticket path: sub-ticket: --seq is required for --write")
+				fmt.Fprintln(os.Stderr, retarget("bbs-ticket path: sub-ticket: --seq is required for --write"))
 				os.Exit(2)
 			}
 			if pslug == "" {
-				fmt.Fprintln(os.Stderr, "bbs-ticket path: sub-ticket: --slug is required for --write")
+				fmt.Fprintln(os.Stderr, retarget("bbs-ticket path: sub-ticket: --slug is required for --write"))
 				os.Exit(2)
 			}
 		}
@@ -236,9 +236,9 @@ func runPath(args []string) {
 	}
 
 	if canonical != "" {
-		fmt.Fprintf(os.Stderr, "bbs-ticket path: %s: not found at %s (legacy fallbacks also empty)\n", kind, canonical)
+		fmt.Fprintf(os.Stderr, retarget("bbs-ticket path: %s: not found at %s (legacy fallbacks also empty)\n"), kind, canonical)
 	} else {
-		fmt.Fprintf(os.Stderr, "bbs-ticket path: %s: not found (no matching files)\n", kind)
+		fmt.Fprintf(os.Stderr, retarget("bbs-ticket path: %s: not found (no matching files)\n"), kind)
 	}
 	os.Exit(1)
 }
@@ -254,7 +254,7 @@ func valueAt(args []string, i int) string {
 // safeSeq mirrors bash _safe_seq: numeric-only, else exit 2.
 func safeSeq(kind, value string) string {
 	if !regexp.MustCompile(`^[0-9]+$`).MatchString(value) {
-		fmt.Fprintf(os.Stderr, "bbs-ticket path: %s: --seq '%s' rejected (must be numeric)\n", kind, value)
+		fmt.Fprintf(os.Stderr, retarget("bbs-ticket path: %s: --seq '%s' rejected (must be numeric)\n"), kind, value)
 		os.Exit(2)
 	}
 	return value
@@ -298,7 +298,7 @@ func handoffCanonical(th, pskill, pseq string, platest bool) string {
 		if b, err := os.ReadFile(l); err == nil {
 			name := strings.TrimRight(string(b), "\n")
 			if invalidLatestName(name) {
-				fmt.Fprintf(os.Stderr, "bbs-ticket path handoff: LATEST contains invalid name '%s'\n", name)
+				fmt.Fprintf(os.Stderr, retarget("bbs-ticket path handoff: LATEST contains invalid name '%s'\n"), name)
 				os.Exit(3)
 			}
 			return filepath.Join(th, "handoffs", name)
@@ -446,13 +446,13 @@ func runList(args []string) {
 		args = args[1:]
 	}
 	if kind == "" {
-		fmt.Fprintln(os.Stderr, "bbs-ticket list: <kind> required (try: bbs-ticket path)")
+		fmt.Fprintln(os.Stderr, retarget("bbs-ticket list: <kind> required (try: bbs-ticket path)"))
 		os.Exit(2)
 	}
 	switch kind {
 	case "handoff", "verdict", "review", "evidence", "sub-ticket":
 	default:
-		fmt.Fprintf(os.Stderr, "bbs-ticket list: %s: kind is not listable\n", kind)
+		fmt.Fprintf(os.Stderr, retarget("bbs-ticket list: %s: kind is not listable\n"), kind)
 		os.Exit(2)
 	}
 	pskill := ""
@@ -461,7 +461,7 @@ func runList(args []string) {
 		case "--skill":
 			pskill, i = valueAt(args, i), i+1
 		default:
-			fmt.Fprintf(os.Stderr, "bbs-ticket list: %s: unknown selector '%s'\n", kind, args[i])
+			fmt.Fprintf(os.Stderr, retarget("bbs-ticket list: %s: unknown selector '%s'\n"), kind, args[i])
 			os.Exit(2)
 		}
 	}
@@ -674,7 +674,7 @@ func applyStatus(st *ticket.Store, target string) error {
 func runAssertCwd() { os.Exit(0) }
 
 func printPathHelp() {
-	fmt.Fprint(os.Stderr, `usage: bbs-ticket path <kind> [selectors] --read|--write
+	fmt.Fprint(os.Stderr, retarget(`usage: bbs-ticket path <kind> [selectors] --read|--write
        bbs-ticket list <kind> [selectors]
 
 Kinds (canonical Layout C path under <TH> = $BABYSIT_PROJECT_HOME/tickets/$TICKET):
@@ -704,7 +704,7 @@ Examples:
   PLAN_OUT="$(bbs-ticket path plan --write)" && cp draft.md "$PLAN_OUT"
   bbs-ticket path handoff --skill build --latest --read
   bbs-ticket list handoff --skill build
-`)
+`))
 }
 
 func printPathKindHelp(kind string) {
@@ -716,7 +716,7 @@ func printPathKindHelp(kind string) {
 	}[kind]
 	switch kind {
 	case "home", "index", "requirement", "design", "plan", "manifest", "history", "checkpoint":
-		fmt.Fprintf(os.Stderr, `usage: bbs-ticket path %s --read|--write
+		fmt.Fprintf(os.Stderr, retarget(`usage: bbs-ticket path %s --read|--write
 
 Canonical: %s
 Selectors: (none)
@@ -724,9 +724,9 @@ Selectors: (none)
 Examples:
   bbs-ticket path %s --read
   bbs-ticket path %s --write
-`, kind, canonical, kind, kind)
+`), kind, canonical, kind, kind)
 	case "worktree":
-		fmt.Fprint(os.Stderr, `usage: bbs-ticket path worktree --read
+		fmt.Fprint(os.Stderr, retarget(`usage: bbs-ticket path worktree --read
 
 Prints the ticket worktree path from manifest.yaml for the current repo.
 (Matches the repo entry whose name == current repo basename; falls back to first.)
@@ -735,31 +735,31 @@ Selectors: (none). --write is rejected.
 
 Examples:
   WT="$(bbs-ticket path worktree --read)"
-`)
+`))
 	case "handoff":
-		fmt.Fprint(os.Stderr, `usage: bbs-ticket path handoff [--skill S] [--latest | --seq N] --read
+		fmt.Fprint(os.Stderr, retarget(`usage: bbs-ticket path handoff [--skill S] [--latest | --seq N] --read
 
 Canonical: <TH>/handoffs/<NNN>-<skill>-<status>.md
 Selectors: --skill S, --latest, --seq N
-Note: handoff --write is rejected — use `+"`bbs-ticket add-handoff --skill S --status X`"+` instead.
+Note: handoff --write is rejected — use `)+"`bbs-ticket add-handoff --skill S --status X`"+` instead.
 
 Examples:
   bbs-ticket path handoff --skill build --latest --read
   bbs-ticket path handoff --seq 3 --read
 `)
 	case "verdict", "review":
-		fmt.Fprintf(os.Stderr, `usage: bbs-ticket path %s --skill S --read
+		fmt.Fprintf(os.Stderr, retarget(`usage: bbs-ticket path %s --skill S --read
 
 Canonical: <TH>/%ss/<skill>.md
 Selectors: --skill S (required)
-Note: %s --write is rejected — use `+"`bbs-ticket set-%s --skill S`"+` instead.
+Note: %s --write is rejected — use `)+"`bbs-ticket set-%s --skill S`"+` instead.
 
 Examples:
   bbs-ticket path %s --skill autoplan --read
   bbs-ticket list %s
 `, kind, kind, kind, kind, kind, kind)
 	case "evidence":
-		fmt.Fprint(os.Stderr, `usage: bbs-ticket path evidence --skill S [--name N] --read|--write
+		fmt.Fprint(os.Stderr, retarget(`usage: bbs-ticket path evidence --skill S [--name N] --read|--write
 
 Canonical: <TH>/evidence/<skill>/<name>
 Selectors: --skill S (required), --name N (required for --write)
@@ -768,9 +768,9 @@ Examples:
   EVD="$(bbs-ticket path evidence --skill quality --name summary.md --write)"
   bbs-ticket path evidence --skill quality --name summary.md --read
   bbs-ticket list evidence --skill quality
-`)
+`))
 	case "sub-ticket":
-		fmt.Fprint(os.Stderr, `usage: bbs-ticket path sub-ticket --seq N --slug S --read|--write
+		fmt.Fprint(os.Stderr, retarget(`usage: bbs-ticket path sub-ticket --seq N --slug S --read|--write
 
 Canonical: <TH>/sub-tickets/<NNN>-<slug>.md
 Selectors: --seq N (numeric), --slug S
@@ -779,8 +779,8 @@ Examples:
   ST="$(bbs-ticket path sub-ticket --seq 1 --slug user-flow --write)"
   bbs-ticket path sub-ticket --seq 1 --slug user-flow --read
   bbs-ticket list sub-ticket
-`)
+`))
 	default:
-		fmt.Fprintf(os.Stderr, "bbs-ticket path: %s: unknown kind (try: bbs-ticket path)\n", kind)
+		fmt.Fprintf(os.Stderr, retarget("bbs-ticket path: %s: unknown kind (try: bbs-ticket path)\n"), kind)
 	}
 }

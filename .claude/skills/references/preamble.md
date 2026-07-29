@@ -49,66 +49,30 @@ _SKILL_NAME="SKILL_NAME"          # set before running
 _SESSION_ID="$$-$(date +%s)"
 _TEL_START=$(date +%s)
 
-# ── Bin resolver ─────────────────────────────────────────────────
-# BBS_<NAME>_BIN resolves once here: home shim (~/.claude/bbs-*) first,
-# repo copy (~/.claude/skills/babysit/bin/bbs-*) as plugin fallback, then the
-# `bbs` multicall binary when both compat symlinks dangle.
-_bbs_resolve() { # $1 = bbs-<sub>
-  local shim="$HOME/.claude/$1" repo="$HOME/.claude/skills/babysit/bin/$1"
-  if [ -x "$shim" ]; then echo "$shim"; return; fi
-  if [ -x "$repo" ]; then echo "$repo"; return; fi
-  # Both compat paths dangle — typically a bin/bbs-<sub> symlink → the
-  # gitignored bin/bbs on a checkout where nothing built the binary yet. Fall
-  # back to the `bbs` multicall, but only once it actually serves <sub>:
-  # `bbs <sub>` on a build lacking that subcommand exits 1 *silently*
-  # (internal/cmd/root.go sets SilenceErrors) — byte-identical to a legit
-  # exit 1 — so the only honest test that <sub> is served is `bbs <sub> --help`
-  # (exit 0). (`bbs help <sub>` is NOT usable: cobra exits 0 for unknown topics.)
-  # Look in the two absolute install locations, then the first `bbs` on PATH.
-  local sub="${1#bbs-}" cand="" c link p d
-  for c in "$HOME/.claude/bbs" "$HOME/.claude/skills/babysit/bin/bbs"; do
-    [ -x "$c" ] && "$c" "$sub" --help >/dev/null 2>&1 && { cand="$c"; break; }
-  done
-  # PATH scan by hand: this block also runs under zsh, where unquoted $PATH does
-  # not word-split and `command -v` reports only *hashed* externals inside a
-  # function — so peel dirs with POSIX ${p%%:*} to stay bash/zsh-identical.
-  p=$PATH
-  while [ -z "$cand" ] && [ -n "$p" ]; do
-    d=${p%%:*}; case "$p" in *:*) p=${p#*:} ;; *) p="" ;; esac
-    [ -n "$d" ] && [ -x "$d/bbs" ] && "$d/bbs" "$sub" --help >/dev/null 2>&1 && cand="$d/bbs"
-  done
-  # Every call site consumes "$BBS_*_BIN" as a single quoted word, so a two-word
-  # `bbs <sub>` value would break them all. Hand back a bbs-<sub>-named symlink
-  # to the multicall instead: argv[0]-basename dispatch (cmd/bbs/main.go) routes
-  # it to <sub> with no change at any call site.
-  if [ -n "$cand" ]; then
-    link="$HOME/.babysit/cache/bin/$1"
-    mkdir -p "$HOME/.babysit/cache/bin" 2>/dev/null \
-      && ln -sf "$cand" "$link" 2>/dev/null \
-      && [ -x "$link" ] && { echo "$link"; return; }
-  fi
-  echo "$1"   # honest degraded state — no bbs multicall serves <sub> either
-}
-BBS_SLUG_BIN=$(_bbs_resolve bbs-slug)
-BBS_TICKET_BIN=$(_bbs_resolve bbs-ticket)
-BBS_AUTOPILOT_BIN=$(_bbs_resolve bbs-autopilot)
-BBS_CONFIG_BIN=$(_bbs_resolve bbs-config)
-BBS_UPDATE_CHECK_BIN=$(_bbs_resolve bbs-update-check)
-BBS_UPGRADE_BIN=$(_bbs_resolve bbs-upgrade)
-BBS_TELEMETRY_LOG_BIN=$(_bbs_resolve bbs-telemetry-log)
-BBS_ENV_BIN=$(_bbs_resolve bbs-env)
-BBS_BUILDER_PROFILE_BIN=$(_bbs_resolve bbs-builder-profile)
-BBS_GLOBAL_DISCOVER_BIN=$(_bbs_resolve bbs-global-discover)
-BBS_LEARNINGS_LOG_BIN=$(_bbs_resolve bbs-learnings-log)
-BBS_LEARNINGS_SEARCH_BIN=$(_bbs_resolve bbs-learnings-search)
-export BBS_SLUG_BIN BBS_TICKET_BIN BBS_AUTOPILOT_BIN BBS_CONFIG_BIN \
-       BBS_UPDATE_CHECK_BIN BBS_UPGRADE_BIN BBS_TELEMETRY_LOG_BIN \
-       BBS_ENV_BIN BBS_BUILDER_PROFILE_BIN \
-       BBS_GLOBAL_DISCOVER_BIN BBS_LEARNINGS_LOG_BIN BBS_LEARNINGS_SEARCH_BIN
+# ── Bin reachability ─────────────────────────────────────────────
+# Install guarantees exactly one thing: the `bbs` multicall binary on PATH
+# (bin/setup-skills links ~/.local/bin/bbs; `brew install bbs` installs it).
+# Skills call it as `bbs <sub>` — never a hyphenated alias, which a brew-only
+# install does not ship (Formula/bbs.rb aliases just two subcommands).
+# Net for shells that don't inherit a login PATH (cron, tmux workers, spawned
+# orchestrators): prepend the absolute install dirs when they exist.
+for _d in "$HOME/.local/bin" "$HOME/.claude" "$HOME/.claude/skills/babysit/bin"; do
+  case ":$PATH:" in *":$_d:"*) ;; *) [ -d "$_d" ] && PATH="$_d:$PATH" ;; esac
+done
+export PATH
+# Capability probe, once. A binary built before a subcommand existed exits 1
+# *silently* (internal/cmd/root.go sets SilenceErrors) — byte-identical to a
+# legit "no ticket" exit 1 — so probe rather than trust. `bbs ticket --help` is
+# the honest test: cobra-backed, exit 0 when served. Probe only this one: the
+# hand-rolled subcommands exit 2 on `--help`, and `bbs upgrade --help` would
+# run a real git pull. (`bbs help <sub>` is NOT usable: cobra exits 0 for
+# unknown topics.)
+bbs ticket --help >/dev/null 2>&1 || echo \
+  "BBS_DEGRADED: no working \`bbs\` on PATH — run ~/.claude/skills/babysit/bin/setup-skills" >&2
 
 # Auto-update check — cache-friendly, silent when up-to-date.
 # Prints UPGRADE_AVAILABLE <old> <new> or JUST_UPGRADED <old> <new> to stderr.
-_UPD=$("${BBS_UPDATE_CHECK_BIN:-$HOME/.claude/bbs-update-check}" 2>/dev/null || true)
+_UPD=$(bbs update-check 2>/dev/null || true)
 [ -n "$_UPD" ] && echo "$_UPD" >&2 || true
 
 # Session tracking — count concurrent babysit sessions, prune stale (>120 min).
@@ -151,7 +115,7 @@ if [ -n "${BABYSIT_SESSION:-}" ]; then
 fi
 
 # Config + repo state.
-_bbs_cfg() { "${BBS_CONFIG_BIN:-$HOME/.claude/bbs-config}" get "$1" 2>/dev/null || true; }
+_bbs_cfg() { bbs config get "$1" 2>/dev/null || true; }
 _PROACTIVE=$(_bbs_cfg proactive); _PROACTIVE=${_PROACTIVE:-true}
 _TEL=$(_bbs_cfg telemetry);       _TEL=${_TEL:-local}
 _BRANCH=$(git branch --show-current 2>/dev/null || echo "unknown")
@@ -162,7 +126,7 @@ _INVOKER="${AGENT_ROLE:-${GT_ROLE:-developer}}"
 # Project scope — slug + ticket re-derived from git remote + branch on every
 # preamble, never from conversation memory. Empty TICKET = branch encodes
 # none (e.g. main) — the skill decides whether that's OK.
-eval "$("${BBS_SLUG_BIN:-$HOME/.claude/bbs-slug}" env 2>/dev/null || true)"
+eval "$(bbs slug env 2>/dev/null || true)"
 SLUG="${SLUG:-unknown}"
 TICKET="${TICKET:-}"
 BABYSIT_PROJECT_HOME="${BABYSIT_PROJECT_HOME:-$HOME/.babysit/projects/$SLUG}"
@@ -183,14 +147,14 @@ echo "SPAWNED: $_SPAWNED"
 # Ticket folder — idempotent. Seeds index.json if missing; no-op otherwise.
 # Layout C (see references/ticket-layout.md) stores all per-ticket state here.
 if [ -n "$TICKET" ]; then
-  "${BBS_TICKET_BIN:-$HOME/.claude/bbs-ticket}" init 2>/dev/null || true
+  bbs ticket init 2>/dev/null || true
 fi
 
 # Context Recovery — print latest checkpoint + recent timeline for this
 # ticket, so a cold agent knows where the prior one left off. Silent when
 # no ticket.
 if [ -n "$TICKET" ]; then
-  "${BBS_AUTOPILOT_BIN:-$HOME/.claude/bbs-autopilot}" recover 2>/dev/null || true
+  bbs autopilot recover 2>/dev/null || true
 fi
 
 # Record skill start as JSONL (local-only, unless telemetry=off).
@@ -215,9 +179,9 @@ Replace `SKILL_NAME` with the skill's `name:` from frontmatter.
    re-derived from it every wake-up; conversation memory is never trusted.
 2. **Checkpoint cross-check** — `checkpoint.json` records `branch`; if it
    doesn't match the current branch, stop and report (block below).
-3. **Timeline audit** — `bbs-autopilot` appends step boundaries to
+3. **Timeline audit** — `bbs autopilot` appends step boundaries to
    `timeline.jsonl`.
-4. **Ticket system is the oracle** — `bbs-ticket get status` is ground truth
+4. **Ticket system is the oracle** — `bbs ticket get status` is ground truth
    for whether the ticket exists / is open.
 Divergence (layers 1↔2 disagree):
 ```
@@ -226,7 +190,7 @@ VERDICT: —
 SUMMARY: Branch/checkpoint divergence — cannot safely resume.
 REASON: branch='<current>' but checkpoint.branch='<recorded>' for ticket <ticket>
 ATTEMPTED: Derived ticket from branch, read checkpoint.json, compared branch fields
-RECOMMENDATION: Human triages — checkout the recorded branch or clear state with `bbs-autopilot clear <ticket>`
+RECOMMENDATION: Human triages — checkout the recorded branch or clear state with `bbs autopilot clear <ticket>`
 ```
 **No-ticket scope** — empty `TICKET` is a valid shape: skip ticket-state
 writes with a one-line note, take requirement/plan from conversation, do the
@@ -235,7 +199,7 @@ a skill precondition. Never invent a ticket id; to attach identity without a
 checkout, `export BABYSIT_TICKET=<id>` (wins the resolve ladder).
 ### Handling update-check output
 - `UPGRADE_AVAILABLE <old> <new>` — mention once ("babysit upgrade available
-  — run `bbs-upgrade`") and continue; never auto-run or block.
+  — run `bbs upgrade`") and continue; never auto-run or block.
 - `JUST_UPGRADED <from> <to>` — emit this exact line at top of response:
   > babysit upgraded v\<from\> → v\<to\>. Run `/plugin marketplace update babysit` then `/reload-plugins` to pick up the new skills (the shell upgrade can't do this for you).
 ## Telemetry (run last)

@@ -46,7 +46,7 @@ func runTelemetryLog(args []string) error {
 	// tested). Same documented stderr caveat as BUG 2.
 	dirs, err := telemetry.ResolveDirs(os.Args[0])
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "bbs-telemetry-log: %v\n", err)
+		fmt.Fprintf(os.Stderr, retarget("bbs-telemetry-log: %v\n"), err)
 		return errSilent
 	}
 
@@ -71,7 +71,7 @@ func runTelemetryLog(args []string) error {
 	// text is only guaranteed non-empty.
 	take := func(rest []string) (string, []string, error) {
 		if len(rest) < 2 {
-			fmt.Fprintln(os.Stderr, "bbs-telemetry-log: $2: unbound variable")
+			fmt.Fprintln(os.Stderr, retarget("bbs-telemetry-log: $2: unbound variable"))
 			return "", nil, errSilent
 		}
 		return rest[1], rest[2:], nil

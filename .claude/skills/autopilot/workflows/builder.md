@@ -24,7 +24,7 @@ If none match and there is no ticket/requirement, stop with `NEEDS_CONTEXT`.
 > produces: verdict:builder + qa:checked + git:branch-ready
 1. Ensure ticket, branch, and checkpoint exist; record the mode in the
    checkpoint.
-   **Bootstrap gate:** `bbs-autopilot probe` reporting
+   **Bootstrap gate:** `bbs autopilot probe` reporting
    `state_repo_configured=0` — no `.babysit/git-flow.yaml` at the git
    toplevel — is not a stop: branch policy is mechanical, and a
    non-technical invoker can't answer it. Seed the documented defaults and
@@ -55,15 +55,15 @@ If none match and there is no ticket/requirement, stop with `NEEDS_CONTEXT`.
 4. **orchestrate mode:** run each child in manifest order via `builder`,
    checkpoint each merged child, then merge completed children into the parent.
 5. Run `review-pr --fix` (applies fixes to the working tree) and persist the
-   verdict with `bbs-ticket set-verdict --skill review-pr` — the push gate
+   verdict with `bbs ticket set-verdict --skill review-pr` — the push gate
    reads it. (Skip in verify mode.)
 6. Run `qa` against the requirement's acceptance criteria, the plan's
    `**Verify:**` line, and the implement handoff — not just the diff. QA needs
    the change on the served surface first: in-place checkouts QA directly; a
-   worktree change lands via `bbs-ticket merge-base` before QA. When other
+   worktree change lands via `bbs ticket merge-base` before QA. When other
    tickets are in flight on the same repo (worktree mode, or `qa-lease
    status` isn't FREE), hold the surface for the whole QA session:
-   `bbs-ticket qa-lease acquire` → `bbs-ticket switch $TICKET` (surface =
+   `bbs ticket qa-lease acquire` → `bbs ticket switch $TICKET` (surface =
    base + exactly this ticket) → QA → `qa-lease release`. If
    `merge-base` BLOCKs because a diverted primary isn't on base, QA in the
    worktree itself (it holds the complete change); a merge-conflict BLOCK is
@@ -72,7 +72,7 @@ If none match and there is no ticket/requirement, stop with `NEEDS_CONTEXT`.
    fixes in the worktree yourself, then re-run `merge-base` before
    re-testing. No runnable target → record the blocker and run the strongest
    fallback (`browse` for UI, else a narrow local check). Persist the verdict
-   with `bbs-ticket set-verdict --skill qa`.
+   with `bbs ticket set-verdict --skill qa`.
 7. Commit and push when policy allows.
 8. Write a handoff: mode, branch, changed files, deviations from the plan
    (the implement handoff's `## Deviations`), prototype path when `design-ui`
@@ -83,7 +83,7 @@ If none match and there is no ticket/requirement, stop with `NEEDS_CONTEXT`.
    branch. Write it so a non-technical owner can act: lead with what was
    built and where to see it (URL), and give the next action as a
    copy-paste command — in worktree mode that is
-   `bbs-ticket serve <ticket>` (puts the ticket, and its siblings
+   `bbs ticket serve <ticket>` (puts the ticket, and its siblings
    cross-repo, on the served surface for human browser review; see
    git-flow.md § Attended parallel review), then `create-pr` per repo
    after approval. Confirm clean state first: no debug leftovers,
@@ -112,16 +112,16 @@ land and QA each repo's change against *its own* base, once per repo touched.
 1. Resolve the path (`grep '^RELATED_' .babysit/.env`). Unset path, or
    sibling has no `.babysit/git-flow.yaml` → don't guess: `NEEDS_CONTEXT`
    naming the repo and its slice of the requirement.
-2. `cd` there, `bbs-ticket ensure` (safe-cut gate applies), implement, then
+2. `cd` there, `bbs ticket ensure` (safe-cut gate applies), implement, then
    link both sides:
-   `bbs-ticket set-sibling --role <fe|be|shared> --repo <name> --ticket <id>`.
-3. Before QA, run `bbs-ticket merge-base` from inside the sibling worktree —
+   `bbs ticket set-sibling --role <fe|be|shared> --repo <name> --ticket <id>`.
+3. Before QA, run `bbs ticket merge-base` from inside the sibling worktree —
    skipping it means QA tests a stale base there. Fixes commit in the sibling
    worktree; re-run `merge-base` before re-testing. Leases are per repo: when
    other tickets are in flight, hold a qa-lease in *every* repo you QA on for
    the same session (acquire in the sibling worktree too), and persist that
    repo's result on the sibling ticket
-   (`BBS_TICKET=<sibling> bbs-ticket set-verdict --skill qa`); release all
+   (`BBS_TICKET=<sibling> bbs ticket set-verdict --skill qa`); release all
    leases when QA ends.
 4. The handoff lists every touched repo with its branch.
 **Stop conditions**

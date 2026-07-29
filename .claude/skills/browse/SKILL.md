@@ -21,10 +21,10 @@ export AGENT_BROWSER_SESSION="cc-${CLAUDE_CODE_SESSION_ID:0:8}"
 Every Bash call in this Claude Code session then reuses one window; another Claude Code window gets its own. Refs (`@e<n>`) are per-session: snapshot the session you're about to act on. If parallel subagents each need their own window, give each `export AGENT_BROWSER_NAMESPACE=<agent-id>` on top.
 When the check is done, `agent-browser close` your session. A crashed run leaves its browser behind — on macOS even headless ones keep a Chrome-for-Testing icon in the Dock — so if `agent-browser session list` shows names you don't recognize, `agent-browser close --all` (and per `--namespace <ns>` for anything under `~/.agent-browser/namespaces/`).
 Sessions are isolated browsers, so login state doesn't carry across Claude Code windows by itself. To share one "profile", add `--restore bbs-profile` to `open` (and `close`): every session loads/saves the same cookies+localStorage bundle under `~/.agent-browser/sessions/`, so a login done in one window is there for the next. Don't point concurrent sessions at one `--profile` dir instead — Chromium locks the user-data-dir per instance.
-**Credentials for a sign-in never live in this skill or the transcript.** When a check needs to log in, take them from the project's standard QA env — `bbs-secrets load` exports the gitignored `.babysit/.env` into the shell, and `.babysit/qa.yaml` names which vars hold them (standard: `QA_USER` / `QA_PASS`):
+**Credentials for a sign-in never live in this skill or the transcript.** When a check needs to log in, take them from the project's standard QA env — `bbs secrets load` exports the gitignored `.babysit/.env` into the shell, and `.babysit/qa.yaml` names which vars hold them (standard: `QA_USER` / `QA_PASS`):
 ```bash
-eval "$(bbs-secrets load)"                              # exports .babysit/.env
-eval "$(bbs-qa-config probe --env "$(bbs-qa-config default-env)" 2>/dev/null)"
+eval "$(bbs secrets load)"                              # exports .babysit/.env
+eval "$(bbs qa-config probe --env "$(bbs qa-config default-env)" 2>/dev/null)"
 agent-browser type @e<n> "$(printenv "${QA_ENV_USERNAME_ENV:-QA_USER}")"
 agent-browser type @e<n> "$(printenv "${QA_ENV_PASSWORD_ENV:-QA_PASS}")"
 ```

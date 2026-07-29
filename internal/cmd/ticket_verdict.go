@@ -124,7 +124,7 @@ func verdictStatus(st *ticket.Store, skill string) string {
 // on, and 2 would misreport a crash as a usage error.
 func valueOf(args []string, i int, flag string) string {
 	if i+1 >= len(args) {
-		fmt.Fprintf(os.Stderr, "bbs-ticket: %s requires a value\n", flag)
+		fmt.Fprintf(os.Stderr, retarget("bbs-ticket: %s requires a value\n"), flag)
 		os.Exit(1)
 	}
 	return strings.TrimSuffix(args[i+1], "\n")

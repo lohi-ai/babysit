@@ -43,5 +43,5 @@ or exact string values.
 - Never force-push, destroy data, or send external messages.
 ## Validate
 ```bash
-./bin/bbs-autopilot lint-workflow .claude/skills/autopilot/workflows/<name>.md
+./bin/bbs autopilot lint-workflow .claude/skills/autopilot/workflows/<name>.md
 ```

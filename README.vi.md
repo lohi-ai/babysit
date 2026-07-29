@@ -150,7 +150,7 @@ Wizard viết ra config `.babysit/` nhỏ nhất mà vẫn đủ xài: `git-flow
 | `branch` *(mặc định)* | cắt `feat/<id>_<slug>` ngay tại chỗ khi checkout là base sạch; tự né sang worktree khi không sạch | PR sạch một-ticket với việc phần lớn tuần tự — QA rẻ nhất, server phục vụ thẳng branch của ticket |
 | `worktree` | mỗi ticket có worktree riêng; checkout chính ghim ở base làm bề mặt test dùng chung | repo team/doanh nghiệp: nhiều ticket song song, mỗi cái một PR sạch |
 
-Ở mode `worktree`, QA đưa một ticket lên bề mặt dùng chung bằng `bbs-ticket merge-base` (chạy từ worktree), hoặc nhảy bề mặt qua lại giữa các ticket bằng `bbs-ticket switch <ticket>...` (chạy từ checkout chính — reset về base, rồi merge đúng các ticket được gọi tên). Sau khi các PR merge lên upstream, `bbs-ticket reset-base` kéo base local về lại origin. Cả ba đều từ chối lớn tiếng thay vì làm mất việc. Lớp dành cho người ngồi trên cùng — `board`, `serve`, `/bbs:fix-pr` — nằm ở mục [Làm nhiều ticket song song](#làm-nhiều-ticket-song-song-mode-worktree). Chi tiết: [`references/git-flow.md`](.claude/skills/references/git-flow.md).
+Ở mode `worktree`, QA đưa một ticket lên bề mặt dùng chung bằng `bbs ticket merge-base` (chạy từ worktree), hoặc nhảy bề mặt qua lại giữa các ticket bằng `bbs ticket switch <ticket>...` (chạy từ checkout chính — reset về base, rồi merge đúng các ticket được gọi tên). Sau khi các PR merge lên upstream, `bbs ticket reset-base` kéo base local về lại origin. Cả ba đều từ chối lớn tiếng thay vì làm mất việc. Lớp dành cho người ngồi trên cùng — `board`, `serve`, `/bbs:fix-pr` — nằm ở mục [Làm nhiều ticket song song](#làm-nhiều-ticket-song-song-mode-worktree). Chi tiết: [`references/git-flow.md`](.claude/skills/references/git-flow.md).
 
 #### Solo dev hay team nhỏ: trunk hay worktree?
 
@@ -192,7 +192,7 @@ Autopilot init ticket — requirement, plan, branch — rồi dừng lại và i
 >
 > 👉 Copy the block below and paste it into Claude Code to build it:
 >
-> /goal bs-ab123 is done: qa verdict PASS/FIXED persisted via bbs-ticket set-verdict,
+> /goal bs-ab123 is done: qa verdict PASS/FIXED persisted via bbs ticket set-verdict,
 > review-pr verdict persisted, branch pushed, handoff note written — or a
 > NEEDS_CONTEXT / BLOCKED status block printed verbatim.
 > Work it: /bbs:autopilot builder bs-ab123
@@ -245,25 +245,25 @@ Cả bề mặt chỉ có vậy. Các flag (`--stop-after=`, `--replan`, `--dry-
 Mỗi repo có một checkout nặng chạy dev server; mỗi ticket sống trong worktree nhẹ riêng của nó. Nhờ vậy mọi thứ chạy song song được hết — *trừ* cái khoảnh khắc có người cần thấy một ticket đang chạy thật — và khoảnh khắc đó có đúng ba lệnh:
 
 ```bash
-bbs-ticket board            # toàn bộ ticket trong một cái nhìn: status, verdict, session đang sống, PR, ai đang giữ bề mặt
-bbs-ticket serve bs-ab123   # đưa ticket này lên dev server đang chạy cho người review
-bbs-ticket serve            # để trống: gộp mọi ticket đã xong (qa + review DONE) lên server
+bbs ticket board            # toàn bộ ticket trong một cái nhìn: status, verdict, session đang sống, PR, ai đang giữ bề mặt
+bbs ticket serve bs-ab123   # đưa ticket này lên dev server đang chạy cho người review
+bbs ticket serve            # để trống: gộp mọi ticket đã xong (qa + review DONE) lên server
 /bbs:fix-pr                 # khi reviewer để lại comment: kéo các thread chưa resolve, sửa, trả lời, resolve
 ```
 
 **Vòng lặp review.** Review feature đang chạy thật trong browser là bước bắt-buộc tốn thời gian nhất, nên babysit làm nó thành bước rẻ nhất để lặp lại:
 
-1. Một ticket chạm chặng 3 — dòng `Next:` trong bản handoff đưa tận tay lệnh cần gõ: `bbs-ticket serve bs-ab123`.
+1. Một ticket chạm chặng 3 — dòng `Next:` trong bản handoff đưa tận tay lệnh cần gõ: `bbs ticket serve bs-ab123`.
 2. `serve` giữ bề mặt test trong 4 tiếng (QA của các agent lịch sự xếp hàng sau bạn) và chuyển server đang chạy sang base + đúng ticket này — ở repo này **và** ở repo FE/BE anh em khi ticket trải qua cả hai.
 3. Review trong browser. Nhờ session của ticket sửa; nó commit trong worktree của riêng nó; chạy lại `serve` (reentrant — làm mới thời gian giữ, cắt lại bề mặt) rồi refresh browser. Lặp tới khi ưng.
-4. Ưng rồi → `bbs-ticket serve --release`, rồi `/bbs:create-pr` cho từng repo. Reviewer comment sau đó → `/bbs:fix-pr`.
-5. `bbs-ticket board --pr` chỉ ra các PR đã merge và in đúng các lệnh dọn dẹp (`reset-base`, `set-status done`).
+4. Ưng rồi → `bbs ticket serve --release`, rồi `/bbs:create-pr` cho từng repo. Reviewer comment sau đó → `/bbs:fix-pr`.
+5. `bbs ticket board --pr` chỉ ra các PR đã merge và in đúng các lệnh dọn dẹp (`reset-base`, `set-status done`).
 
 **Một ticket, hai repo** (feature trải cả frontend + backend): `/bbs:setup-project` ghi lại các repo anh em một lần; builder của autopilot tự băng qua — tạo ticket anh em đã liên kết, code và QA cả hai bên — và `serve` bày cả cặp ra trước mặt bạn bằng một lệnh. Trong lúc đó session của các ticket khác vẫn code và review trong worktree riêng của chúng; `board` cho cả nhà thấy ai đang giữ bề mặt và giữ bao lâu nữa. Công thức đầy đủ: [`references/git-flow.md` § Attended parallel review](.claude/skills/references/git-flow.md).
 
 ## Đào sâu hơn
 
-- **Ruột routing & debug** — Parse → Probe → Assign → Dispatch, `bbs-autopilot explain`, `--dry-run`, các lối thoát `--replan` / `--force`: [`.claude/skills/autopilot/SKILL.md`](.claude/skills/autopilot/SKILL.md).
+- **Ruột routing & debug** — Parse → Probe → Assign → Dispatch, `bbs autopilot explain`, `--dry-run`, các lối thoát `--replan` / `--force`: [`.claude/skills/autopilot/SKILL.md`](.claude/skills/autopilot/SKILL.md).
 - **Schema config** — [`.claude/skills/references/git-flow.md`](.claude/skills/references/git-flow.md) và [`docs/qa-config.md`](docs/qa-config.md) để tự viết tay `.babysit/`.
 
 ## Danh mục skill
@@ -292,11 +292,11 @@ Bảng skill đầy đủ (kèm phân loại autonomous-ready / interactive-only
 
 ## CLI đi kèm
 
-`setup-skills` symlink một nắm bin `bbs-*` vào `~/.claude/` — `bbs-autopilot` (bộ chạy), `bbs-slug` (resolver lấy branch làm mỏ neo), cộng các trợ giúp cho env, config, snapshot db, và kiểm tra upgrade. Bảng đầy đủ và mục đích ở [`docs/companion-cli.md`](docs/companion-cli.md). Chạy `<bin> --help` để xem cách dùng bất kỳ cái nào.
+`setup-skills` build binary `bbs`, symlink nó lên `PATH` tại `~/.local/bin/bbs`, và đặt các alias argv0 `bbs-*` vào `~/.claude/` cho các caller cũ. Tất cả là một binary duy nhất, gọi dạng `bbs <sub>` — `bbs autopilot` (bộ chạy), `bbs slug` (resolver lấy branch làm mỏ neo), cộng các trợ giúp cho env, config, snapshot db, và kiểm tra upgrade. Bảng đầy đủ và mục đích ở [`docs/companion-cli.md`](docs/companion-cli.md). Chạy `bbs <sub> --help` để xem cách dùng bất kỳ cái nào.
 
 ## Vận hành
 
-Config ngày-2 (`bbs-config`), telemetry (JSONL đổ vào `~/.babysit/analytics/`, mặc định chỉ ở local), và xử lý upgrade (`bbs-update-check` + `bbs-upgrade`) nằm trong [`docs/operations.md`](docs/operations.md).
+Config ngày-2 (`bbs config`), telemetry (JSONL đổ vào `~/.babysit/analytics/`, mặc định chỉ ở local), và xử lý upgrade (`bbs update-check` + `bbs upgrade`) nằm trong [`docs/operations.md`](docs/operations.md).
 
 **Upgrade.** `cd ~/.claude/skills/babysit && git pull && ./bin/setup-skills`, rồi `/plugin marketplace update babysit` + `/reload-plugins` trong Claude Code.
 

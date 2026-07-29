@@ -1,5 +1,5 @@
 # DESIGN.md template — `babysit-design/v1`
-DESIGN.md lives at the repo root. `bbs-design tokens` reads the YAML
+DESIGN.md lives at the repo root. `bbs design tokens` reads the YAML
 frontmatter; skills and humans read the prose. Reference implementation:
 kiem-lai's DESIGN.md.
 ## Frontmatter (machine-read)

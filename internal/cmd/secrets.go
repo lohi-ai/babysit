@@ -75,7 +75,7 @@ func runSecrets(args []string) error {
 		fmt.Print(secretsHelp)
 		return nil
 	default:
-		fmt.Fprintf(os.Stderr, "bbs-secrets: unknown subcommand: %s\n", sub)
+		fmt.Fprintf(os.Stderr, retarget("bbs-secrets: unknown subcommand: %s\n"), sub)
 		os.Exit(2)
 		return nil
 	}
@@ -142,7 +142,7 @@ loop:
 		switch {
 		case args[0] == "--repo-root":
 			if len(args) < 2 {
-				fmt.Fprintf(os.Stderr, "bbs-secrets %s: --repo-root requires a path\n", name)
+				fmt.Fprintf(os.Stderr, retarget("bbs-secrets %s: --repo-root requires a path\n"), name)
 				os.Exit(2)
 			}
 			repoRoot, args = args[1], args[2:]
@@ -150,18 +150,18 @@ loop:
 			args = args[1:]
 			break loop
 		case strings.HasPrefix(args[0], "-"):
-			fmt.Fprintf(os.Stderr, "bbs-secrets %s: unknown flag: %s\n", name, args[0])
+			fmt.Fprintf(os.Stderr, retarget("bbs-secrets %s: unknown flag: %s\n"), name, args[0])
 			os.Exit(2)
 		default:
 			break loop
 		}
 	}
 	if repoRoot == "" {
-		fmt.Fprintf(os.Stderr, "bbs-secrets %s: --repo-root is required\n", name)
+		fmt.Fprintf(os.Stderr, retarget("bbs-secrets %s: --repo-root is required\n"), name)
 		os.Exit(2)
 	}
 	if fi, err := os.Stat(repoRoot); err != nil || !fi.IsDir() {
-		fmt.Fprintf(os.Stderr, "bbs-secrets %s: not a directory: %s\n", name, repoRoot)
+		fmt.Fprintf(os.Stderr, retarget("bbs-secrets %s: not a directory: %s\n"), name, repoRoot)
 		os.Exit(2)
 	}
 	return repoRoot, args

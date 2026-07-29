@@ -83,11 +83,11 @@ func runCodexCompetitive(args []string) error {
 			globalOnly, args = true, args[1:]
 		case "--help", "-h":
 			// Exits straight away, so it outruns the mutual-exclusion check.
-			fmt.Print(codexCompetitiveUsage)
+			fmt.Print(retarget(codexCompetitiveUsage))
 			return nil
 		default:
 			fmt.Fprintf(os.Stderr, "unknown option: %s\n", args[0])
-			fmt.Fprint(os.Stderr, codexCompetitiveUsage)
+			fmt.Fprint(os.Stderr, retarget(codexCompetitiveUsage))
 			os.Exit(2)
 		}
 	}
@@ -166,7 +166,7 @@ func runCodexCompetitive(args []string) error {
 			fmt.Println("Codex symlinks are current")
 			return nil
 		}
-		fmt.Fprintln(os.Stderr, "Codex symlinks are stale; run bin/bbs-codex-competitive")
+		fmt.Fprintln(os.Stderr, retarget("Codex symlinks are stale; run bin/bbs-codex-competitive"))
 		return errSilent
 	}
 

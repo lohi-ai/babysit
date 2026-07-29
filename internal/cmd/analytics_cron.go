@@ -195,7 +195,7 @@ func runAnalyticsCron(args []string) error {
 	allowedTools := analyticsEnvOr("BBS_ANALYTICS_TOOLS", "Bash Read Glob Grep Skill")
 
 	if _, err := exec.LookPath(claudeBin); err != nil {
-		fmt.Fprintln(os.Stderr, "bbs-analytics-cron: claude CLI not found in PATH")
+		fmt.Fprintln(os.Stderr, retarget("bbs-analytics-cron: claude CLI not found in PATH"))
 		return errSilent
 	}
 

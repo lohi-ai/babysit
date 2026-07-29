@@ -8,7 +8,7 @@ requirements / deny-vs-ask per stage in `pre-tool-gate` if needed.
 
 **Update (2026-05-31, mid-tier):** the three CK artifacts babysit produced
 in-flight but never persisted — `verification`, `risk-gate`, `adversarial` —
-are now typed, validated artifacts (`bbs-ticket set-evidence`/`evidence-status`)
+are now typed, validated artifacts (`bbs ticket set-evidence`/`evidence-status`)
 written by `implement` / `review-pr` and audited by Hook B. The
 hard-stage **gate is unchanged** (still `verdicts/` only). See
 [§ Typed evidence](#typed-evidence-the-mid-tier-gap-close-2026-05-31).
@@ -44,7 +44,7 @@ cannot be talked around.** That's the control mechanism prompts can't be.
 Unlike ClaudeKit's scheme — which mandates 5 *new* JSON artifacts
 (`context-snippets`, `risk-gate`, `verification`, `review-decision`,
 `adversarial-validation`) — babysit **already writes the evidence** through
-`bbs-ticket`:
+`bbs ticket`:
 
 | Artifact | Written by | Holds |
 |----------|-----------|-------|
@@ -52,7 +52,7 @@ Unlike ClaudeKit's scheme — which mandates 5 *new* JSON artifacts
 | `reviews/<skill>.md` | `set-review` | full review body (findings, fixes, score) |
 | `review-log.jsonl` | review-pr | per-commit status, critical count, quality score |
 | `handoffs/<NNN>-<skill>.md` | `add-handoff` | change brief (SUMMARY/FILES/BLAST_RADIUS) |
-| `~/.babysit/analytics/decisions.jsonl` | `bbs-learnings-log decision` | every Taste/Mechanical auto-decision |
+| `~/.babysit/analytics/decisions.jsonl` | `bbs learnings-log decision` | every Taste/Mechanical auto-decision |
 
 So babysit doesn't need new artifacts — it needs a **hook that checks the
 artifacts it already produces** before an irreversible action. That keeps the
@@ -64,9 +64,9 @@ hooks."
 
 Three of ClaudeKit's five — `verification`, `risk-gate`, `adversarial` — were
 work babysit *did* in-flight but never persisted as a structured, checkable
-artifact. These are now written through `bbs-ticket set-evidence --kind
+artifact. These are now written through `bbs ticket set-evidence --kind
 <kind>` (validated on write; canonical `evidence/<kind>/result.json`) and read
-back with `bbs-ticket evidence-status --kind <kind>` → `none|valid|malformed`
+back with `bbs ticket evidence-status --kind <kind>` → `none|valid|malformed`
 — the same categorical, score-free shape as `verdict-status`. Producers:
 
 | Kind | Owner | Required fields |
@@ -112,7 +112,7 @@ The preamble "session-writer hook" is inline bash, not a harness hook.
 
 `${CLAUDE_PLUGIN_ROOT}/bin/hooks/pre-tool-gate`. Matches the irreversible
 commands and checks the ticket's verdict artifacts are present **and** PASS
-before allowing them. Resolves the ticket via `bbs-ticket resolve`; if no ticket
+before allowing them. Resolves the ticket via `bbs ticket resolve`; if no ticket
 resolves (ad-hoc shell), `defer` (don't gate non-workflow work).
 
 | Stage (matched command) | Required artifacts | Allow when |

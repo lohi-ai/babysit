@@ -34,8 +34,8 @@ func actorRole() string {
 // set-branch); mutateLocked wraps it for the common return-error case.
 func acquireOrDie(st *ticket.Store) {
 	if err := st.AcquireLock(); err != nil {
-		fmt.Fprintln(os.Stderr, "bbs-ticket: failed to acquire lock after 5s — stale?")
-		fmt.Fprintf(os.Stderr, "bbs-ticket: remove %s if no writer is active\n", st.LockPath())
+		fmt.Fprintln(os.Stderr, retarget("bbs-ticket: failed to acquire lock after 5s — stale?"))
+		fmt.Fprintf(os.Stderr, retarget("bbs-ticket: remove %s if no writer is active\n"), st.LockPath())
 		os.Exit(1)
 	}
 }

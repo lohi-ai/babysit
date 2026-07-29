@@ -117,7 +117,7 @@ func runLatestHandoff(args []string) {
 	if b, err := os.ReadFile(l); err == nil {
 		name := strings.TrimRight(string(b), "\n")
 		if invalidLatestName(name) {
-			fmt.Fprintf(os.Stderr, "bbs-ticket list handoff: LATEST contains invalid name '%s'\n", name)
+			fmt.Fprintf(os.Stderr, retarget("bbs-ticket list handoff: LATEST contains invalid name '%s'\n"), name)
 			os.Exit(3)
 		}
 		fmt.Printf("%s/handoffs/%s\n", th, name)

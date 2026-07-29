@@ -62,7 +62,7 @@ base checkout instead of the worktree). A skill that only edits the
 working tree is correct in *all* of them — the caller who knows the git
 context applies the git consequence.
 
-Autopilot is the only layer that has that context: it ran `bbs-ticket
+Autopilot is the only layer that has that context: it ran `bbs ticket
 ensure`, so it knows the mode (trunk/branch/worktree), which checkout is
 the worktree vs. the shared test surface, and what `push:` policy allows.
 Putting every mutation there (repo init → branch cut → commit per

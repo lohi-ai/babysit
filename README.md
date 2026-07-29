@@ -132,9 +132,10 @@ Requirements: Claude Code with plugin support, Git.
 
 #### Optional: the standalone `bbs` CLI via Homebrew
 
-The steps above install the full skill pack. If you *also* want the compiled
-`bbs` command on your `PATH` independent of any repo checkout, mac users get it
-from Homebrew:
+The steps above already put `bbs` on your `PATH`: `bin/setup-skills` builds the
+binary and symlinks `~/.local/bin/bbs` → your checkout (add `~/.local/bin` to
+`PATH` if it isn't there — the installer warns when it isn't). If you *also*
+want `bbs` independent of any repo checkout, mac users get it from Homebrew:
 
 ```bash
 brew tap lohi-ai/babysit https://github.com/lohi-ai/babysit
@@ -145,10 +146,12 @@ brew install bbs
 babysit's core bins are now Go — reachable as `bbs <sub>` (e.g. `bbs config`,
 `bbs ticket resolve`): `config`, `env`, `slug`, `ticket`, `update-check`,
 `upgrade`, `learnings-log`, `learnings-search`, `qa-config`, `telemetry-log`,
-`codex-competitive`, `analytics-cron`, `secrets`, `design`, `dashboard`, `autopilot`. The formula also drops `bbs-config` /
-`bbs-env` argv0 aliases. It does **not** install the skill pack — the skills,
+`codex-competitive`, `analytics-cron`, `secrets`, `design`, `dashboard`, `autopilot`.
+The formula also drops two argv0 aliases, `bbs-config` and `bbs-env` — only
+those two, which is why skills always call the space form.
+It does **not** install the skill pack — the skills,
 workflows, and DESIGN.md/CSV data come only from the clone + `bin/setup-skills`
-above. Every bin, `bbs-ticket` included, is now Go: no production bash remains.
+above. Every bin, `ticket` included, is now Go: no production bash remains.
 Linux users use the tarball instead. Full platform
 matrix and the linux path: [docs/install.md](docs/install.md).
 
@@ -172,7 +175,7 @@ The wizard writes the smallest useful `.babysit/` config: `git-flow.yaml` with `
 | `branch` *(default)* | cut `feat/<id>_<slug>` in place when the checkout is a clean base; auto-divert to a worktree when it isn't | clean one-ticket PRs with mostly-serial work — cheapest QA, the server serves the ticket branch directly |
 | `worktree` | every ticket gets its own worktree; the primary checkout stays pinned to base as the shared test surface | team/enterprise repos: parallel tickets, one clean PR each |
 
-In `worktree` mode, QA lands a ticket on the shared surface with `bbs-ticket merge-base` (from the worktree), or hops the surface between tickets with `bbs-ticket switch <ticket>...` (from the primary — resets to base, then merges exactly the named tickets). After PRs merge upstream, `bbs-ticket reset-base` snaps local base back to origin. All three refuse loudly instead of losing work. The human-facing layer on top — `board`, `serve`, `/bbs:fix-pr` — is covered in [Working tickets in parallel](#working-tickets-in-parallel-worktree-mode). Details: [`references/git-flow.md`](.claude/skills/references/git-flow.md).
+In `worktree` mode, QA lands a ticket on the shared surface with `bbs ticket merge-base` (from the worktree), or hops the surface between tickets with `bbs ticket switch <ticket>...` (from the primary — resets to base, then merges exactly the named tickets). After PRs merge upstream, `bbs ticket reset-base` snaps local base back to origin. All three refuse loudly instead of losing work. The human-facing layer on top — `board`, `serve`, `/bbs:fix-pr` — is covered in [Working tickets in parallel](#working-tickets-in-parallel-worktree-mode). Details: [`references/git-flow.md`](.claude/skills/references/git-flow.md).
 
 #### Solo dev or small team: trunk or worktree?
 
@@ -214,7 +217,7 @@ Autopilot inits the ticket — requirement, plan, branch — then stops and prin
 >
 > 👉 Copy the block below and paste it into Claude Code to build it:
 >
-> /goal bs-ab123 is done: qa verdict PASS/FIXED persisted via bbs-ticket set-verdict,
+> /goal bs-ab123 is done: qa verdict PASS/FIXED persisted via bbs ticket set-verdict,
 > review-pr verdict persisted, branch pushed, handoff note written — or a
 > NEEDS_CONTEXT / BLOCKED status block printed verbatim.
 > Work it: /bbs:autopilot builder bs-ab123
@@ -267,25 +270,25 @@ That's the whole surface. Flags (`--stop-after=`, `--replan`, `--dry-run`, `--wo
 One heavy checkout per repo runs the dev server; every ticket lives in its own lightweight worktree. That makes everything parallel *except* the moment someone needs to see a ticket actually running — and that moment gets three commands:
 
 ```bash
-bbs-ticket board            # every ticket at a glance: status, verdicts, live session, PR, who holds the surface
-bbs-ticket serve bs-ab123   # put this ticket on the running dev server for human review
-bbs-ticket serve            # bare: compose every finished ticket (qa + review DONE) on the server
+bbs ticket board            # every ticket at a glance: status, verdicts, live session, PR, who holds the surface
+bbs ticket serve bs-ab123   # put this ticket on the running dev server for human review
+bbs ticket serve            # bare: compose every finished ticket (qa + review DONE) on the server
 /bbs:fix-pr                 # after reviewer comments land: fetch unresolved threads, fix, reply, resolve
 ```
 
 **The review loop.** Reviewing the running feature in the browser is the longest must-do step, so babysit makes it the cheapest to repeat:
 
-1. A ticket reaches pause 3 — its handoff's `Next:` line hands you the exact command: `bbs-ticket serve bs-ab123`.
+1. A ticket reaches pause 3 — its handoff's `Next:` line hands you the exact command: `bbs ticket serve bs-ab123`.
 2. `serve` holds the test surface for 4 hours (agents' QA politely queues behind you) and switches the running server to base + exactly this ticket — in this repo **and** in its FE/BE sibling repo when the ticket spans both.
 3. Review in the browser. Ask the ticket's session for changes; it commits in its own worktree; re-run `serve` (reentrant — refreshes the hold, re-cuts the surface) and refresh the browser. Repeat until happy.
-4. Approved → `bbs-ticket serve --release`, then `/bbs:create-pr` per repo. Reviewer comments later → `/bbs:fix-pr`.
-5. `bbs-ticket board --pr` flags merged PRs and prints the exact cleanup commands (`reset-base`, `set-status done`).
+4. Approved → `bbs ticket serve --release`, then `/bbs:create-pr` per repo. Reviewer comments later → `/bbs:fix-pr`.
+5. `bbs ticket board --pr` flags merged PRs and prints the exact cleanup commands (`reset-base`, `set-status done`).
 
 **One ticket, two repos** (a feature spanning frontend + backend): `/bbs:setup-project` records the sibling repos once; autopilot's builder crosses over on its own — creates the linked sibling ticket, implements and QAs both sides — and `serve` puts the whole pair in front of you with one command. Meanwhile other tickets' sessions keep implementing and reviewing in their own worktrees; `board` shows everyone who holds the surface and for how long. Full recipe: [`references/git-flow.md` § Attended parallel review](.claude/skills/references/git-flow.md).
 
 ## Going deeper
 
-- **Routing internals & debugging** — Parse → Probe → Assign → Dispatch, `bbs-autopilot explain`, `--dry-run`, `--replan` / `--force` escape hatches: [`.claude/skills/autopilot/SKILL.md`](.claude/skills/autopilot/SKILL.md).
+- **Routing internals & debugging** — Parse → Probe → Assign → Dispatch, `bbs autopilot explain`, `--dry-run`, `--replan` / `--force` escape hatches: [`.claude/skills/autopilot/SKILL.md`](.claude/skills/autopilot/SKILL.md).
 - **Config schemas** — [`.claude/skills/references/git-flow.md`](.claude/skills/references/git-flow.md) and [`docs/qa-config.md`](docs/qa-config.md) for hand-authoring `.babysit/`.
 
 ## Skill index
@@ -314,11 +317,11 @@ Full skill table (with autonomous-ready / interactive-only classification) in [`
 
 ## Companion CLI
 
-`setup-skills` symlinks a handful of `bbs-*` bins into `~/.claude/` — `bbs-autopilot` (the runner), `bbs-slug` (branch-as-anchor resolver), plus helpers for env, config, db snapshots, and upgrade checks. Full table and purposes in [`docs/companion-cli.md`](docs/companion-cli.md). Run `<bin> --help` for usage on any of them.
+`setup-skills` builds the `bbs` binary, symlinks it onto your `PATH` at `~/.local/bin/bbs`, and drops the `bbs-*` argv0 aliases into `~/.claude/` for legacy callers. Everything is one binary reached as `bbs <sub>` — `bbs autopilot` (the runner), `bbs slug` (branch-as-anchor resolver), plus helpers for env, config, db snapshots, and upgrade checks. Full table and purposes in [`docs/companion-cli.md`](docs/companion-cli.md). Run `bbs <sub> --help` for usage on any of them.
 
 ## Operations
 
-Day-2 config (`bbs-config`), telemetry (JSONL to `~/.babysit/analytics/`, local-only by default), and upgrade handling (`bbs-update-check` + `bbs-upgrade`) are covered in [`docs/operations.md`](docs/operations.md).
+Day-2 config (`bbs config`), telemetry (JSONL to `~/.babysit/analytics/`, local-only by default), and upgrade handling (`bbs update-check` + `bbs upgrade`) are covered in [`docs/operations.md`](docs/operations.md).
 
 **Upgrade.** `cd ~/.claude/skills/babysit && git pull && ./bin/setup-skills`, then `/plugin marketplace update babysit` + `/reload-plugins` in Claude Code.
 

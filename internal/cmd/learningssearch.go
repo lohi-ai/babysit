@@ -37,7 +37,7 @@ func runLearningsSearch(args []string) error {
 		case args[0] == "--cross-project":
 			crossProject, args = true, args[1:]
 		case len(args[0]) > 0 && args[0][0] == '-':
-			fmt.Fprintf(os.Stderr, "bbs-learnings-search: unknown flag '%s'\n", args[0])
+			fmt.Fprintf(os.Stderr, retarget("bbs-learnings-search: unknown flag '%s'\n"), args[0])
 			os.Exit(2)
 		default: // positional QUERY — last one wins
 			query, args = args[0], args[1:]

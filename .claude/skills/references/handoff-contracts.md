@@ -31,33 +31,33 @@ A verdict is a short fixed-shape string reported next to `STATUS`:
 | `setup-project` | `CONFIGURED` |
 New skills pick a one-line verdict and document it in their own SKILL.md.
 ## CHANGE_BRIEF — the primary file artifact
-One per finished skill, appended via `bbs-ticket` (never write the file
+One per finished skill, appended via `bbs ticket` (never write the file
 directly — the helper claims the sequence number and logs the event):
 ```bash
-eval "$("${BBS_SLUG_BIN:-$HOME/.claude/bbs-slug}" env)"
+eval "$(bbs slug env)"
 cat > /tmp/<skill>-brief.md <<EOF
 SUMMARY: <1–3 sentences: what changed and why>
 FILES: <comma-separated changed files>
 APPROACH: <one-line implementation approach>
 BLAST_RADIUS: <what existing behavior could be affected>
 EOF
-"${BBS_TICKET_BIN:-$HOME/.claude/bbs-ticket}" add-handoff <skill> /tmp/<skill>-brief.md
+bbs ticket add-handoff <skill> /tmp/<skill>-brief.md
 ```
 Single-line fields, no markdown headers (downstream skills grep them). A
 field that doesn't apply gets `none`, not omission.
 ## Evidence paths
 | Path (under the ticket dir) | Contents | Writer |
 |------|----------|--------|
-| `handoffs/<NNN>-<skill>.md` | Append-only change briefs | `bbs-ticket add-handoff` |
-| `verdicts/<skill>.md` | Latest status block per skill | `bbs-ticket set-verdict` |
-| `reviews/<skill>.md` | Latest review per skill | `bbs-ticket set-review` |
-| `plan.md`, `design.md`, `manifest.md` | Ticket-root canonicals | skill + `bbs-ticket set-pointer` |
+| `handoffs/<NNN>-<skill>.md` | Append-only change briefs | `bbs ticket add-handoff` |
+| `verdicts/<skill>.md` | Latest status block per skill | `bbs ticket set-verdict` |
+| `reviews/<skill>.md` | Latest review per skill | `bbs ticket set-review` |
+| `plan.md`, `design.md`, `manifest.md` | Ticket-root canonicals | skill + `bbs ticket set-pointer` |
 | `evidence/*.{png,json}` | Screenshots, structured outputs | skill writes directly |
 | `report.md` | Human-readable summary | skill writes directly |
-Metadata mutations go through `bbs-ticket`. Don't write scratch files inside
+Metadata mutations go through `bbs ticket`. Don't write scratch files inside
 the repo working tree — use the ticket dir; the diff stays clean.
 ### Typed evidence artifacts
-Written through `bbs-ticket set-evidence` (validated; exit 2 on malformed →
+Written through `bbs ticket set-evidence` (validated; exit 2 on malformed →
 retry once, then escalate) and read back categorically — presence +
 structure, never a score, so a model can't self-grade past the gate. The
 hard-stage gate still keys on `verdicts/`
@@ -67,9 +67,9 @@ hard-stage gate still keys on `verdicts/`
 |------|-------------|----------|----------|
 | `verification` | `implement`, `browse`, `investigate` | `result` (`PASS`\|`FAIL`) | `checks:[{cmd,result}]`, `before`, `after` |
 ```bash
-bbs-ticket set-evidence --kind verification \
+bbs ticket set-evidence --kind verification \
   --json '{"result":"PASS","checks":[{"cmd":"eslint changed","result":"pass"}],"before":"3 errs","after":"0"}'
-bbs-ticket evidence-status --kind verification   # → none | valid | malformed
+bbs ticket evidence-status --kind verification   # → none | valid | malformed
 ```
 ## Git conventions
 Orchestrator-specific conventions (ticket IDs, review cards, auto-merge)

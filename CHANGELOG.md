@@ -1,5 +1,55 @@
 # Changelog
 
+## 1.56.0 — 2026-07-29
+
+### Changed
+
+- **Skills call the Go CLI as `bbs <sub>`** — every skill, workflow, and
+  reference now invokes the multicall binary in its space form instead of a
+  hyphenated `bbs-<sub>` alias. Only `bbs-config` and `bbs-env` ship with
+  `brew install bbs`, so alias-form calls were broken for brew-only installs;
+  the space form works on every install shape.
+- **Preamble bootstrap collapsed to one guarantee** — the `_bbs_resolve`
+  helper and its twelve `BBS_*_BIN` exports are gone (no skill body ever read
+  them). In their place the preamble prepends the absolute install dirs to
+  `PATH` and probes once with `bbs ticket --help`, emitting `BBS_DEGRADED` on
+  stderr when no working binary is reachable. Measured ~0.025s per skill
+  invocation against 0.117–0.291s for the old resolver, and 52 lines of shell
+  removed. Probing rather than path-checking is deliberate: `root.go` sets
+  cobra's `SilenceErrors`, so a binary predating a subcommand exits 1 silently,
+  indistinguishable from a legitimate "no ticket" exit.
+- **Help text follows the invocation** — usage and diagnostic strings now
+  render `bbs ticket` when called as `bbs`, and `bbs-ticket` when called
+  through a compat symlink, so help never hands a brew-only user a command
+  that is not on their `PATH`. The symlink path stays byte-identical, which is
+  what keeps the differential harnesses diffing cleanly against the frozen
+  bash oracles in `tests/fixtures/`.
+
+### Added
+
+- **`setup-skills` puts `bbs` on your `PATH`** — the installer now builds the
+  binary and symlinks `~/.local/bin/bbs`, warning when that directory is not on
+  `PATH`. It also removes the pre-Go bun shim left at that path by older
+  installs. Previously `bbs` landed only in `~/.claude/`, which is not a `PATH`
+  directory, so a bare `bbs` in a shell worked only for users who had added it
+  by hand.
+- **`tests/test_preamble_bin_reachability.sh`** — runs the extracted preamble
+  under `env -i` across a bash×zsh matrix covering the three install shapes and
+  two failure modes, including a stale binary that exits 1 silently (a path
+  check alone reports that one healthy). Replaces
+  `test_preamble_bbs_resolve.sh`. Its repo-wide guard fails the build if a
+  skill or doc reintroduces an alias-form call.
+
+### Fixed
+
+- **`--uninstall` left `bbs-analytics-cron` behind** — the bin was in the
+  install list but missing from the uninstall list, so it survived as a
+  dangling symlink.
+- **Docs described commands that never existed** — `docs/operations.md`
+  documented `bbs analytics` and `bbs doctor`, and `setup-skills --help`
+  advertised a doctor step that `--full` never ran. Neither command was ever
+  implemented in Go or bash; the docs now describe what actually exists.
+
 ## 1.55.0 — 2026-07-11
 
 ### Changed

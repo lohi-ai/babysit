@@ -28,7 +28,7 @@ func runSession(args []string) {
 	case "end":
 		sessionEnd(sessionID(args, "end"))
 	default:
-		fmt.Fprintln(os.Stderr, "usage: bbs-ticket session <list|attach|end> [args]")
+		fmt.Fprintln(os.Stderr, retarget("usage: bbs-ticket session <list|attach|end> [args]"))
 		os.Exit(2)
 	}
 	os.Exit(0)
@@ -69,7 +69,7 @@ func sessionAttach(id string) {
 	f := filepath.Join(ticket.SessionsDir(), id+".yaml")
 	if fi, err := os.Stat(f); err != nil || fi.IsDir() {
 		fmt.Fprintf(os.Stderr, "session attach: no session file at %s\n", f)
-		fmt.Fprintln(os.Stderr, "Fix: run 'bbs-ticket session list' to see active sessions.")
+		fmt.Fprintln(os.Stderr, retarget("Fix: run 'bbs-ticket session list' to see active sessions."))
 		os.Exit(1)
 	}
 	fmt.Printf("export BABYSIT_TICKET=%s\n", ticket.SessionField(f, "ticket"))
@@ -85,7 +85,7 @@ func sessionEnd(id string) {
 // escaping SessionsDir().
 func sessionID(args []string, verb string) string {
 	if len(args) == 0 || args[0] == "" {
-		fmt.Fprintf(os.Stderr, "usage: bbs-ticket session %s <session-id>\n", verb)
+		fmt.Fprintf(os.Stderr, retarget("usage: bbs-ticket session %s <session-id>\n"), verb)
 		os.Exit(2)
 	}
 	if !ticket.ValidSessionID(args[0]) {

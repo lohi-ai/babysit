@@ -20,7 +20,7 @@ guardrails.
   the reuse notes in the plan's **Approach**, then grep shared/lib/util dirs and the
   nearest similar feature. A new shared util or abstraction is a plan
   decision, not an ad-hoc call.
-- UI: reuse the design system — components, tokens (`bbs-design tokens`; if
+- UI: reuse the design system — components, tokens (`bbs design tokens`; if
   CLAUDE.md/AGENTS.md declares a design doc at a non-root path, pass
   `--design <path>` and treat it as authoritative), spacing, interaction
   patterns. The prototype behind `pointers.design` is the accepted look —

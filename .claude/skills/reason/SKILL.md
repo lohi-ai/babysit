@@ -9,7 +9,7 @@ and verifies before committing; a smaller model converges on the first
 plausible answer and narrates it fluently. This skill externalizes that
 discipline into five moves. The mechanism is *writing the moves down*:
 reasoning you can't see, you can't check — visible sections in the
-response, or `$(bbs-ticket path)/reasoning.md` when the work spans
+response, or `$(bbs ticket path)/reasoning.md` when the work spans
 sessions (scratch dir if no ticket).
 
 Benchmarked (`tests/reason-bench`): the scaffold's proven wins are

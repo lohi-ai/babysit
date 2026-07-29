@@ -25,7 +25,7 @@ Record the *why* behind a choice in one clause, not a paragraph.
    a touchpoint checklist and pothole map.
 2. Survey what already exists before proposing anything new. For UI/frontend
    work this is mandatory in an enterprise codebase: list existing components
-   (`bbs-design components`) and design tokens (`bbs-design tokens`), and find
+   (`bbs design components`) and design tokens (`bbs design tokens`), and find
    the nearest existing screen/flow that solves a similar problem. For backend
    work, find the established pattern for routes, data access, and errors.
    When the work adds or reshapes a user-facing surface, read the existing
@@ -34,7 +34,7 @@ Record the *why* behind a choice in one clause, not a paragraph.
    spec and prototype are plan inputs.
 3. Classify scope as XS, S, M, or L (rubric:
    `../references/ticket-size-rubric.md`) and persist it:
-   `bbs-ticket set-pointer ticket_size <size>`.
+   `bbs ticket set-pointer ticket_size <size>`.
 4. Write **Approach** as architecture, not a task list (`implement` owns task
    order): data flow, where logic lives, component/API boundaries, schema
    shape — plus the existing components/tokens/patterns reused; flag a

@@ -12,7 +12,7 @@ the checkpoint between design and build. Workers own the code.
 
 Route by the shape of the argument, not a verb:
 
-- bare — attach/resume: `tmux ls` for `bbs-*` sessions + `bbs-ticket board`
+- bare — attach/resume: `tmux ls` for `bbs-*` sessions + `bbs ticket board`
   are the state; reconcile (live workers, verdicts, todo list vs reality),
   re-arm a monitor per live pane, report the board, resume. Disk + tmux are
   sufficient — never rely on conversation memory.
@@ -26,7 +26,7 @@ Route by the shape of the argument, not a verb:
   session, mark the todo (this is the explicit permission the kill rule
   requires; without a terminal STATUS the ticket stays resumable from disk).
 
-**One human-review command: `bbs-ticket serve`.** Bare = every finished
+**One human-review command: `bbs ticket serve`.** Bare = every finished
 ticket (qa + review-pr DONE) composed onto the primary; `serve <t…>` =
 exactly those tickets (sibling repos served automatically); `serve
 --release` = done. Every shape takes a 240-min review lease (a late worker's
@@ -39,7 +39,7 @@ Mid-run steering needs no syntax: plain messages like "tell the search worker
 to use the existing icon" route to the right pane as worker feedback.
 
 ```bash
-MAX_WORKERS="$(bbs-config get parallel_max_workers 2>/dev/null || true)"
+MAX_WORKERS="$(bbs config get parallel_max_workers 2>/dev/null || true)"
 [ -n "$MAX_WORKERS" ] || MAX_WORKERS=3   # workers share CPU + one dev server
 ```
 
@@ -70,7 +70,7 @@ board and must mirror reality:
 
 ## Monitor
 
-One Monitor per pane (persistent). Ground truth is disk (`bbs-ticket board`,
+One Monitor per pane (persistent). Ground truth is disk (`bbs ticket board`,
 `verdict-status`, ticket artifacts) — pane text only tells you *when* to look.
 
 ```bash
@@ -179,18 +179,18 @@ todo list's `activeForm`, never in prose. Silence means on track.
 On a terminal `STATUS:` block: verify on disk, never trust the pane —
 
 ```bash
-BABYSIT_TICKET=<id> bbs-ticket verdict-status --skill qa        # DONE|…
-BABYSIT_TICKET=<id> bbs-ticket verdict-status --skill review-pr
+BABYSIT_TICKET=<id> bbs ticket verdict-status --skill qa        # DONE|…
+BABYSIT_TICKET=<id> bbs ticket verdict-status --skill review-pr
 ```
 
 then report the row (ticket, branch, verdicts, pushed, one-line summary),
 archive the pane (`tmux capture-pane -p -S -2000 > <scratch>/$S.txt`), kill
 the session, and dispatch the next queued assignment. QA across workers
-serializes on `bbs-ticket qa-lease` — workers handle that themselves;
+serializes on `bbs ticket qa-lease` — workers handle that themselves;
 `board` shows who holds it.
 
 Batch done → check `land:` in `.babysit/git-flow.yaml`. `land: local`
-(default under `mode: worktree`) → `bbs-ticket serve` (bare) composes every
+(default under `mode: worktree`) → `bbs ticket serve` (bare) composes every
 finished ticket on the shared dev server for combined review; ticket
 branches stay the source of truth, `reset-base` discards the pile. The
 aggregate NEXT offers `/bbs:create-pr <t>` per ticket or one compose PR

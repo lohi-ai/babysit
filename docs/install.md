@@ -6,8 +6,9 @@ users use the tarball.
 
 > **This is not how you install babysit.** Babysit is a Claude Code skill pack;
 > it installs via `git clone` + `bin/setup-skills` (see the
-> [README Quick start](../README.md#quick-start)). This page is only for getting
-> the compiled `bbs` binary onto your `PATH` on its own.
+> [README Quick start](../README.md#quick-start)) — which builds `bbs` and
+> symlinks it into `~/.local/bin/`. This page is only for getting the compiled
+> `bbs` binary onto your `PATH` on its own, with no checkout behind it.
 
 ## What `bbs` gives you today
 
@@ -17,8 +18,8 @@ core bins are now Go and ship inside this one binary, reachable as `bbs <sub>`:
 
 | You run | Runs | What it does |
 |---------|------|--------------|
-| `bbs config …` / `bbs-config …` | `config` | read/write `~/.babysit/config.yaml` |
-| `bbs env …` / `bbs-env …` | `env` | env resolution for babysit skills (`.env.base` auto-load) |
+| `bbs config …` (alias `bbs-config`) | `config` | read/write `~/.babysit/config.yaml` |
+| `bbs env …` (alias `bbs-env`) | `env` | env resolution for babysit skills (`.env.base` auto-load) |
 | `bbs slug …` | `slug` | derive `<slug>` / `<ticket>` / `<branch>` from git remote + branch |
 | `bbs ticket …` | `ticket` | ticket identity core (`resolve`, `set-verdict`, `verdict-status`, `session`, `board`) — see the strangler note below |
 | `bbs update-check` | `update-check` | print `UPGRADE_AVAILABLE` when a newer release exists |
@@ -46,7 +47,7 @@ without the skill pack.
 but its CSV/DESIGN.md data files live in the skill pack, so a brew-only
 `bbs design suggest` needs `--data <dir>` pointed at a skill-pack checkout.
 
-Every standalone bin is now Go, `bbs-ticket` included — no production bash
+Every subcommand is now Go, `ticket` included — no production bash
 remains. `brew install bbs` still does not, and is not meant to, give you the
 whole toolkit: the skill pack (skills, workflows, DESIGN.md/CSV data) comes
 only from the clone + `bin/setup-skills`.
@@ -67,7 +68,7 @@ Verify:
 
 ```bash
 bbs --help          # babysit CLI
-bbs-config list     # prints ~/.babysit/config.yaml
+bbs config list     # prints ~/.babysit/config.yaml
 ```
 
 Upgrade / uninstall:
@@ -117,8 +118,8 @@ artifact is published.**
 
 ## How the aliases work
 
-`bbs` inspects `argv[0]`: invoked as `bbs-config` it runs the `config`
-subcommand, as `bbs-env` it runs `env`. The Homebrew formula installs the real
+`bbs` inspects `argv[0]`: the alias `bbs-config` runs the `config` subcommand,
+and the alias `bbs-env` runs `env`. The Homebrew formula installs the real
 binary once and adds `bbs-config` / `bbs-env` as symlinks to it — so the
 `bbs-*` names work exactly like the in-repo dev symlinks, without a separate
 build per bin.

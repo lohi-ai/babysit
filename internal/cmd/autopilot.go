@@ -45,7 +45,7 @@ type apState struct {
 
 func runAutopilot(args []string) {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, autopilotUsage)
+		fmt.Fprintln(os.Stderr, retarget(autopilotUsage))
 		os.Exit(2)
 	}
 	sub := args[0]
@@ -312,7 +312,7 @@ func (a *apState) checkpoint(args []string) {
 	}
 
 	if a.ticket != "" && a.ticket != safeTicket(ticket) {
-		fmt.Fprintf(os.Stderr, "bbs-autopilot: WARNING branch ticket '%s' != --ticket '%s'\n", a.ticket, ticket)
+		fmt.Fprintf(os.Stderr, retarget("bbs-autopilot: WARNING branch ticket '%s' != --ticket '%s'\n"), a.ticket, ticket)
 	}
 
 	// --- Checkpoint validation guard ---
@@ -900,7 +900,7 @@ func (a *apState) explain(args []string) {
 	fmt.Println()
 	fmt.Printf("requirement_md:  %d\n", r.requirementMD)
 	fmt.Printf("plan_md:         %d\n", r.planMD)
-	fmt.Printf("plan_approved:   %d  (from bbs-ticket verdict-status --skill plan-draft)\n", r.planApproved)
+	fmt.Printf(retarget("plan_approved:   %d  (from bbs-ticket verdict-status --skill plan-draft)\n"), r.planApproved)
 	fmt.Printf("manifest_md:     %d  (plan-draft DECOMPOSED writes manifest.md)\n", r.manifestMD)
 	originDisp := r.originType
 	if originDisp == "" {
@@ -924,7 +924,7 @@ func (a *apState) explain(args []string) {
 	fmt.Println()
 
 	if !details {
-		fmt.Println("details: run 'bbs-autopilot explain --details' for the workflow prereq matrix")
+		fmt.Println(retarget("details: run 'bbs-autopilot explain --details' for the workflow prereq matrix"))
 		return
 	}
 	a.explainMatrix(r)

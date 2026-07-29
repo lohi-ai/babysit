@@ -8,8 +8,8 @@ with a prototype the human can open.
 ## Flow
 1. **Context.** Read the request and requirement (ticket `pointers.*`, else
    conversation). The landing doc's declared design doc is authoritative —
-   pass a non-root path via `bbs-design tokens --design <path>`. Then
-   `bbs-design components --root <fe-root>` and the nearest existing screen
+   pass a non-root path via `bbs design tokens --design <path>`. Then
+   `bbs design components --root <fe-root>` and the nearest existing screen
    that solves a similar problem. Designing **into an existing screen** — a
    new section, tab, or field group on a page that already exists — makes
    that page the primary design source: read the code that renders it, open
@@ -20,12 +20,12 @@ with a prototype the human can open.
    `babysit-design/v1` shape (`references/design-md-template.md`), then
    continue with it as the master:
    - **Existing product:** derive it from what ships — extract tokens from
-     the live styles, inventory components (`bbs-design components`), codify
+     the live styles, inventory components (`bbs design components`), codify
      the de facto reuse rules. No rebrand.
    - **New project (no UI yet):** brand and style are the human's call — a
      User Challenge. Gather product type, audience, mood/style keywords, and
      any brand color via the mode's escalation surface, draft with
-     `bbs-design suggest --product "<type>"` (product types in
+     `bbs design suggest --product "<type>"` (product types in
      `data/products.csv`), write DESIGN.md, then prototype against it.
    Record how the file was authored as the first Decisions Log row.
 3. **Spec.** User, primary job, entry point; layout, controls, responsive
@@ -40,7 +40,7 @@ with a prototype the human can open.
      file (inline CSS, no external assets) at `tickets/<ticket>/prototype.html`
      when a ticket resolves, else in the working directory. **Token-skinned,
      not free-form:** inline the project's real tokens (colors, radii,
-     spacing, type scale from DESIGN.md / `bbs-design tokens`) as CSS
+     spacing, type scale from DESIGN.md / `bbs design tokens`) as CSS
      variables and imitate inventory components, copying their actual styles
      from the nearest real screen — the mock must look like the product,
      because `implement` builds to it as the accepted look. Free-form styling
@@ -51,7 +51,7 @@ with a prototype the human can open.
    like it was always there.
    Show the primary state plus the empty and error variants on the same
    surface. Real copy, never lorem ipsum.
-5. **Check.** Run `bbs-design ux-check --category accessibility` always, plus
+5. **Check.** Run `bbs design ux-check --category accessibility` always, plus
    the categories the surface touches (forms, navigation, charts, …), and fix
    violations in the prototype. Verify it actually renders — load the dev
    route or open the HTML (use `browse` when available). The prototype stays a
@@ -60,7 +60,7 @@ with a prototype the human can open.
    included) without sending the mock — which clones the project's real tokens
    and screens — to an external service.
 6. **Handoff.** When a ticket resolves, write the spec to `design.md` and
-   `bbs-ticket set-pointer design <path>`; otherwise emit it inline. State
+   `bbs ticket set-pointer design <path>`; otherwise emit it inline. State
    the prototype path and the one command/URL to view it.
 ## Rules
 - Prototype-first: a text-only spec for a user-facing surface is not done —
