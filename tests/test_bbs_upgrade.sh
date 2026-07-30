@@ -8,6 +8,9 @@
 # identical environment and diffs all three channels — so any drift from the
 # original is a failure, not a judgement call. Same shape as test_bbs_env.sh.
 #
+# One case is exempt: `--help`/`-h` is a deliberate divergence (the bash upgraded
+# anyway) and is asserted against the Go side alone. See the marked block below.
+#
 # Both implementations are staged into their own throwaway project root (bin/ +
 # VERSION + a setup-skills stub) so BABYSIT_DIR resolves the same way for each.
 # The git cases clone ONE prepared remote twice: independently *built* repos
@@ -276,9 +279,24 @@ new_case 0; prep_clones "1.0.0\n" "2.0.0\n"
 cmp_run --snooze-typo junk
 report "upgrade-unknown-args-fall-through-to-upgrade"
 
+# ── Deliberate divergence from the oracle ──────────────────────────────
+# The bash treated --help as junk and upgraded anyway. The port intercepts it:
+# --help is the one flag whose entire purpose is "tell me what this does
+# without doing it", and here doing it means pulling and relinking. This case
+# is therefore asserted against the Go side alone, not diffed against bash.
 new_case 0; prep_clones "1.0.0\n" "2.0.0\n"
-cmp_run --help
-report "upgrade-help-is-not-a-flag-and-upgrades"
+for flag in --help -h; do
+  CMP_MSG=""
+  ( cd "$BD" && env -i PATH="$RUNPATH" HOME="$HOME_DIR" BABYSIT_DIR="$BD" BABYSIT_STATE_DIR="$S2" \
+      "$BD/bin/bbs-upgrade" "$flag" >"$T/g.out" 2>"$T/g.err" ); grc=$?
+  [ "$grc" = 0 ] || CMP_MSG="exit=$grc want 0;"
+  grep -q '^Usage:' "$T/g.out" || CMP_MSG="$CMP_MSG no-usage-on-stdout[$(head -1 "$T/g.out")];"
+  [ -s "$T/g.err" ] && CMP_MSG="$CMP_MSG stderr[$(head -1 "$T/g.err")];"
+  # The upgrade must not have run: VERSION still pre-pull, no marker written.
+  [ "$(cat "$BD/VERSION")" = "1.0.0" ] || CMP_MSG="$CMP_MSG pulled[VERSION=$(cat "$BD/VERSION")];"
+  [ -f "$S2/just-upgraded-from" ] && CMP_MSG="$CMP_MSG marker-written;"
+  report "upgrade-$flag-prints-usage-and-does-not-upgrade"
+done
 
 # ── Summary ────────────────────────────────────────────────────────────
 echo ""

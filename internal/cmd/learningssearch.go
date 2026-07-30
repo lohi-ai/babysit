@@ -14,7 +14,7 @@ import (
 // the contract, and search must never fail the caller.
 func newLearningsSearchCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:                "learnings-search",
+		Use:                "learnings-search [--limit N] [--cross-project] [QUERY]",
 		Short:              "query the decisions.jsonl audit trail",
 		DisableFlagParsing: true,
 		RunE: func(_ *cobra.Command, args []string) error {

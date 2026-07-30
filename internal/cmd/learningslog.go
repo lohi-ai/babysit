@@ -16,7 +16,7 @@ const learningsLogUsage = "usage: bbs-learnings-log decision --skill S --type T 
 // never fails the caller — are the contract.
 func newLearningsLogCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:                "learnings-log",
+		Use:                "learnings-log decision --skill S --type T --choice C [--rationale R] [--ticket T] [--workflow W] [--state JSON]",
 		Short:              "append a decision/learning event to the analytics audit trail",
 		DisableFlagParsing: true,
 		RunE: func(_ *cobra.Command, args []string) error {

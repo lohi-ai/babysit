@@ -22,10 +22,12 @@ builds:
     binary: bbs
     env:
       - CGO_ENABLED=0
-    # No version is injected: `bbs` exposes no version symbol (wiring one needs
-    # internal/cmd/root.go, an intentional off-limits union-conflict hotspot).
+    # The tag drives `bbs --version`. Release archives ship without a checkout,
+    # so the VERSION-file fallback in internal/cmd cannot resolve there and this
+    # injection is the only source; a plain `go build` leaves it empty on
+    # purpose and reads VERSION from the clone instead.
     ldflags:
-      - -s -w
+      - -s -w -X github.com/reallongnguyen/babysit/internal/cmd.version={{.Version}}
     goos:
       - darwin
       - linux

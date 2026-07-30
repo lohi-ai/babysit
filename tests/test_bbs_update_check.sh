@@ -37,6 +37,10 @@
 # Neither is exercised below: the oracle's own answer is locale- or UB-dependent,
 # so there is nothing stable to diff against.
 #
+# `--help`/`-h` is a further deliberate divergence: the bash ran the check (and
+# wrote the cache) for a flag whose whole purpose is to not do that. The port
+# prints usage instead; the chelp cases assert the Go side alone.
+#
 # The $0 bug (reference:15 derives BABYSIT_DIR from `dirname "$0"` with no
 # readlink -f, unlike bin/bbs-env) IS now a deliberate divergence — the one
 # place the port stops matching the oracle. The bash never resolved the symlink,
@@ -367,8 +371,30 @@ c "--force busts fresh cache"   "$FRESH_UTD" newer --force
 c "--force busts snooze"        "_setup(){ $SN_BASE printf \"9.9.9 1 \$(( \$NOW - 60 ))\n\" > \"\$1/state/update-snoozed\"; }" same --force
 c "non-force arg ignored"       "$FRESH_UTD" newer frobnicate
 c "--force only honored as \$1" "$FRESH_UTD" newer foo --force
-c "--help is not special"       "$FRESH_UTD" newer --help
-c "-h is not special"           "$FRESH_UTD" newer -h
+# Deliberate divergence (see the header): the bash treated --help as junk and
+# ran the check, mutating the cache. The port intercepts it and prints usage.
+# Go-side only — the oracle is not a valid answer here. The state snapshot is
+# compared across the run, so "printed usage" and "touched nothing" are both
+# asserted rather than assumed.
+chelp() {
+  local flag="$1" B out rc msg="" before after
+  B="$T/h.$$.$RANDOM"
+  mkdir -p "$B/dir/bin" "$B/state" "$B/home"
+  ln -sf "$REPO/bin/bbs-config" "$B/dir/bin/bbs-config" 2>/dev/null
+  eval "$FRESH_UTD"; _setup "$B"
+  before="$(snapshot "$B/state")"
+  out=$(env HOME="$B/home" BABYSIT_DIR="$B/dir" BABYSIT_STATE_DIR="$B/state" \
+         BABYSIT_REMOTE_URL="$BASE/newer/VERSION" "$BIN" update-check "$flag" 2>"$T/herr"); rc=$?
+  after="$(snapshot "$B/state")"
+  [ "$rc" = 0 ] || msg="rc=$rc want 0;"
+  case "$out" in *"Usage:"*) ;; *) msg="$msg no-usage[$out];" ;; esac
+  [ -s "$T/herr" ] && msg="$msg stderr[$(head -1 "$T/herr")];"
+  [ "$before" = "$after" ] || msg="$msg state-changed;"
+  if [ -z "$msg" ]; then ok "$flag prints usage, runs no check"; else fail "$flag prints usage, runs no check" "$msg"; fi
+  rm -rf "$B"
+}
+chelp --help
+chelp -h
 c "unknown flag ignored"        "$FRESH_UTD" newer --nope
 
 # ─── Invocation shape: `bbs update-check` subcommand == compat symlink ───────
