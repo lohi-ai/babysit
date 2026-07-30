@@ -78,7 +78,14 @@ with both corpses as evidence (delivery per
 [preamble.md](../references/preamble.md#one-mode-two-escalation-channels)).
 ### 5. Verify
 Define the check *before* declaring done — a command, test, or browser step
-that would fail if you're wrong — then run it. Re-read Frame last: does the
+that would fail if you're wrong — then run it. Check, don't attest: the
+check must be *independent* of the reasoning that produced the answer
+(run the command, re-derive by a second method, trace a fresh input) —
+re-reading your own conclusion and calling it verified is the move that
+mints false confidence (reason-bench v2: a structured Verify pass
+self-certified a mechanism that didn't exist). If the check can't
+actually run here, write `UNVERIFIED: <what check is needed>` instead of
+claiming it. Re-read Frame last: does the
 answer meet every success criterion, or did the work drift to a
 subproblem? For enumeration-shaped deliverables the last check is breadth:
 sweep the spec's risk nouns (dates, money, timezones, concurrency, retries,
@@ -134,7 +141,9 @@ narrate, any miss:
 - Enumeration-shaped? Confirm the case list is *wider* than a
   straight-ahead answer would be, not narrower — trace crowding out cases
   is this scaffold's known failure mode.
-- Was the Verify check defined before the answer was final, and run?
+- Was the Verify check defined before the answer was final, and run —
+  independently, not by re-asserting the conclusion? Anything unrunnable
+  marked `UNVERIFIED`, not checked off?
 - Does the answer meet Frame's criteria — the ones written, not remembered?
 Then the artifact the task asked for, followed by:
 ```text
