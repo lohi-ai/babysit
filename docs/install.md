@@ -52,7 +52,10 @@ remains. `brew install bbs` still does not, and is not meant to, give you the
 whole toolkit: the skill pack (skills, workflows, DESIGN.md/CSV data) comes
 only from the clone + `bin/setup-skills`.
 
-There is no `bbs --version` yet.
+`bbs --version` (or `-v`) prints the version. A release binary reports the tag
+it was built from, injected at build time; a clone install has no injected value
+and reads `VERSION` from the checkout instead, so it stays accurate after a
+`git pull` without a rebuild. `unknown` means neither source was available.
 
 ## macOS — Homebrew (primary)
 
