@@ -28,8 +28,8 @@ status prints.
    named one wins; else route by the shape of the work; ambiguous or ordinary
    production work → `builder`. Several *independent* requirements in one
    invocation → don't batch here: autopilot runs one ticket end-to-end;
-   parallel dispatch belongs to the `foreman` skill (one tmux worker per
-   ticket, each running autopilot). `NEEDS_CONTEXT` only when there is no ticket,
+   parallel dispatch belongs to the `foreman` skill (one visible worker per
+   ticket — cmux workspace or tmux session — each running autopilot). `NEEDS_CONTEXT` only when there is no ticket,
    requirement, plan, manifest, or branch work at all *and* no archetype was
    named — a named archetype is direction enough to proceed.
 4. Seed the plan when the routed mode needs one (build mode, size above XS):

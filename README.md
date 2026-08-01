@@ -9,7 +9,7 @@ English | [Tiếng Việt](README.vi.md)
 /bbs:foreman rebuild the novel request flow
 ```
 
-**`foreman` is the primary flow**: one visible tmux worker per request (each running autopilot end-to-end — plan, code, review, QA, push), a design review before any code is written, and every finished ticket merged onto your local base so you review the whole batch running in one browser — then you create the PRs.
+**`foreman` is the primary flow**: one visible worker per request — its own cmux workspace in the sidebar, or a tmux session when cmux isn't installed — (each running autopilot end-to-end — plan, code, review, QA, push), a design review before any code is written, and every finished ticket merged onto your local base so you review the whole batch running in one browser — then you create the PRs.
 
 For a **single ticket**, drive autopilot directly (this is also exactly what each worker runs):
 
@@ -48,7 +48,7 @@ Step by step:
 **Add as you need it:**
 
 - **`/bbs:review-pr`** (a.k.a. `/code-review`) — a gate before merge, since there's no second reviewer on a small team. Your safety net.
-- **`/bbs:foreman`** — the parallel-batch flow this README leads with: one visible tmux worker per ticket, several independent tickets at once. Reach for it when you want that; overkill for solo, serial work.
+- **`/bbs:foreman`** — the parallel-batch flow this README leads with: one visible worker per ticket (a cmux workspace, else a tmux session), several independent tickets at once. Reach for it when you want that; overkill for solo, serial work.
 
 ## Why it works
 
@@ -197,7 +197,7 @@ That second case is exactly what **`/bbs:foreman`** turns on. Hand it a few requ
 /bbs:foreman                                   # attach/resume: reconcile live workers + board
 ```
 
-Foreman spawns a visible tmux worker per ticket (`tmux attach -t <session>` to watch or take over any of them), monitors the panes, and owns the checkpoint between design and build: when a worker stops at its plan/prototype handoff, foreman reviews the design, gives feedback, and either greenlights the build or escalates to you when your voice could change the outcome. It answers workers' mechanical questions itself, relays the ones that need you, verifies every QA/review verdict on disk, and — with `land: local` (the default in worktree mode) — merges all finished tickets onto your local base so you review the combined product on the dev server before deciding: per-ticket PRs or one compose PR.
+Foreman spawns a visible worker per ticket — a cmux workspace you click in the sidebar to watch or take over, or a tmux session (`tmux attach -t <session>`) when cmux isn't installed — monitors the panes, and owns the checkpoint between design and build: when a worker stops at its plan/prototype handoff, foreman reviews the design, gives feedback, and either greenlights the build or escalates to you when your voice could change the outcome. It answers workers' mechanical questions itself, relays the ones that need you, verifies every QA/review verdict on disk, and — with `land: local` (the default in worktree mode) — merges all finished tickets onto your local base so you review the combined product on the dev server before deciding: per-ticket PRs or one compose PR.
 
 **Secondary — `autopilot`, the single-ticket flow** (also what every foreman worker runs):
 

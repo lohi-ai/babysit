@@ -9,7 +9,7 @@
 /bbs:foreman rebuild the novel request flow
 ```
 
-**`foreman` là luồng chính**: mỗi yêu cầu một worker tmux nhìn thấy được (mỗi worker chạy autopilot trọn gói — plan, code, review, QA, push), design được duyệt trước khi viết dòng code nào, và mọi ticket xong đều được merge lên base local để bạn review cả lô đang chạy trong một trình duyệt — rồi mới tạo PR.
+**`foreman` là luồng chính**: mỗi yêu cầu một worker nhìn thấy được, nằm trong workspace cmux riêng ở sidebar (hoặc session tmux nếu không có cmux) (mỗi worker chạy autopilot trọn gói — plan, code, review, QA, push), design được duyệt trước khi viết dòng code nào, và mọi ticket xong đều được merge lên base local để bạn review cả lô đang chạy trong một trình duyệt — rồi mới tạo PR.
 
 Với **một ticket lẻ**, gọi thẳng autopilot (cũng chính là thứ mỗi worker chạy):
 
@@ -48,7 +48,7 @@ Từng bước:
 **Thêm khi cần:**
 
 - **`/bbs:review-pr`** (tức `/code-review`) — một chốt trước khi merge, vì team nhỏ không có người review thứ hai. Đây là lưới an toàn của bạn.
-- **`/bbs:foreman`** — luồng chạy-nhiều-song-song mà đầu README này dẫn dắt: một worker tmux hiện hình cho mỗi ticket, nhiều ticket độc lập cùng lúc. Dùng khi bạn muốn thế; thừa thãi với việc solo, tuần tự.
+- **`/bbs:foreman`** — luồng chạy-nhiều-song-song mà đầu README này dẫn dắt: một worker hiện hình cho mỗi ticket (workspace cmux, không thì session tmux), nhiều ticket độc lập cùng lúc. Dùng khi bạn muốn thế; thừa thãi với việc solo, tuần tự.
 
 ## Vì sao nó chạy được
 
@@ -172,7 +172,7 @@ Trường hợp thứ hai chính là thứ **`/bbs:foreman`** bật lên. Đưa 
 /bbs:foreman                               # attach/resume: điểm danh worker đang sống + board
 ```
 
-Foreman mở một worker tmux cho mỗi ticket (`tmux attach -t <session>` để xem hoặc tự lái bất kỳ worker nào), theo dõi các pane, và giữ chốt chặn giữa design và build: khi một worker dừng ở bản bàn giao plan/prototype, foreman review design, góp ý, rồi hoặc bật đèn xanh cho build hoặc hỏi bạn khi tiếng nói của bạn có thể đổi hướng kết quả. Nó tự trả lời các câu hỏi máy móc của worker, chuyển cho bạn những câu cần bạn, kiểm chứng mọi verdict QA/review trên đĩa, và — với `land: local` (mặc định ở mode worktree) — merge hết các ticket xong lên base local để bạn review sản phẩm gộp trên dev server trước khi quyết: PR từng ticket hay một compose PR.
+Foreman mở một worker cho mỗi ticket — một workspace cmux bạn bấm ở sidebar để xem hoặc tự lái, hoặc một session tmux (`tmux attach -t <session>`) khi không có cmux — theo dõi các pane, và giữ chốt chặn giữa design và build: khi một worker dừng ở bản bàn giao plan/prototype, foreman review design, góp ý, rồi hoặc bật đèn xanh cho build hoặc hỏi bạn khi tiếng nói của bạn có thể đổi hướng kết quả. Nó tự trả lời các câu hỏi máy móc của worker, chuyển cho bạn những câu cần bạn, kiểm chứng mọi verdict QA/review trên đĩa, và — với `land: local` (mặc định ở mode worktree) — merge hết các ticket xong lên base local để bạn review sản phẩm gộp trên dev server trước khi quyết: PR từng ticket hay một compose PR.
 
 **Luồng phụ — `autopilot`, cho một ticket lẻ** (cũng là thứ mỗi worker của foreman chạy):
 
