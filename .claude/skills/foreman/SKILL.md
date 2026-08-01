@@ -1,29 +1,30 @@
 ---
 name: foreman
-description: Attended orchestrator for parallel feature work — one visible tmux Claude Code worker per ticket (workers run autopilot), pane monitoring, design-checkpoint review with feedback, greenlight-by-/goal or human escalation. Use when the user hands you product requests to run in parallel while staying able to watch and intervene.
+description: Attended orchestrator for parallel feature work — one visible Claude Code worker per ticket in its own cmux workspace (tmux session when cmux is absent), workers run autopilot, pane monitoring, design-checkpoint review with feedback, greenlight-by-/goal or human escalation. Use when the user hands you product requests to run in parallel while staying able to watch and intervene.
 ---
 # foreman
 
-Workers are full Claude Code sessions in tmux panes the human can attach to
-at any moment; you dispatch them, watch them, review their designs, and own
-the checkpoint between design and build. Workers own the code.
+Workers are full Claude Code sessions in cmux workspaces (or tmux panes) the human
+can open at any moment; you dispatch them, watch them, review their designs,
+and own the checkpoint between design and build. Workers own the code.
 
 ## Invocation
 
 Route by the shape of the argument, not a verb:
 
-- bare — attach/resume: `tmux ls` for `bbs-*` sessions + `bbs ticket board`
-  are the state; reconcile (live workers, verdicts, todo list vs reality),
-  re-arm a monitor per live pane, report the board, resume. Disk + tmux are
-  sufficient — never rely on conversation memory.
+- bare — attach/resume: live `bbs …` workers (`cmux workspace list`, or
+  `tmux ls`) + `bbs ticket board` are the state; reconcile (live workers,
+  verdicts, todo list vs reality), re-arm a monitor per live worker, report
+  the board, resume. Disk + the terminal are sufficient — never rely on
+  conversation memory.
 - free text — a requirement: dispatch one worker for it. `+`-separated (or
   one per line) → one worker each. Beyond `MAX_WORKERS` → `pending` todos,
   dispatched as slots free. (`assign` before the text is accepted and
   ignored.)
 - ticket-id — that ticket's worker: attach if its session lives, else
   re-dispatch from disk state (`/bbs:autopilot builder <ticket>`).
-- `stop <ticket|session>` — the only verb: archive the pane, kill the
-  session, mark the todo (this is the explicit permission the kill rule
+- `stop <ticket|tab|session>` — the only verb: archive the pane, close the
+  workspace/session, mark the todo (this is the explicit permission the kill rule
   requires; without a terminal STATUS the ticket stays resumable from disk).
 
 **One human-review command: `bbs ticket serve`.** Bare = every finished
@@ -43,12 +44,70 @@ MAX_WORKERS="$(bbs config get parallel_max_workers 2>/dev/null || true)"
 [ -n "$MAX_WORKERS" ] || MAX_WORKERS=3   # workers share CPU + one dev server
 ```
 
+## Terminal backend — cmux first, tmux fallback
+
+```bash
+if command -v cmux >/dev/null 2>&1 && cmux ping >/dev/null 2>&1; then MUX=cmux; else MUX=tmux; fi
+```
+
+Under cmux each worker is its own **workspace** — a sidebar entry with its own
+cwd (the ticket worktree), status pill and notification badge, not a
+horizontal tab inside another workspace. The human switches workers by
+clicking, no attach/detach. `$W` is the handle: a `workspace:<n>` ref under
+cmux, the session name under tmux.
+
+| op | cmux (`$W` = `workspace:<n>`) | tmux (`$W` = session) |
+|---|---|---|
+| read pane | `cmux capture-pane --workspace "$W" --lines 60` | `tmux capture-pane -t "$W" -p` |
+| alive? | `cmux workspace list \| grep -q "$W "` | `tmux has-session -t "$W"` |
+| one-line msg | `cmux send --workspace "$W" -- '<text>\n'` | `tmux send-keys -t "$W" '<text>' Enter` |
+| key | `cmux send-key --workspace "$W" enter\|escape\|ctrl+c\|ctrl+u` | `tmux send-keys -t "$W" Enter` |
+| human opens it | clicks it in the sidebar, or `cmux workspace select "$W"` | `tmux attach -t "$W"`  (detach: `Ctrl-b d`) |
+| close | `cmux workspace close "$W"` | `tmux kill-session -t "$W"` |
+
+Refs are per-window ids, stable while cmux runs but reassigned across an app
+restart — on bare resume re-derive `$W` from the workspace **title** via
+`cmux workspace list`, which is why every worker is titled `bbs <ticket-or-slug>`.
+
+cmux-only affordances that make the board readable — use them, they are the
+reason to prefer cmux:
+
+```bash
+cmux workspace rename "$W" --title "bbs <ticket>: <one-liner>"   # once autopilot mints the ticket
+cmux set-status bbs "<phase>" --workspace "$W" --icon sparkle    # sidebar pill: designing / building / QA / BLOCKED
+cmux notify --workspace "$W" --title "<ticket> needs you" --body "<the ask>"   # on escalation
+```
+
+Horizontal **tabs** are for a worker's satellites, never for workers: a dev
+server, a log tail, a browser preview belong *inside* that worker's workspace
+(`cmux new-surface --workspace "$W" --working-directory <worktree>`,
+`cmux new-pane --type browser --workspace "$W" --url <url>`), so the whole
+worker closes as one unit.
+
 ## Dispatch a worker
 
 ```bash
-S="bbs-$(date +%s | tail -c 5)"   # or bbs-<ticket> when resuming a known ticket
-tmux new-session -d -s "$S" -x 200 -y 50 -c "$REPO"
-tmux send-keys -t "$S" "claude --dangerously-skip-permissions '/bbs:autopilot <requirement>'" Enter
+# cmux — new sidebar workspace, unfocused so the human's current one is not stolen
+W=$(cmux workspace create --name "bbs <slug>" --cwd "$REPO" ${G:+--group "$G"} \
+      --command "claude --dangerously-skip-permissions '/bbs:autopilot <requirement>'" \
+    | awk '/^OK/{print $2}')     # -> workspace:5
+
+# batch of 2+: collapse them under one sidebar header. Run once, after the
+# first worker exists; `create --from` mints its own anchor workspace, so the
+# group survives closing any individual worker.
+G=$(cmux workspace-group create --name "bbs foreman" --from "$W" | awk '/^OK/{print $2}')  # -> workspace_group:1
+cmux workspace-group collapse "$G"    # optional; expand to see the workers again
+```
+
+On resume, re-derive `$G` by name from `cmux workspace-group list --json`, and
+adopt a worker dispatched without it via
+`cmux workspace-group add --group "$G" --workspace "$W"`.
+
+```bash
+# tmux fallback
+W="bbs-$(date +%s | tail -c 5)"   # or bbs-<ticket> when resuming a known ticket
+tmux new-session -d -s "$W" -x 200 -y 50 -c "$REPO"
+tmux send-keys -t "$W" "claude --dangerously-skip-permissions '/bbs:autopilot <requirement>'" Enter
 ```
 
 Workers always run autopilot: it creates the ticket + worktree (`mode:
@@ -60,48 +119,63 @@ crashed ticket: same spawn with `/bbs:autopilot builder <ticket>`.
 board and must mirror reality:
 
 - dispatch → `TaskCreate` `<ticket-or-slug>: <requirement one-liner>
-  [tmux: <session>]`, `in_progress`; beyond `MAX_WORKERS` → `pending`,
-  flipped when dispatched.
+  [<workspace title|tmux session>]`, `in_progress`; beyond `MAX_WORKERS` →
+  `pending`, flipped when dispatched.
 - phase change / escalation → `TaskUpdate` the `activeForm` (what the worker
-  is doing + which session to attach).
+  is doing + which workspace/session to open). Under cmux mirror the phase onto the
+  sidebar pill with `set-status`.
 - close-out (verdicts verified, pane archived) → `completed`. BLOCKED stays
   `in_progress` with the blocker — never complete a task to tidy the list.
-- bare resume → reconcile the list against `tmux ls` + `board` first.
+- bare resume → reconcile the list against `cmux workspace list` (or
+  `tmux ls`) + `board` first.
 
 ## Monitor
 
-One Monitor per pane (persistent). Ground truth is disk (`bbs ticket board`,
+One Monitor per worker (persistent). Ground truth is disk (`bbs ticket board`,
 `verdict-status`, ticket artifacts) — pane text only tells you *when* to look.
 
 ```bash
 prev=""
 while true; do
   # no ^ anchor: Claude Code indents STATUS lines, so line-start never matches
-  cur=$(tmux capture-pane -t "$S" -p 2>/dev/null \
+  cur=$(cmux capture-pane --workspace "$W" --lines 60 2>/dev/null \
     | grep -E "Enter to select|Copy the block below|STATUS: (DONE|DONE_WITH_CONCERNS|BLOCKED|NEEDS_CONTEXT)|API Error" | tail -4)
   [ "$cur" != "$prev" ] && [ -n "$cur" ] && echo "$cur"
   prev="$cur"
-  tmux has-session -t "$S" 2>/dev/null || { echo "worker gone"; exit 0; }
+  cmux workspace list 2>/dev/null | grep -q "$W " || { echo "worker gone"; exit 0; }
   sleep 20
 done
 ```
 
+Under tmux the loop is identical with the read/alive lines swapped for
+`tmux capture-pane -t "$W" -p` and `tmux has-session -t "$W"`.
+
 ## Driving a worker's terminal
 
-- **Multi-line paste** — clear first (input may hold a pre-filled suggestion;
-  never blind-Enter it), paste bracketed, submit separately:
+- **Multi-line paste** (the `/goal` block) — clear first (input may hold a
+  pre-filled suggestion; never blind-Enter it), paste **bracketed** so the
+  newlines land in the box instead of submitting each line, then submit:
   ```bash
-  tmux send-keys -t "$S" C-u
+  # cmux — paste-buffer is NOT bracketed (it Enters between lines); wrap it yourself
+  cmux send-key --workspace "$W" ctrl+u
+  cmux send --workspace "$W" -- "$(printf '\033[200~%s\033[201~' "$BLK")"
+  cmux send-key --workspace "$W" enter
+  ```
+  ```bash
+  # tmux
+  tmux send-keys -t "$W" C-u
   tmux set-buffer -b blk '<text>'
-  tmux paste-buffer -p -b blk -t "$S"
-  tmux send-keys -t "$S" Enter
+  tmux paste-buffer -p -b blk -t "$W"
+  tmux send-keys -t "$W" Enter
   ```
 - **Question menus** — `↑/↓` navigate, `Enter` selects the focused option and
   advances, `Left`/`Right` switch questions, final view is "Submit answers".
+  Under cmux: `cmux send-key --workspace "$W" up|down|left|right|enter`.
   Capture the pane after every keystroke; menus re-render.
 - **Wedged TUI** (no spinner, no prompt, minutes of stillness with the process
-  alive): `Escape`, then a single `C-c` — that recovers the prompt without
-  killing the session. Then re-send context as a plain message.
+  alive): `Escape`, then a single `C-c` (`cmux send-key … escape` then
+  `ctrl+c`) — that recovers the prompt without killing the worker. Then
+  re-send context as a plain message.
 
 ## The design checkpoint (core)
 
@@ -149,15 +223,19 @@ Taste from the requirement + framework via send-keys; escalate User
 Challenges.
 
 Whenever a worker needs a human — a question you can't answer, a `BLOCKED`/
-`NEEDS_CONTEXT` status — relay the worker's exact ask AND the direct-access
-command so they can drive the pane themselves:
+`NEEDS_CONTEXT` status — relay the worker's exact ask AND how to reach the
+worker directly:
 
 ```text
-tmux attach -t <session>    # detach when done: Ctrl-b d
+cmux: open the "bbs <ticket>" workspace in the sidebar   (or: cmux workspace select <ref>)
+tmux: tmux attach -t <session>      # detach when done: Ctrl-b d
 ```
 
+Under cmux also fire `cmux notify --workspace "$W"` and set the status pill
+to the blocker, so the workspace announces itself in the sidebar.
+
 Apply the answer wherever the human gives it: answered you → drive the
-worker's menu/prompt via send-keys; answered in the pane → re-arm the
+worker's menu/prompt via `send`/`send-key`; answered in the workspace → re-arm the
 monitor and continue.
 
 ## Report signal, not flow
@@ -168,7 +246,7 @@ Print only what changes the human's picture:
   `prototype.html`) — links, not retellings
 - unknowns / derived assumptions a worker surfaced
 - a requirement or plan **change** mid-flight — what changed and why
-- escalations (with the `tmux attach` line)
+- escalations (with the workspace title / `tmux attach` line)
 - terminal rows: verdicts, pushed, one-line summary
 
 Normal flow — dispatched, building, QA started, monitor ticks — lives in the
@@ -184,8 +262,9 @@ BABYSIT_TICKET=<id> bbs ticket verdict-status --skill review-pr
 ```
 
 then report the row (ticket, branch, verdicts, pushed, one-line summary),
-archive the pane (`tmux capture-pane -p -S -2000 > <scratch>/$S.txt`), kill
-the session, and dispatch the next queued assignment. QA across workers
+archive the pane (`cmux capture-pane --workspace "$W" --scrollback --lines
+2000 > <scratch>/$W.txt`, or `tmux capture-pane -p -S -2000`), close the
+workspace/session, and dispatch the next queued assignment. QA across workers
 serializes on `bbs ticket qa-lease` — workers handle that themselves;
 `board` shows who holds it.
 
@@ -201,7 +280,10 @@ aggregate NEXT offers `/bbs:create-pr <t>` per ticket or one compose PR
 
 - foreman never edits worker code and never creates PRs — `NEXT:
   /bbs:create-pr` stays with the human (checkpoint 4).
-- Never kill a pane that hasn't printed a terminal STATUS unless the human
+- `cmux workspace-group delete` closes **every** worker in the group — never
+  use it. Retire workers one at a time with `cmux workspace close "$W"`; drop
+  the header alone with `cmux workspace-group ungroup "$G"`.
+- Never close a worker that hasn't printed a terminal STATUS unless the human
   says so; a wedged worker gets the recovery sequence, then a re-dispatch
   from disk state.
 - Uncommitted repo config the workers depend on (e.g. `.babysit/git-flow.yaml`
