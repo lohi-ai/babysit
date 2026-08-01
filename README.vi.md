@@ -130,6 +130,8 @@ Rồi trong Claude Code:
 
 Yêu cầu: Claude Code có hỗ trợ plugin, Git.
 
+Khuyến nghị: **[cmux](https://cmux.com)**, một terminal sinh ra cho lối phát triển bằng agent. babysit dùng cmux khi máy có sẵn và tự lùi về tmux khi không — nhưng với cmux, `foreman` cho mỗi worker song song một workspace riêng trên sidebar kèm status pill và badge thông báo, diff mở trong trình xem thật thay vì trôi qua trong pane, và app đang chạy nằm ngay ở split browser bên cạnh.
+
 ### 2. Cấu hình project của bạn
 
 Trong bất kỳ repo nào bạn muốn autopilot ship từ đó:
@@ -256,6 +258,7 @@ bbs ticket serve            # để trống: gộp mọi ticket đã xong (qa + 
 1. Một ticket chạm chặng 3 — dòng `Next:` trong bản handoff đưa tận tay lệnh cần gõ: `bbs ticket serve bs-ab123`.
 2. `serve` giữ bề mặt test trong 4 tiếng (QA của các agent lịch sự xếp hàng sau bạn) và chuyển server đang chạy sang base + đúng ticket này — ở repo này **và** ở repo FE/BE anh em khi ticket trải qua cả hai.
 3. Review trong browser. Nhờ session của ticket sửa; nó commit trong worktree của riêng nó; chạy lại `serve` (reentrant — làm mới thời gian giữ, cắt lại bề mặt) rồi refresh browser. Lặp tới khi ưng.
+   Với cmux, cả vòng lặp này gói gọn trong một workspace: `cmux browser open <qa url>` đưa app đang chạy vào một split, `cmux diff --branch --repo <worktree> --base origin/main` mở diff đầy đủ của ticket bên cạnh, còn `cmux diff --last-turn` chỉ hiện những gì session vừa đổi ở lượt cuối.
 4. Ưng rồi → `bbs ticket serve --release`, rồi `/bbs:create-pr` cho từng repo. Reviewer comment sau đó → `/bbs:fix-pr`.
 5. `bbs ticket board --pr` chỉ ra các PR đã merge và in đúng các lệnh dọn dẹp (`reset-base`, `set-status done`).
 
