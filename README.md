@@ -130,6 +130,8 @@ Then inside Claude Code:
 
 Requirements: Claude Code with plugin support, Git.
 
+Recommended: **[cmux](https://cmux.com)**, a terminal built for agentic development. babysit uses it when it's installed and falls back to tmux when it isn't — but with cmux, `foreman` gives each parallel worker its own sidebar workspace with a live status pill and notification badge, diffs open in a real viewer instead of scrolling past in a pane, and the running app sits in a browser split next to them.
+
 #### Optional: the standalone `bbs` CLI via Homebrew
 
 The steps above already put `bbs` on your `PATH`: `bin/setup-skills` builds the
@@ -281,6 +283,7 @@ bbs ticket serve            # bare: compose every finished ticket (qa + review D
 1. A ticket reaches pause 3 — its handoff's `Next:` line hands you the exact command: `bbs ticket serve bs-ab123`.
 2. `serve` holds the test surface for 4 hours (agents' QA politely queues behind you) and switches the running server to base + exactly this ticket — in this repo **and** in its FE/BE sibling repo when the ticket spans both.
 3. Review in the browser. Ask the ticket's session for changes; it commits in its own worktree; re-run `serve` (reentrant — refreshes the hold, re-cuts the surface) and refresh the browser. Repeat until happy.
+   Under cmux this whole loop fits in one workspace: `cmux browser open <qa url>` puts the running app in a split, `cmux diff --branch --repo <worktree> --base origin/main` opens the ticket's full diff beside it, and `cmux diff --last-turn` shows just what the session changed since its last turn.
 4. Approved → `bbs ticket serve --release`, then `/bbs:create-pr` per repo. Reviewer comments later → `/bbs:fix-pr`.
 5. `bbs ticket board --pr` flags merged PRs and prints the exact cleanup commands (`reset-base`, `set-status done`).
 

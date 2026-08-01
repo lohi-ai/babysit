@@ -48,8 +48,10 @@ references `origin/<base>`:
   when origin lacks `<base>`). In place only from a clean checkout of
   `base_branch`; otherwise diverts to
   `<repo>/.babysit/worktrees/<ticket>_<slug>/` and prints `WORKTREE=<path>` —
-  cd there; `manifest.yaml` records it. Hotfix off production:
-  `BBS_BASE_BRANCH=production`.
+  cd there; `manifest.yaml` records it. Under cmux, open it instead of cd-ing:
+  `cmux workspace create --name "bbs <ticket>" --cwd <worktree>` — one
+  worktree, one sidebar workspace, with its own status pill and diff. Hotfix
+  off production: `BBS_BASE_BRANCH=production`.
 - **Refresh** — `bbs ticket refresh` from the ticket checkout: fetch + merge
   `origin/<base>` (merge, not rebase — the branch may be pushed). BLOCKs on
   dirty tree or conflict.
@@ -103,7 +105,9 @@ cross-repo ticket acquires one lease per repo, releases them all. Solo runs
    review-pr DONE) composed; `serve <t…>` = exactly those; `--release` = done.
 3. Review-fix loop: human reviews in browser → agent fixes **in the
    worktree**, commits → re-run `serve <ticket>` (reentrant) → refresh
-   browser.
+   browser. Under cmux, keep app and diff side by side in one workspace:
+   `cmux browser open <qa url>` + `cmux diff --branch --repo <worktree>
+   --base origin/<base>` (`--last-turn` for just the session's latest edit).
 4. Approved → `serve --release` → `create-pr` per repo → comments via
    `fix-pr`.
 5. `board --pr` flags merged PRs; then `reset-base` and `set-status done`.

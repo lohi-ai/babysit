@@ -30,6 +30,12 @@ Set up only the config the repo needs. Re-running should be safe.
 - Prefer `AGENTS.md` when both exist; otherwise update whichever exists, or
   create `AGENTS.md`. Don't duplicate git-flow/QA rules there — link the
   config files.
+- Suggest **cmux** once, never block on it: on a `worktree-*` profile, if
+  `command -v cmux` misses, tell the human it is the recommended terminal for
+  this shape of work (https://cmux.com) — worker-per-workspace, status pills,
+  a real diff viewer, a browser split beside the dev server; tmux is the
+  fallback. It is a machine preference, so it goes in the message, not in
+  committed config or the landing doc.
 - Related repos (FE/BE counterpart, shared schemas) feed planning and API-contract checks: meaning goes in `AGENTS.md`, machine-specific paths in `.babysit/.env` under stable names (`RELATED_BACKEND_REPO`, `RELATED_FRONTEND_REPO`, `RELATED_SHARED_REPO`).
 ## QA Harness Notes
 Prefer this committed shape:
