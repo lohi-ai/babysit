@@ -25,13 +25,28 @@ lock-protected; all metadata mutations go through `bbs ticket` — never edit
 All fields optional except `id`; unknown fields preserved. Key fields:
 `status`, `phase`, `parent`/`children`, `relations` (`blocks`, `blocked_by`,
 `duplicate_of`, `related`), `siblings` (`{role, repo, ticket}` for cross-repo),
-`labels`, `assignee`, `origin`, `pointers` (`branch`, `pr`, `plan`, `design`,
-`requirement`, `manifest`).
+`labels`, `assignee`, `control`, `origin`, `pointers` (`branch`, `pr`, `plan`,
+`design`, `requirement`, `manifest`).
 **Status enum** (set via `bbs ticket set-status`, never derived from
 verdicts): `triage` → `backlog` → `planned` / `decomposed` → `in_progress` →
 `in_review` → `done`; plus `blocked`, `cancelled`, `duplicate`.
+**`control`** is the human override axis, separate from status:
+`{state: paused|cancelled, prior_status, note, actor, at}`, `null` when the
+ticket is uncontrolled. Set by `bbs ticket pause|cancel`, cleared by
+`resume|restore`. A control action **never** writes `status` — status stays the
+derived rung so clearing the control returns the ticket exactly where it was,
+and `reconcile` skips any ticket with a `control.state`. Distinguish it from
+`status: cancelled`, which is a *terminal* rung meaning the work was abandoned;
+`control.state: cancelled` means a human pulled it out of dispatch and can put
+it back.
+**`assignee`** names the owning foreman (`bbs ticket assign <id>|--none`).
+Assignment lives on the ticket, so a foreman's inbox is derived by scanning
+tickets — there is no parallel queue that can drift.
 **`origin.type`**: `standalone` (default) | `sub_ticket` (has `parent`,
 `seed`, `plan`, `position`) | `hotfix` | `design-initiated` (has `design_doc`).
+Set at creation time: `bbs ticket init --parent <id> --origin-type sub_ticket
+--seed <path> --position <n>`. `set-parent` writes only the parent link, so a
+child left at the `standalone` default will not route to `builder`'s child mode.
 ## Bootstrap: how tickets come into being
 Tickets exist when the branch matches
 `(feat|fix|chore|bug|refactor)/<id>_<slug>` — the preamble derives `$TICKET`

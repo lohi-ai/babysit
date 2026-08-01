@@ -59,6 +59,16 @@ func newTicketCmd() *cobra.Command {
 				runSetPhase(args[1:])
 			case "set-parent":
 				runSetParent(args[1:])
+			case "assign":
+				runAssign(args[1:])
+			case "pause":
+				runPause(args[1:])
+			case "cancel":
+				runCancel(args[1:])
+			case "resume":
+				runResume()
+			case "restore":
+				runRestore()
 			case "add-child":
 				runAddChild(args[1:])
 			case "add-relation":
@@ -151,6 +161,10 @@ Subcommands:
   set-status <s>    set ticket status
   set-phase <s>     set current owning skill
   set-parent <t>    set parent ticket
+  assign <foreman-id>|--none    set the owning foreman (assignee)
+  pause [--note M]  human override: stop dispatch, keep status (reversible)
+  cancel [--note M] human override: drop from dispatch, keep status (reversible)
+  resume            clear a pause      restore   clear a cancel
   add-child <t>     append a child ticket id
   add-relation <type> <target>
   set-sibling --role R --repo REPO --ticket T

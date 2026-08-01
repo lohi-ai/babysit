@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/reallongnguyen/babysit/internal/dashboard"
+	"github.com/reallongnguyen/babysit/internal/identity"
 	"github.com/spf13/cobra"
 )
 
@@ -147,7 +148,7 @@ func runDashboard(args []string) error {
 
 	// ── reconcile statuses before snapshotting ──
 	if os.Getenv("BBS_DASHBOARD_NO_RECONCILE") == "" {
-		reconcileProjects(scriptDir, stateDir)
+		reconcileProjects(stateDir)
 	}
 
 	version := "unknown"
@@ -236,15 +237,12 @@ func badDashSlug(s string) bool {
 	return s == "" || s == "." || s == ".." || strings.Contains(s, "/") || dashSlugBad.MatchString(s)
 }
 
-func reconcileProjects(scriptDir, stateDir string) {
-	ticketBin := filepath.Join(scriptDir, "bbs-ticket")
-	if _, err := os.Stat(ticketBin); err != nil {
-		if p, err := exec.LookPath("bbs-ticket"); err == nil {
-			ticketBin = p
-		} else {
-			return
-		}
-	}
+// reconcileProjects advances every project's ticket statuses before composing a
+// snapshot, so the dashboard never shows a rung the filesystem has already left
+// behind. It calls reconcileOne directly — both live in package cmd, so the old
+// fork/exec of a sibling `bbs-ticket` bought nothing but a missing-binary failure
+// mode and one process per project. Logs go to stderr; stdout is the report.
+func reconcileProjects(stateDir string) {
 	projects := filepath.Join(stateDir, "projects")
 	entries, err := os.ReadDir(projects)
 	if err != nil {
@@ -255,14 +253,17 @@ func reconcileProjects(scriptDir, stateDir string) {
 			continue
 		}
 		projDir := filepath.Join(projects, e.Name())
-		if _, err := os.Stat(filepath.Join(projDir, "tickets")); err != nil {
+		ticketsDir := filepath.Join(projDir, "tickets")
+		tickets, err := os.ReadDir(ticketsDir)
+		if err != nil {
 			continue
 		}
-		cmd := exec.Command(ticketBin, "reconcile", "--all", "--quiet")
-		cmd.Env = append(os.Environ(), "BABYSIT_PROJECT_HOME="+projDir)
-		cmd.Stdout = os.Stderr // reconcile log → stderr, off stdout
-		cmd.Stderr = os.Stderr
-		_ = cmd.Run()
+		env := identity.Env{ProjectHome: projDir}
+		for _, t := range tickets {
+			if t.IsDir() {
+				_ = reconcileOne(os.Stderr, env, t.Name(), false, true)
+			}
+		}
 	}
 }
 

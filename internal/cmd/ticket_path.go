@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -558,7 +559,7 @@ func runReconcile(args []string) {
 		rc := 0
 		for _, e := range entries {
 			if e.IsDir() {
-				if err := reconcileOne(env, e.Name(), dry, quiet); err != nil {
+				if err := reconcileOne(os.Stdout, env, e.Name(), dry, quiet); err != nil {
 					rc = 1
 				}
 			}
@@ -566,19 +567,22 @@ func runReconcile(args []string) {
 		os.Exit(rc)
 	}
 	if one != "" {
-		if err := reconcileOne(env, one, dry, quiet); err != nil {
+		if err := reconcileOne(os.Stdout, env, one, dry, quiet); err != nil {
 			os.Exit(1)
 		}
 		os.Exit(0)
 	}
 	needTicket(env)
-	if err := reconcileOne(env, env.Ticket, dry, quiet); err != nil {
+	if err := reconcileOne(os.Stdout, env, env.Ticket, dry, quiet); err != nil {
 		os.Exit(1)
 	}
 	os.Exit(0)
 }
 
-func reconcileOne(env identity.Env, tid string, dry, quiet bool) error {
+// reconcileOne advances one ticket's status. out receives the per-ticket log —
+// `bbs ticket reconcile` sends it to stdout; the dashboard, whose stdout is its
+// own report, sends it to stderr.
+func reconcileOne(out io.Writer, env identity.Env, tid string, dry, quiet bool) error {
 	stEnv := env
 	stEnv.Ticket = tid
 	st := ticket.New(stEnv)
@@ -586,11 +590,20 @@ func reconcileOne(env identity.Env, tid string, dry, quiet bool) error {
 	idx := filepath.Join(th, "index.json")
 	if !fileExists(idx) {
 		if !quiet {
-			fmt.Printf("%s: skip (no index.json)\n", tid)
+			fmt.Fprintf(out, "%s: skip (no index.json)\n", tid)
 		}
 		return nil
 	}
-	cur := ticket.ReadDoc(idx).Get("status")
+	doc := ticket.ReadDoc(idx)
+	// A paused or cancelled ticket is frozen where the human left it. Advancing
+	// its status here would make the resume land on a rung the human never saw.
+	if ctl := doc.Get("control.state"); ctl != "" {
+		if !quiet {
+			fmt.Fprintf(out, "%s: %s (skip — %s)\n", tid, doc.Get("status"), ctl)
+		}
+		return nil
+	}
+	cur := doc.Get("status")
 	if cur == "" {
 		cur = "triage"
 	}
@@ -599,26 +612,26 @@ func reconcileOne(env identity.Env, tid string, dry, quiet bool) error {
 	curR, curKnown := reconcileRank[cur]
 	if !curKnown {
 		if !quiet {
-			fmt.Printf("%s: %s (skip — terminal/explicit)\n", tid, cur)
+			fmt.Fprintf(out, "%s: %s (skip — terminal/explicit)\n", tid, cur)
 		}
 		return nil
 	}
 	tgtR := reconcileRank[target]
 	if tgtR <= curR {
 		if !quiet {
-			fmt.Printf("%s: %s (no advancement; derived=%s)\n", tid, cur, target)
+			fmt.Fprintf(out, "%s: %s (no advancement; derived=%s)\n", tid, cur, target)
 		}
 		return nil
 	}
 	if dry {
-		fmt.Printf("%s: %s -> %s (dry-run)\n", tid, cur, target)
+		fmt.Fprintf(out, "%s: %s -> %s (dry-run)\n", tid, cur, target)
 		return nil
 	}
 	if err := applyStatus(st, target); err != nil {
 		fmt.Fprintf(os.Stderr, "%s: %s -> %s FAILED\n", tid, cur, target)
 		return err
 	}
-	fmt.Printf("%s: %s -> %s\n", tid, cur, target)
+	fmt.Fprintf(out, "%s: %s -> %s\n", tid, cur, target)
 	return nil
 }
 
