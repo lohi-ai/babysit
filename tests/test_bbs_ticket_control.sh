@@ -138,6 +138,14 @@ T="$(mktemp -d)"
   "$BBS" resume >/dev/null 2>&1
   "$BBS" reconcile --ticket "$BABYSIT_TICKET" >/dev/null 2>&1
   [ "$(field .status)" = "planned" ] || { echo "reconcile stuck after resume: $(field .status)"; exit 1; }
+
+  # A ticket paused before it ever had a status still names a rung in the skip
+  # line — "bs-x:  (skip — paused)" would read like the status was lost.
+  export BABYSIT_TICKET="bs-ctl0002"
+  IDX="$BABYSIT_PROJECT_HOME/tickets/$BABYSIT_TICKET/index.json"
+  "$BBS" pause >/dev/null 2>&1 || { echo "pause of fresh ticket failed"; exit 1; }
+  "$BBS" reconcile --ticket "$BABYSIT_TICKET" 2>&1 | grep -q "triage (skip — paused)" \
+    || { echo "skip line lost the status: $("$BBS" reconcile --ticket "$BABYSIT_TICKET" 2>&1)"; exit 1; }
 ) && ok "reconcile-skips-control" || fail "reconcile-skips-control"
 rm -rf "$T"
 

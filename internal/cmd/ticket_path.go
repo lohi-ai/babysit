@@ -595,17 +595,17 @@ func reconcileOne(out io.Writer, env identity.Env, tid string, dry, quiet bool) 
 		return nil
 	}
 	doc := ticket.ReadDoc(idx)
+	cur := doc.Get("status")
+	if cur == "" {
+		cur = "triage"
+	}
 	// A paused or cancelled ticket is frozen where the human left it. Advancing
 	// its status here would make the resume land on a rung the human never saw.
 	if ctl := doc.Get("control.state"); ctl != "" {
 		if !quiet {
-			fmt.Fprintf(out, "%s: %s (skip — %s)\n", tid, doc.Get("status"), ctl)
+			fmt.Fprintf(out, "%s: %s (skip — %s)\n", tid, cur, ctl)
 		}
 		return nil
-	}
-	cur := doc.Get("status")
-	if cur == "" {
-		cur = "triage"
 	}
 	target := reconcileTarget(th)
 

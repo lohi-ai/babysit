@@ -21,11 +21,6 @@ import (
 // rung. Keeping the two axes apart makes both operations lossless: clearing
 // control returns the ticket to the ladder exactly where it already was.
 
-// readControlState returns the current control.state ("" when uncontrolled).
-func readControlState(st *ticket.Store) string {
-	return ticket.ReadDoc(st.IndexPath()).Get("control.state")
-}
-
 // applyControl sets control to the given state, recording where the ticket was
 // so the UI can name the undo ("Restore to planned") without re-deriving it.
 func applyControl(state string, args []string) {
@@ -39,24 +34,23 @@ func applyControl(state string, args []string) {
 	}
 	st := ticket.New(env)
 
-	if cur := readControlState(st); cur != "" {
-		if cur == state {
-			fmt.Printf("%s: already %s\n", env.Ticket, state)
-			os.Exit(0)
-		}
-		fmt.Fprintf(os.Stderr, "%s: already %s — clear it first (%s)\n",
-			env.Ticket, cur, undoVerb(cur))
-		os.Exit(2)
-	}
-
+	// The conflict check reads under the same lock as the write: these verbs are
+	// driven from dashboard buttons, so a pause and a cancel can genuinely land
+	// together, and a check outside the lock would let both pass and the loser
+	// silently overwrite the winner's record.
+	var conflict, status string
 	mutateLocked(st, func() error {
 		doc := loadForMutate(st)
-		prior := doc.Get("status")
-		if prior == "" {
-			prior = "triage"
+		if cur := doc.Get("control.state"); cur != "" {
+			conflict = cur
+			return nil
+		}
+		status = doc.Get("status")
+		if status == "" {
+			status = "triage"
 		}
 		obj, err := json.Marshal(map[string]interface{}{
-			"state": state, "prior_status": prior, "note": note,
+			"state": state, "prior_status": status, "note": note,
 			"actor": actorRole(), "at": time.Now().UTC().Format(time.RFC3339),
 		})
 		if err != nil {
@@ -72,8 +66,17 @@ func applyControl(state string, args []string) {
 		st.HistoryAppendExtra("control_set", actorRole(), string(obj))
 		return nil
 	})
-	fmt.Printf("%s: %s (status stays %s)\n", env.Ticket, state,
-		ticket.ReadDoc(st.IndexPath()).Get("status"))
+
+	if conflict != "" {
+		if conflict == state {
+			fmt.Printf("%s: already %s\n", env.Ticket, state)
+			os.Exit(0)
+		}
+		fmt.Fprintf(os.Stderr, "%s: already %s — clear it first (%s)\n",
+			env.Ticket, conflict, undoVerb(conflict))
+		os.Exit(2)
+	}
+	fmt.Printf("%s: %s (status stays %s)\n", env.Ticket, state, status)
 	os.Exit(0)
 }
 
@@ -84,19 +87,16 @@ func clearControl(want string) {
 	needTicket(env)
 	st := ticket.New(env)
 
-	cur := readControlState(st)
-	if cur == "" {
-		fmt.Printf("%s: not paused or cancelled — nothing to clear\n", env.Ticket)
-		os.Exit(0)
-	}
-	if cur != want {
-		fmt.Fprintf(os.Stderr, "%s: is %s, not %s — use `bbs ticket %s`\n",
-			env.Ticket, cur, want, undoVerb(cur))
-		os.Exit(2)
-	}
-
+	// Read the state under the lock, like applyControl: clearing on a stale read
+	// is how a resume ends up wiping a cancel that landed in between.
+	var cur, status string
 	mutateLocked(st, func() error {
 		doc := loadForMutate(st)
+		cur = doc.Get("control.state")
+		status = doc.Get("status")
+		if cur == "" || cur != want {
+			return nil
+		}
 		prior := doc.Get("control.prior_status")
 		doc.Set("control", "null")
 		if err := ticket.WriteDoc(st.IndexPath(), doc); err != nil {
@@ -106,8 +106,17 @@ func clearControl(want string) {
 			fmt.Sprintf(`{"was":"%s","prior_status":"%s"}`, cur, prior))
 		return nil
 	})
-	fmt.Printf("%s: %s cleared (status %s)\n", env.Ticket, cur,
-		ticket.ReadDoc(st.IndexPath()).Get("status"))
+
+	if cur == "" {
+		fmt.Printf("%s: not paused or cancelled — nothing to clear\n", env.Ticket)
+		os.Exit(0)
+	}
+	if cur != want {
+		fmt.Fprintf(os.Stderr, "%s: is %s, not %s — use `bbs ticket %s`\n",
+			env.Ticket, cur, want, undoVerb(cur))
+		os.Exit(2)
+	}
+	fmt.Printf("%s: %s cleared (status %s)\n", env.Ticket, cur, status)
 	os.Exit(0)
 }
 
