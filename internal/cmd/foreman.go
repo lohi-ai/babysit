@@ -109,7 +109,7 @@ func foremanList() error {
 			live = "live"
 		}
 		fmt.Printf("%-16s %-12s %-8s %-14s %-28s %s\n",
-			r.ID, r.Owner, live, orValue(r.Status, "-"), orValue(r.WorkspaceTitle, "-"), r.WorkspaceDir)
+			r.ID, r.Owner, live, orDefault(r.Status, "-"), orDefault(r.WorkspaceTitle, "-"), r.WorkspaceDir)
 	}
 	return nil
 }
@@ -205,6 +205,11 @@ func foremanSpawn(args []string) error {
 	if id == "" {
 		id = "fm-" + filepath.Base(dir)
 	}
+	// Check before Create, not just in Save: a rejected id after the workspace
+	// exists would leave an orphan workspace with no record naming it.
+	if err := foreman.ValidID(id); err != nil {
+		return err
+	}
 	if _, err := foreman.Load(id); err == nil {
 		return fmt.Errorf("foreman %s already registered — retire it first", id)
 	}
@@ -276,11 +281,4 @@ func currentUser() string {
 		return u.Username
 	}
 	return os.Getenv("USER")
-}
-
-func orValue(v, fallback string) string {
-	if v == "" {
-		return fallback
-	}
-	return v
 }

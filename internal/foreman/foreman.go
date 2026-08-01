@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -54,8 +55,27 @@ type Record struct {
 // Dir is ~/.babysit/foremen.
 func Dir() string { return filepath.Join(identity.BabysitHome(), "foremen") }
 
-// Path is the record file for one foreman id.
+// Path is the record file for one foreman id. Only ever call it with an id
+// that passed ValidID — Join CLEANS its result, so an id carrying "../"
+// resolves outside the foremen directory entirely.
 func Path(id string) string { return filepath.Join(Dir(), id+".yaml") }
+
+// idRe is what an id may look like: a leading alphanumeric, then word
+// characters, dot or dash. That excludes "/" and any leading dot, which is
+// what keeps an id from escaping Dir().
+var idRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+
+// ValidID rejects an id that would resolve to a path outside Dir(). The id
+// reaches this package from the command line today and over HTTP once the
+// dashboard can spawn foremen, so it is untrusted input on the way to a file
+// name: unchecked, `register ../../x` writes a record outside ~/.babysit and
+// `retire ../../x` deletes whatever .yaml is there.
+func ValidID(id string) error {
+	if !idRe.MatchString(id) {
+		return fmt.Errorf("foreman id %q: must be letters, digits, dot, dash or underscore, starting alphanumeric", id)
+	}
+	return nil
+}
 
 // Live reports whether the heartbeat is recent enough to act on. An unparseable
 // or missing heartbeat is not live: the dashboard would otherwise route work to
@@ -71,6 +91,9 @@ func (r Record) Live() bool {
 // Load reads one record.
 func Load(id string) (Record, error) {
 	var r Record
+	if err := ValidID(id); err != nil {
+		return r, err
+	}
 	b, err := os.ReadFile(Path(id))
 	if err != nil {
 		return r, fmt.Errorf("foreman %s: %w", id, err)
@@ -85,8 +108,8 @@ func Load(id string) (Record, error) {
 // atomic — the dashboard polls this directory, and a half-written record would
 // read as a corrupt foreman rather than as a foreman mid-update.
 func Save(r Record) error {
-	if r.ID == "" {
-		return fmt.Errorf("foreman: record has no id")
+	if err := ValidID(r.ID); err != nil {
+		return err
 	}
 	if err := os.MkdirAll(Dir(), 0o755); err != nil {
 		return err
@@ -95,11 +118,25 @@ func Save(r Record) error {
 	if err != nil {
 		return err
 	}
-	tmp := Path(r.ID) + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o644); err != nil {
+	// A per-call temp name, not "<id>.yaml.tmp": a foreman heartbeating while
+	// the dashboard writes the same record would otherwise have both writers
+	// interleaving into one file and renaming the mixture into place.
+	tmp, err := os.CreateTemp(Dir(), "."+r.ID+".*.tmp")
+	if err != nil {
 		return err
 	}
-	return os.Rename(tmp, Path(r.ID))
+	defer os.Remove(tmp.Name()) // no-op once the rename succeeds
+	if _, err := tmp.Write(b); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(tmp.Name(), 0o644); err != nil {
+		return err
+	}
+	return os.Rename(tmp.Name(), Path(r.ID))
 }
 
 // List returns every record, id-sorted. A record that fails to parse is
@@ -124,6 +161,9 @@ func List() []Record {
 
 // Remove deletes a record. Missing is not an error.
 func Remove(id string) error {
+	if err := ValidID(id); err != nil {
+		return err
+	}
 	err := os.Remove(Path(id))
 	if os.IsNotExist(err) {
 		return nil

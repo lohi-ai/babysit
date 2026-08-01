@@ -288,10 +288,17 @@ func (c *Client) workspaceRef(title string) (string, error) {
 	if len(windows) == 0 {
 		windows = []Window{{}} // no window handle = the current one
 	}
+	// A window that fails to list does not stop the scan — it can close between
+	// the two calls — but a failure means this title's ABSENCE was never
+	// established. Reporting ErrNoWorkspace on an unfinished scan is what would
+	// let Close treat "cmux stopped answering" as "already gone", so an
+	// unmatched title with a failed listing returns that failure instead.
+	var listErr error
 	for _, w := range windows {
 		spaces, err := c.ListWorkspaces(w.ID)
 		if err != nil {
-			continue // a window can close between the two calls
+			listErr = err
+			continue
 		}
 		for _, s := range spaces {
 			// custom_title only — s.Title for an un-named workspace is
@@ -300,6 +307,9 @@ func (c *Client) workspaceRef(title string) (string, error) {
 				return s.Ref, nil
 			}
 		}
+	}
+	if listErr != nil {
+		return "", listErr
 	}
 	return "", fmt.Errorf("%w: %q", ErrNoWorkspace, title)
 }

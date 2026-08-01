@@ -3,6 +3,8 @@ package foreman
 import (
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -107,6 +109,79 @@ func TestSaveRejectsRecordWithoutID(t *testing.T) {
 	sandbox(t)
 	if err := Save(Record{Owner: "long"}); err == nil {
 		t.Fatal("want an error for an id-less record")
+	}
+}
+
+// The id becomes a file name, and it arrives from the command line today and
+// over HTTP once the dashboard spawns foremen. Unchecked, "../../x" escapes
+// the foremen directory: Save writes a record outside ~/.babysit and Remove
+// deletes whatever .yaml already sits there.
+func TestIDCannotEscapeTheForemenDir(t *testing.T) {
+	sandbox(t)
+	outside := filepath.Join(filepath.Dir(Dir()), "victim.yaml")
+	if err := os.WriteFile(outside, []byte("precious\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, id := range []string{"../victim", "../../victim", "a/../../victim", "/etc/victim", ".hidden"} {
+		if err := Save(Record{ID: id, Heartbeat: Now()}); err == nil {
+			t.Errorf("Save(%q) was allowed", id)
+		}
+		if _, err := Load(id); err == nil {
+			t.Errorf("Load(%q) was allowed", id)
+		}
+		if err := Remove(id); err == nil {
+			t.Errorf("Remove(%q) was allowed", id)
+		}
+	}
+
+	if b, err := os.ReadFile(outside); err != nil || string(b) != "precious\n" {
+		t.Errorf("file outside the foremen dir was touched: %q %v", b, err)
+	}
+}
+
+func TestValidIDAcceptsRealIDs(t *testing.T) {
+	for _, id := range []string{"fm-babysit", "fm-my_repo.v2", "a", "FM-1"} {
+		if err := ValidID(id); err != nil {
+			t.Errorf("ValidID(%q) = %v, want nil", id, err)
+		}
+	}
+}
+
+// Two writers on one record — a foreman heartbeating while the dashboard
+// updates it — must not publish a mixture of both payloads. A fixed
+// "<id>.yaml.tmp" lets them interleave into the same file before the rename.
+func TestConcurrentSavesNeverPublishAMixture(t *testing.T) {
+	sandbox(t)
+	var wg sync.WaitGroup
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			owner := "short"
+			if i%2 == 0 {
+				owner = strings.Repeat("long", 200)
+			}
+			if err := Save(Record{ID: "fm-a", Owner: owner, Heartbeat: Now()}); err != nil {
+				t.Error(err)
+			}
+		}(i)
+	}
+	wg.Wait()
+
+	r, err := Load("fm-a")
+	if err != nil {
+		t.Fatalf("record is unreadable after concurrent saves: %v", err)
+	}
+	if r.Owner != "short" && r.Owner != strings.Repeat("long", 200) {
+		t.Errorf("owner is a mixture of two writers: %q", r.Owner)
+	}
+	entries, err := os.ReadDir(Dir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Errorf("temp files left behind: %v", entries)
 	}
 }
 

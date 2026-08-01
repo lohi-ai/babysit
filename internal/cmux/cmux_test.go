@@ -209,6 +209,28 @@ func TestCloseMissingWorkspaceIsNotAnError(t *testing.T) {
 	}
 }
 
+// A failed listing means the title's absence was never established. Returning
+// ErrNoWorkspace there would make Close report success and the caller retire a
+// foreman whose workspace is still open.
+func TestWorkspaceRefReportsAFailedListing(t *testing.T) {
+	fakeCmux(t, `case "$1" in
+  ping) echo PONG ;;
+  list-windows) echo '`+windowsJSON+`' ;;
+  workspace) echo "socket error" >&2; exit 1 ;;
+esac`)
+	c, err := Preflight()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := c.CapturePane("bbs foreman fm-a", 10); errors.Is(err, ErrNoWorkspace) || err == nil {
+		t.Fatalf("want the listing failure surfaced, got %v", err)
+	}
+	if err := c.Close("bbs foreman fm-a"); err == nil {
+		t.Fatal("Close reported success without ever seeing the workspace list")
+	}
+}
+
 // Create has no caller window when the server is detached, so it must name one
 // itself or cmux fails with no window context.
 func TestCreatePassesAWindow(t *testing.T) {
