@@ -16,6 +16,8 @@
 #   clear-when-unset          resume on an uncontrolled ticket is a no-op, rc 0
 #   reconcile-skips-control   plan.md would advance triage→planned; paused wins
 #   assign-and-unassign       assignee set, then --none clears it to null
+#   board-shows-control       board sub-row names state/actor/rung/undo verb,
+#                             and a control-cancelled ticket is not hidden
 
 set -u
 SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
@@ -162,6 +164,33 @@ T="$(mktemp -d)"
   out="$("$BBS" assign 2>&1)"; rc=$?
   [ "$rc" -eq 2 ] || { echo "bare assign rc=$rc: $out"; exit 1; }
 ) && ok "assign-and-unassign" || fail "assign-and-unassign"
+rm -rf "$T"
+
+# ── board-shows-control ───────────────────────────────────────────────
+T="$(mktemp -d)"
+(
+  sandbox "$T"
+  "$BBS" set-status planned >/dev/null 2>&1
+  "$BBS" pause --note "awaiting design" >/dev/null 2>&1
+
+  out="$("$BBS" board --all 2>&1)"
+  # The control state is a sub-row, not a STATUS cell — the row must still
+  # report the real rung, and the line must name the verb that undoes it.
+  printf '%s' "$out" | grep -q "paused by mayor — status stays planned" \
+    || { echo "no control sub-row: $out"; exit 1; }
+  printf '%s' "$out" | grep -q "resume" || { echo "sub-row omits the undo verb: $out"; exit 1; }
+
+  # control.state=cancelled is not status=cancelled: the default (non---all)
+  # board hides the terminal status but must still list a controlled ticket.
+  export BABYSIT_TICKET="bs-ctl0003"
+  "$BBS" set-status planned >/dev/null 2>&1
+  "$BBS" cancel >/dev/null 2>&1
+  out="$("$BBS" board 2>&1)"
+  printf '%s' "$out" | grep -q "^bs-ctl0003" || { echo "control-cancelled ticket hidden: $out"; exit 1; }
+  printf '%s' "$out" | grep -q "cancelled by mayor — status stays planned" \
+    || { echo "no cancel sub-row: $out"; exit 1; }
+  printf '%s' "$out" | grep -q "restore" || { echo "cancel sub-row omits restore: $out"; exit 1; }
+) && ok "board-shows-control" || fail "board-shows-control"
 rm -rf "$T"
 
 echo

@@ -106,6 +106,12 @@ func runBoard(args []string) {
 		}
 
 		fmt.Printf(boardRowFmt, tid, status, qa, review, pushed, session, prDisp, branch)
+		// Control is a sub-row, not a STATUS cell: the two are different axes,
+		// and a paused ticket's real rung is what the human needs to see.
+		if c := idx.Control; c != nil && c.State != "" {
+			fmt.Printf(retarget("  ⏸ %s by %s — status stays %s (bbs-ticket %s)\n"),
+				c.State, c.Actor, status, undoVerb(c.State))
+		}
 		if merged {
 			fmt.Printf(retarget("  ↳ PR merged — next: bbs-ticket reset-base; BABYSIT_TICKET=%s bbs-ticket set-status done\n"), tid)
 		}
