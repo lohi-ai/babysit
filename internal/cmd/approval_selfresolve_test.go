@@ -1,9 +1,50 @@
 package cmd
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/reallongnguyen/babysit/internal/identity"
+	"github.com/reallongnguyen/babysit/internal/ticket"
 )
+
+// The floor is only as good as the text it reads. A design.md can be bland
+// while the prototype it describes is a checkout screen, and design-ui may
+// have relocated the spec via pointers.design — both were blind spots that let
+// a Stripe prototype auto-approve under an unbounded grant.
+func TestDesignTextReadsThePrototypeAndTheDesignPointer(t *testing.T) {
+	home := t.TempDir()
+	tickets := filepath.Join(home, "tickets", "bs-test")
+	if err := os.MkdirAll(tickets, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write := func(name, body string) {
+		if err := os.WriteFile(filepath.Join(tickets, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("design.md", "Adds an upgrade panel. Tokens from DESIGN.md.")
+	write("prototype.html", `<button data-stripe-checkout>Pay</button>`)
+	write("index.json", `{"pointers":{"design":"spec/real-design.md"}}`)
+	if err := os.MkdirAll(filepath.Join(tickets, "spec"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write("spec/real-design.md", "the invoice total is recomputed on renewal")
+
+	st := ticket.New(identity.Env{ProjectHome: home, Ticket: "bs-test"})
+	got := designText(st, "Coverage: AC1 maps to plan step 2")
+
+	for _, want := range []string{"stripe-checkout", "invoice total"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("design corpus missed %q — floor cannot see it", want)
+		}
+	}
+	if hits := floorHits(got); len(hits) == 0 {
+		t.Error("floor cleared a prototype with a Stripe checkout and an invoice")
+	}
+}
 
 func TestFloorCatchesNonDelegablePaths(t *testing.T) {
 	hits := []string{

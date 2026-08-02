@@ -467,8 +467,15 @@ func foremanGrantShow(id string) error {
 		fmt.Println("none")
 		return nil
 	}
-	fmt.Printf("%s — %s\n", describeGrant(r.Grant), "granted by "+r.Grant.GrantedBy+" at "+r.Grant.At)
-	if ok, reason := r.Allows("", time.Now()); !ok && reason != "grant is ticket-scoped and no ticket was named" {
+	fmt.Printf("%s — granted by %s at %s\n", describeGrant(r.Grant), r.Grant.GrantedBy, r.Grant.At)
+	// Probe with a ticket the grant is meant to cover, so "inactive" reports a
+	// real bound — expiry or budget — rather than the scope check tripping on
+	// the empty string we passed it.
+	probe := ""
+	if len(r.Grant.Tickets) > 0 {
+		probe = r.Grant.Tickets[0]
+	}
+	if ok, reason := r.Allows(probe, time.Now()); !ok {
 		fmt.Printf("inactive: %s\n", reason)
 	}
 	return nil

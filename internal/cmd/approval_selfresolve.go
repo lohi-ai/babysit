@@ -151,6 +151,21 @@ func parseRubric(text string) (filled map[string]string, missing []string) {
 	return filled, missing
 }
 
+// designArtifacts are the ticket-root documents the design checkpoint is made
+// of. prototype.html belongs in the list even though it is markup rather than
+// prose: it is the artifact the rubric asks the foreman to inspect, and it is
+// where a money surface actually becomes visible. A bland design.md sitting
+// over a prototype full of Stripe buttons and a credit-card field must not
+// clear the floor.
+var designArtifacts = []string{"requirement.md", "plan.md", "design.md", "prototype.html"}
+
+// designPointers are the index keys that may relocate one of those artifacts.
+// design-ui writes design.md and then records the real path in
+// pointers.design, which internal/cmd/design.go already treats as
+// authoritative — so a floor that only globbed the ticket root would read
+// nothing at all for exactly the tickets that have a design spec.
+var designPointers = []string{"pointers.requirement", "pointers.plan", "pointers.design"}
+
 // designText is the corpus the floor is checked against: what the foreman
 // asserts in the rubric plus what the worker actually wrote. Reading the
 // artifacts and not just the rubric is what keeps the floor from being
@@ -158,11 +173,29 @@ func parseRubric(text string) (filled map[string]string, missing []string) {
 func designText(st *ticket.Store, rubric string) string {
 	var b strings.Builder
 	b.WriteString(rubric)
-	for _, name := range []string{"requirement.md", "plan.md", "design.md"} {
-		if data, err := os.ReadFile(filepath.Join(st.Home(), name)); err == nil {
+	seen := map[string]bool{}
+	add := func(p string) {
+		if p == "" {
+			return
+		}
+		if !filepath.IsAbs(p) {
+			p = filepath.Join(st.Home(), p)
+		}
+		if seen[p] {
+			return
+		}
+		seen[p] = true
+		if data, err := os.ReadFile(p); err == nil {
 			b.WriteString("\n")
 			b.Write(data)
 		}
+	}
+	for _, name := range designArtifacts {
+		add(name)
+	}
+	doc := ticket.ReadDoc(st.IndexPath())
+	for _, key := range designPointers {
+		add(strings.TrimSpace(doc.Get(key)))
 	}
 	return b.String()
 }

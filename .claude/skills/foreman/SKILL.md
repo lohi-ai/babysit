@@ -289,6 +289,11 @@ audit afterwards. Route on the exit code:
 | 4 | rubric not filled with named evidence | feedback round (max 2), then `BLOCKED` naming the unfilled lines it printed |
 | 5 | no grant, expired, budget spent, or ticket out of scope | escalate to the human as usual |
 
+The floor reads the artifacts, not just your rubric: `requirement.md`,
+`plan.md`, `design.md` and `prototype.html` at the ticket root, plus whatever
+`pointers.requirement/plan/design` name. A bland `design.md` over a checkout
+prototype still escalates.
+
 Two rules the grant does not relax. The floor is not overridable — a change
 touching money, auth or an irreversible data path escalates even under an
 unbounded grant, and the check is deliberately over-eager, so an escalation
