@@ -7,7 +7,9 @@ import (
 	"os/user"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/reallongnguyen/babysit/internal/cmux"
 	"github.com/reallongnguyen/babysit/internal/foreman"
@@ -23,6 +25,9 @@ const foremanUsage = `Usage:
   bbs foreman heartbeat <id> [--status <status>] [--session <path>]
   bbs foreman spawn [<id>] [--dir <path>] [--command <text>]
   bbs foreman retire <id> [--keep-workspace]
+  bbs foreman grant <id> [--hours <n>] [--max <n>] [--tickets <a,b>] [--unbounded]
+  bbs foreman grant show <id>
+  bbs foreman grant revoke <id>
 `
 
 func newForemanCmd() *cobra.Command {
@@ -67,6 +72,8 @@ func dispatchForeman(args []string) error {
 		return err
 	case "retire":
 		return foremanRetire(rest)
+	case "grant":
+		return foremanGrant(rest)
 	case "help", "--help", "-h":
 		fmt.Print(foremanUsage)
 		return nil
@@ -91,7 +98,7 @@ func foremanFlags(args []string) (id string, kv map[string]string, err error) {
 			return "", nil, fmt.Errorf("foreman: unexpected argument '%s'", a)
 		}
 		key := strings.TrimPrefix(a, "--")
-		if key == "keep-workspace" { // the one boolean flag
+		if key == "keep-workspace" || key == "unbounded" { // the boolean flags
 			kv[key] = "1"
 			continue
 		}
@@ -150,6 +157,13 @@ func foremanInbox(args []string) error {
 	}
 	sort.Strings(names)
 
+	// Loaded once, outside the loop: the grant is a property of the foreman
+	// reading its inbox, not of the tickets in it. A missing record is not an
+	// error here — inbox is a read, and a foreman with no record simply has no
+	// grant.
+	rec, _ := foreman.Load(id)
+	now := time.Now()
+
 	rows := 0
 	for _, tid := range names {
 		// Reconcile writes; a paused or cancelled ticket is skipped inside.
@@ -162,10 +176,20 @@ func foremanInbox(args []string) error {
 			fmt.Printf("%-16s %-14s %-12s %s\n", "TICKET", "STATUS", "CONTROL", "APPROVAL")
 		}
 		rows++
+		approval := orDefault(doc.Get("approval.state"), "-")
+		// A pending row normally means "wait for the human". Under a grant
+		// covering this ticket it means the opposite — the foreman is the one
+		// being waited on — and a foreman that read `pending` and waited would
+		// stall the batch the grant exists to keep moving.
+		if approval == "pending" {
+			if ok, _ := rec.Allows(tid, now); ok {
+				approval = "pending(grantable)"
+			}
+		}
 		fmt.Printf("%-16s %-14s %-12s %s\n", tid,
 			orDefault(doc.Get("status"), "triage"),
 			orDefault(doc.Get("control.state"), "-"),
-			orDefault(doc.Get("approval.state"), "-"))
+			approval)
 	}
 	if rows == 0 {
 		fmt.Printf("%s: no tickets assigned\n", id)
@@ -340,6 +364,131 @@ func foremanRetire(args []string) error {
 	}
 	fmt.Printf("retired %s\n", id)
 	return nil
+}
+
+// foremanGrant delegates the design checkpoint to a foreman — the human
+// saying "you may approve plans and prototypes yourself" in a form that
+// survives the session that said it.
+//
+// Bounds are opt-out rather than opt-in, and an unbounded grant has to be
+// typed: `grant fm-a` with no bounds is refused, because the difference
+// between "approve the next three designs while I sleep" and "approve
+// anything forever" is exactly the difference this command exists to make
+// visible.
+func foremanGrant(args []string) error {
+	if len(args) > 0 && (args[0] == "revoke" || args[0] == "show") {
+		verb := args[0]
+		id, _, err := foremanFlags(args[1:])
+		if err != nil {
+			return err
+		}
+		if id == "" {
+			return fmt.Errorf("foreman grant %s: needs an id\n%s", verb, foremanUsage)
+		}
+		if verb == "show" {
+			return foremanGrantShow(id)
+		}
+		return foremanGrantRevoke(id)
+	}
+
+	id, kv, err := foremanFlags(args)
+	if err != nil {
+		return err
+	}
+	if id == "" {
+		return fmt.Errorf("foreman grant: needs an id\n%s", foremanUsage)
+	}
+	r, err := foreman.Load(id)
+	if err != nil {
+		return err
+	}
+
+	g := &foreman.Grant{GrantedBy: currentUser(), At: foreman.Now()}
+	if h := kv["hours"]; h != "" {
+		n, err := strconv.Atoi(h)
+		if err != nil || n <= 0 {
+			return fmt.Errorf("foreman grant: --hours needs a positive number, got %q", h)
+		}
+		g.ExpiresAt = time.Now().UTC().Add(time.Duration(n) * time.Hour).Format(time.RFC3339)
+	}
+	if m := kv["max"]; m != "" {
+		n, err := strconv.Atoi(m)
+		if err != nil || n <= 0 {
+			return fmt.Errorf("foreman grant: --max needs a positive number, got %q", m)
+		}
+		g.MaxApprovals = n
+	}
+	if t := kv["tickets"]; t != "" {
+		for _, part := range strings.Split(t, ",") {
+			if p := strings.TrimSpace(part); p != "" {
+				g.Tickets = append(g.Tickets, p)
+			}
+		}
+	}
+	if g.Unbounded() && kv["unbounded"] == "" {
+		return fmt.Errorf("foreman grant: an unbounded grant must be typed — pass --hours/--max/--tickets, or --unbounded to mean it")
+	}
+
+	r.Grant = g
+	if err := foreman.Save(r); err != nil {
+		return err
+	}
+	fmt.Printf("granted %s design-checkpoint approval — %s\n", id, describeGrant(g))
+	fmt.Println("the non-delegable floor still holds: money, auth and irreversible-data changes escalate.")
+	return nil
+}
+
+func foremanGrantRevoke(id string) error {
+	r, err := foreman.Load(id)
+	if err != nil {
+		return err
+	}
+	if r.Grant == nil {
+		fmt.Printf("%s has no grant\n", id)
+		return nil
+	}
+	r.Grant = nil
+	if err := foreman.Save(r); err != nil {
+		return err
+	}
+	// Said plainly because it is the question a human asks next: revoking is
+	// not a rollback, and it does not reach into a worker already building.
+	fmt.Printf("revoked %s — it escalates by default again\n", id)
+	fmt.Println("work already approved under the grant stands; in-flight workers keep going.")
+	return nil
+}
+
+func foremanGrantShow(id string) error {
+	r, err := foreman.Load(id)
+	if err != nil {
+		return err
+	}
+	if r.Grant == nil {
+		fmt.Println("none")
+		return nil
+	}
+	fmt.Printf("%s — %s\n", describeGrant(r.Grant), "granted by "+r.Grant.GrantedBy+" at "+r.Grant.At)
+	if ok, reason := r.Allows("", time.Now()); !ok && reason != "grant is ticket-scoped and no ticket was named" {
+		fmt.Printf("inactive: %s\n", reason)
+	}
+	return nil
+}
+
+func describeGrant(g *foreman.Grant) string {
+	if g.Unbounded() {
+		return "unbounded"
+	}
+	var parts []string
+	if g.ExpiresAt != "" {
+		parts = append(parts, "until "+g.ExpiresAt)
+	}
+	if g.MaxApprovals > 0 {
+		parts = append(parts, fmt.Sprintf("%d/%d approvals used", g.Used, g.MaxApprovals))
+	}
+	if len(g.Tickets) > 0 {
+		parts = append(parts, "tickets "+strings.Join(g.Tickets, ","))
+	}
+	return strings.Join(parts, "; ")
 }
 
 func currentUser() string {

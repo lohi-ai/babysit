@@ -58,6 +58,105 @@ type Record struct {
 	// Status would erase the foreman's own report to record someone else's
 	// failure to reach it.
 	Unreachable string `yaml:"unreachable,omitempty"`
+	// Grant is the human's delegation of the design checkpoint to this
+	// foreman. A pointer, not a value: nil is "no grant" and must serialize
+	// to nothing at all, because a record written before grants existed and a
+	// record whose grant was revoked have to be the same bytes on disk.
+	Grant *Grant `yaml:"grant,omitempty"`
+}
+
+// Grant is permission for a foreman to resolve its own design checkpoint —
+// to write the approval verdict a human would otherwise write in the
+// dashboard. It is deliberately a record of *who said so and until when*
+// rather than a boolean: an unattended approval nobody can attribute after
+// the fact is indistinguishable from a bug.
+//
+// Every bound is "unset means unbounded", so the zero Grant is the most
+// permissive one. That is the wrong default to reach by accident, which is
+// why the CLI refuses to mint it without an explicit --unbounded.
+type Grant struct {
+	GrantedBy string `yaml:"granted_by"`
+	At        string `yaml:"at"`
+	// ExpiresAt is RFC3339; empty means no time bound.
+	ExpiresAt string `yaml:"expires_at,omitempty"`
+	// MaxApprovals is the approval budget; 0 means no budget bound.
+	MaxApprovals int `yaml:"max_approvals,omitempty"`
+	// Used counts approvals actually written under this grant.
+	Used int `yaml:"used"`
+	// Tickets scopes the grant to a ticket set; empty means any ticket.
+	Tickets []string `yaml:"tickets,omitempty"`
+}
+
+// Unbounded reports a grant with no expiry, no budget and no ticket scope.
+func (g *Grant) Unbounded() bool {
+	return g != nil && g.ExpiresAt == "" && g.MaxApprovals == 0 && len(g.Tickets) == 0
+}
+
+// Allows reports whether this record's grant covers approving `ticket` at
+// `now`, and when it does not, the reason — the reason is the point: it is
+// what the foreman prints when it escalates instead, so a human reading the
+// pane learns whether to extend the grant or answer the question themselves.
+//
+// It does NOT consider the non-delegable floor. That check reads the design
+// artifacts rather than the record and lives with the caller, so that no
+// future grant field can be mistaken for a way to switch the floor off.
+func (r Record) Allows(ticket string, now time.Time) (bool, string) {
+	g := r.Grant
+	if g == nil {
+		return false, "no grant"
+	}
+	if g.ExpiresAt != "" {
+		exp, err := time.Parse(time.RFC3339, g.ExpiresAt)
+		if err != nil {
+			// An unparseable bound is not a missing bound: reading it as
+			// "unbounded" would turn a corrupt field into unlimited authority.
+			return false, fmt.Sprintf("grant expiry %q is unreadable", g.ExpiresAt)
+		}
+		if !now.Before(exp) {
+			return false, "grant expired at " + g.ExpiresAt
+		}
+	}
+	if g.MaxApprovals > 0 && g.Used >= g.MaxApprovals {
+		return false, fmt.Sprintf("grant budget spent (%d/%d)", g.Used, g.MaxApprovals)
+	}
+	if len(g.Tickets) > 0 {
+		if ticket == "" {
+			return false, "grant is ticket-scoped and no ticket was named"
+		}
+		found := false
+		for _, t := range g.Tickets {
+			if t == ticket {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false, fmt.Sprintf("%s is outside the grant's ticket scope (%s)", ticket, strings.Join(g.Tickets, ", "))
+		}
+	}
+	return true, ""
+}
+
+// Consume records one approval spent against the grant. It re-Loads first so
+// the increment lands on the current record rather than on a copy the caller
+// may have been holding across a heartbeat.
+//
+// Like MarkUnreachable this is Load-modify-Save with no lock, and the same
+// tradeoff applies with one difference worth stating: the value at stake is a
+// budget, not a display field. Two resolvers racing can each read used=N and
+// both write N+1, spending one approval more than the budget allows per
+// racing caller. A foreman handles its checkpoints serially within one
+// session, so the race needs two foremen sharing an id to appear at all.
+func Consume(id string) error {
+	r, err := Load(id)
+	if err != nil {
+		return err
+	}
+	if r.Grant == nil {
+		return fmt.Errorf("foreman %s: no grant to consume", id)
+	}
+	r.Grant.Used++
+	return Save(r)
 }
 
 // MarkUnreachable records that a poke did not reach this foreman's workspace.

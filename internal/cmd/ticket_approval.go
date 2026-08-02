@@ -209,7 +209,7 @@ func approvalRead(st *ticket.Store) (state, outcome, note string) {
 
 func runApproval(args []string) {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "approval: publish | status | resolve | await | comment | comments")
+		fmt.Fprintln(os.Stderr, "approval: publish | status | resolve | await | comment | comments | self-resolve")
 		os.Exit(2)
 	}
 	env := identity.Resolve()
@@ -311,8 +311,11 @@ func runApproval(args []string) {
 	case "await":
 		runApprovalAwait(st, env, args[1:])
 
+	case "self-resolve":
+		runApprovalSelfResolve(st, env, args[1:])
+
 	default:
-		fmt.Fprintln(os.Stderr, "approval: publish | status | resolve | await | comment | comments")
+		fmt.Fprintln(os.Stderr, "approval: publish | status | resolve | await | comment | comments | self-resolve")
 		os.Exit(2)
 	}
 }
