@@ -167,7 +167,7 @@ func (s *dashServer) handleCreateTicket(w http.ResponseWriter, r *http.Request) 
 		title = firstLineOf(req.Requirement)
 	}
 	err = withLock(st, func() error {
-		if err := os.WriteFile(reqPath, []byte(strings.TrimRight(req.Requirement, "\n")+"\n"), 0o644); err != nil {
+		if err := os.WriteFile(reqPath, []byte(requirementBody(title, req.Requirement)), 0o644); err != nil {
 			return err
 		}
 		doc := loadForMutate(st)
@@ -385,7 +385,10 @@ func (s *dashServer) wake(id, msg string) wakeResult {
 // serveDashboard binds a localhost listener and serves until interrupted.
 func serveDashboard(s *dashServer, port int, open bool) error {
 	if _, err := os.Stat(filepath.Join(s.distDir, "index.html")); err != nil {
-		dashErr("web/dist/ missing; run: bbs dashboard build")
+		// Same string as the snapshot path's, verbatim: `bbs dashboard` with no
+		// flags now lands here instead of there, and that is the message
+		// tests/test_bbs_dashboard.sh asserts on for the default invocation.
+		dashErr("web/dist/ missing; run: bbs-dashboard build")
 		os.Exit(1)
 	}
 	// 127.0.0.1, never :: or 0.0.0.0 — this API mutates ticket state and spawns
@@ -426,6 +429,22 @@ func decode(w http.ResponseWriter, r *http.Request, into interface{}) bool {
 		return false
 	}
 	return true
+}
+
+// requirementBody is the file the ticket is listed by. dashboard.Compose takes
+// a ticket's display title from requirement.md's first `# ` heading and falls
+// back to the bare id — index.json's `title` is never read for display — so a
+// requirement typed into the browser with no heading would list as "bs-xxxxxxxx"
+// in the very dashboard that created it. Bodies that already open with a
+// heading are left exactly as typed.
+func requirementBody(title, requirement string) string {
+	body := strings.TrimRight(requirement, "\n") + "\n"
+	for _, ln := range strings.Split(body, "\n") {
+		if strings.HasPrefix(ln, "# ") {
+			return body
+		}
+	}
+	return "# " + title + "\n\n" + body
 }
 
 func firstLineOf(s string) string {

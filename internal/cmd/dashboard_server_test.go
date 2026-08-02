@@ -108,7 +108,9 @@ func TestCreateTicketWritesRequirementAndIndex(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(body) != "Make the thing work\nmore detail\n" {
+	// The typed text is preserved verbatim under the heading the lister needs
+	// (TestACreatedRequirementCarriesAHeading covers the heading itself).
+	if !strings.HasSuffix(string(body), "Make the thing work\nmore detail\n") {
 		t.Errorf("requirement.md body: %q", body)
 	}
 	doc := readIndex(t, resp["home"])
@@ -252,6 +254,34 @@ func TestCreateTicketTakesAnExplicitTitle(t *testing.T) {
 	_ = json.Unmarshal(w.Body.Bytes(), &resp)
 	if got := readIndex(t, resp["home"])["title"]; got != "A better title" {
 		t.Errorf("title = %v", got)
+	}
+}
+
+// dashboard.Compose lists a ticket by requirement.md's first `# ` heading and
+// falls back to the id, so a headingless requirement makes the dashboard show
+// the ticket it just created as a bare id.
+func TestACreatedRequirementCarriesAHeading(t *testing.T) {
+	s, _ := sandboxServer(t)
+	w := post(t, s, "/api/tickets", `{"project":"proj","requirement":"Add a foreman column\n\nmore detail"}`)
+	if w.Code != 200 {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	var resp map[string]string
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
+	body, err := os.ReadFile(resp["requirement"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "# Add a foreman column\n\nAdd a foreman column\n\nmore detail\n"; string(body) != want {
+		t.Errorf("requirement.md =\n%q\nwant\n%q", body, want)
+	}
+
+	// A body that already opens with its own heading is left as typed.
+	w = post(t, s, "/api/tickets", `{"project":"proj","requirement":"# Mine\n\ndetail"}`)
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
+	body, _ = os.ReadFile(resp["requirement"])
+	if string(body) != "# Mine\n\ndetail\n" {
+		t.Errorf("rewrote a requirement that had its own heading: %q", body)
 	}
 }
 
