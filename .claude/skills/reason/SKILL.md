@@ -75,7 +75,7 @@ working, not a failure. Record the strongest *surviving* objection. If
 attacks kill two different candidates in a row, stop treating it as a
 design problem: the task is under-specified — escalate `NEEDS_CONTEXT`
 with both corpses as evidence (delivery per
-[preamble.md](../references/preamble.md#one-mode-two-escalation-channels)).
+[preamble.md](../references/preamble.md#one-mode-three-escalation-channels)).
 ### 5. Verify
 Define the check *before* declaring done — a command, test, or browser step
 that would fail if you're wrong — then run it. Check, don't attest: the

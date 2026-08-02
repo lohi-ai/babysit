@@ -1,21 +1,21 @@
 ---
 name: foreman
-description: Attended orchestrator for parallel feature work — one visible Claude Code worker per ticket in its own cmux workspace (tmux session when cmux is absent), workers run autopilot, pane monitoring, design-checkpoint review with feedback, greenlight-by-/goal or human escalation. Use when the user hands you product requests to run in parallel while staying able to watch and intervene.
+description: Attended orchestrator for parallel feature work — one visible Claude Code worker per ticket in its own cmux workspace, workers run autopilot, pane monitoring, design-checkpoint review with feedback, greenlight-by-/goal or human escalation. Requires cmux. Use when the user hands you product requests to run in parallel while staying able to watch and intervene.
 ---
 # foreman
 
-Workers are full Claude Code sessions in cmux workspaces (or tmux panes) the human
-can open at any moment; you dispatch them, watch them, review their designs,
-and own the checkpoint between design and build. Workers own the code.
+Workers are full Claude Code sessions in cmux workspaces the human can open at
+any moment; you dispatch them, watch them, review their designs, and own the
+checkpoint between design and build. Workers own the code.
 
 ## Invocation
 
 Route by the shape of the argument, not a verb:
 
-- bare — attach/resume: live `bbs …` workers (`cmux workspace list`, or
-  `tmux ls`) + `bbs ticket board` are the state; reconcile (live workers,
-  verdicts, todo list vs reality), re-arm a monitor per live worker, report
-  the board, resume. Disk + the terminal are sufficient — never rely on
+- bare — attach/resume: live `bbs …` workers (`cmux workspace list`)
+  + `bbs foreman inbox` + `bbs ticket board` are the state; reconcile (live
+  workers, verdicts, todo list vs reality), re-arm a monitor per live worker,
+  report the board, resume. Disk + the terminal are sufficient — never rely on
   conversation memory.
 - free text — a requirement: dispatch one worker for it. `+`-separated (or
   one per line) → one worker each. Beyond `MAX_WORKERS` → `pending` todos,
@@ -23,8 +23,8 @@ Route by the shape of the argument, not a verb:
   ignored.)
 - ticket-id — that ticket's worker: attach if its session lives, else
   re-dispatch from disk state (`/bbs:autopilot builder <ticket>`).
-- `stop <ticket|tab|session>` — the only verb: archive the pane, close the
-  workspace/session, mark the todo (this is the explicit permission the kill rule
+- `stop <ticket|workspace>` — the only verb: archive the pane, close the
+  workspace, mark the todo (this is the explicit permission the kill rule
   requires; without a terminal STATUS the ticket stays resumable from disk).
 
 **One human-review command: `bbs ticket serve`.** Bare = every finished
@@ -44,50 +44,92 @@ MAX_WORKERS="$(bbs config get parallel_max_workers 2>/dev/null || true)"
 [ -n "$MAX_WORKERS" ] || MAX_WORKERS=3   # workers share CPU + one dev server
 ```
 
-## Terminal backend — cmux first, tmux fallback
+## The assignment inbox
+
+When the dashboard spawned you, you have an id (`bbs foreman list`, or
+`$BABYSIT_FOREMAN`), and the human assigns tickets to it from the web UI.
+**Re-read the inbox from disk on every tick and every resume, and act only on
+what it says** — never on a status you remember from earlier in the session:
 
 ```bash
-if command -v cmux >/dev/null 2>&1 && cmux ping >/dev/null 2>&1; then MUX=cmux; else MUX=tmux; fi
+bbs foreman inbox "$FM"      # reconciles first, then lists TICKET STATUS CONTROL APPROVAL
+bbs foreman heartbeat "$FM" --status "<what you are doing>"
 ```
 
-Under cmux each worker is its own **workspace** — a sidebar entry with its own
-cwd (the ticket worktree), status pill and notification badge, not a
-horizontal tab inside another workspace. The human switches workers by
-clicking, no attach/detach. `$W` is the handle: a `workspace:<n>` ref under
-cmux, the session name under tmux.
+`inbox` reconciles each ticket against the filesystem before printing it, so
+the status you read is derived truth, not a leftover write. Rows are the whole
+queue — assignment is a field on the ticket, so nothing else can disagree with
+it. Two columns gate action:
 
-| op | cmux (`$W` = `workspace:<n>`) | tmux (`$W` = session) |
-|---|---|---|
-| read pane | `cmux capture-pane --workspace "$W" --lines 60` | `tmux capture-pane -t "$W" -p` |
-| alive? | `cmux workspace list \| grep -q "$W "` | `tmux has-session -t "$W"` |
-| one-line msg | `cmux send --workspace "$W" -- '<text>\n'` | `tmux send-keys -t "$W" '<text>' Enter` |
-| key | `cmux send-key --workspace "$W" enter\|escape\|ctrl+c\|ctrl+u` | `tmux send-keys -t "$W" Enter` |
-| human opens it | clicks it in the sidebar, or `cmux workspace select "$W"` | `tmux attach -t "$W"`  (detach: `Ctrl-b d`) |
-| close | `cmux workspace close "$W"` | `tmux kill-session -t "$W"` |
+- `CONTROL` = `paused` or `cancelled` → the human stopped it. Don't dispatch;
+  don't close the todo either (both are reversible — `resume`/`restore` bring
+  it straight back). A worker already running for it: leave the work in place
+  and stop feeding it.
+- `APPROVAL` = `pending` → the design checkpoint is with the human; wait on
+  the verdict rather than greenlighting it yourself (see below).
+
+Unassigned tickets are not yours: dispatch only what the inbox lists, plus
+whatever the human hands you directly in this session.
+
+## Terminal backend — cmux, required
+
+cmux is a hard dependency. Preflight before dispatching anything; a foreman
+that degrades to a weaker terminal silently loses the sidebar, the status
+pills and the notifications the whole attended loop is built on, so fail here
+instead:
+
+```bash
+command -v cmux >/dev/null 2>&1 && cmux ping >/dev/null 2>&1 || {
+  echo "BLOCKED: foreman requires cmux — install it (https://github.com/manaflow-ai/cmux) and make sure the app is running" >&2
+  exit 1
+}
+```
+
+Each worker is its own **workspace** — a sidebar entry with its own cwd (the
+ticket worktree), status pill and notification badge, not a horizontal tab
+inside another workspace. The human switches workers by clicking, no
+attach/detach. `$W` is the handle, a `workspace:<n>` ref.
+
+| op | command |
+|---|---|
+| read pane | `cmux capture-pane --workspace "$W" --lines 60` |
+| alive? | `cmux workspace list \| grep -q "$W "` |
+| one-line msg | `cmux send --workspace "$W" -- '<text>\n'` |
+| key | `cmux send-key --workspace "$W" enter\|escape\|ctrl+c\|ctrl+u` |
+| retitle | `cmux workspace rename "$W" --title "bbs <ticket>: <one-liner>"` |
+| sidebar pill | `cmux set-status bbs "<lane>" --workspace "$W" --icon sparkle` |
+| notify | `cmux notify --workspace "$W" --title "<ticket> needs you" --body "<the ask>"` |
+| human opens it | clicks it in the sidebar, or `cmux workspace select "$W"` |
+| close | `cmux workspace close "$W"` |
 
 Refs are per-window ids, stable while cmux runs but reassigned across an app
 restart — on bare resume re-derive `$W` from the workspace **title** via
 `cmux workspace list`, which is why every worker is titled `bbs <ticket-or-slug>`.
+The title is the durable handle; the ref is not.
 
-cmux-only affordances that make the board readable — use them, they are the
-reason to prefer cmux:
+`set-status` takes a fixed lane, not free text: `todo`, `working`,
+`needs-attention`, `review`, `done`, `auto`. Map the phase onto the nearest
+one (designing/building → `working`, escalation → `needs-attention`, design
+gate or QA handoff → `review`) — an unknown lane is rejected, not shown.
+
+**`cmux send` is byte-transparent.** Whatever bytes you hand it arrive at the
+worker's input unchanged: newlines land as newlines, and escape sequences land
+as literal characters rather than being interpreted. Anything in bbs that
+sends multi-line text to a workspace — this skill, `bbs dashboard`'s wake —
+sends it raw and never wraps or re-encodes it.
+
+Satellites belong *inside* a worker's workspace, so the whole worker closes as
+one unit:
 
 ```bash
-cmux workspace rename "$W" --title "bbs <ticket>: <one-liner>"   # once autopilot mints the ticket
-cmux set-status bbs "<phase>" --workspace "$W" --icon sparkle    # sidebar pill: designing / building / QA / BLOCKED
-cmux notify --workspace "$W" --title "<ticket> needs you" --body "<the ask>"   # on escalation
+cmux new-surface --workspace "$W" --working-directory <worktree>   # a shell for the dev server or a log tail
+cmux new-pane --type browser --workspace "$W" --url <url>          # a live preview
 ```
-
-Horizontal **tabs** are for a worker's satellites, never for workers: a dev
-server, a log tail, a browser preview belong *inside* that worker's workspace
-(`cmux new-surface --workspace "$W" --working-directory <worktree>`,
-`cmux new-pane --type browser --workspace "$W" --url <url>`), so the whole
-worker closes as one unit.
 
 ## Dispatch a worker
 
 ```bash
-# cmux — new sidebar workspace, unfocused so the human's current one is not stolen
+# new sidebar workspace, unfocused so the human's current one is not stolen
 W=$(cmux workspace create --name "bbs <slug>" --cwd "$REPO" ${G:+--group "$G"} \
       --command "claude --dangerously-skip-permissions '/bbs:autopilot <requirement>'" \
     | awk '/^OK/{print $2}')     # -> workspace:5
@@ -103,13 +145,6 @@ On resume, re-derive `$G` by name from `cmux workspace-group list --json`, and
 adopt a worker dispatched without it via
 `cmux workspace-group add --group "$G" --workspace "$W"`.
 
-```bash
-# tmux fallback
-W="bbs-$(date +%s | tail -c 5)"   # or bbs-<ticket> when resuming a known ticket
-tmux new-session -d -s "$W" -x 200 -y 50 -c "$REPO"
-tmux send-keys -t "$W" "claude --dangerously-skip-permissions '/bbs:autopilot <requirement>'" Enter
-```
-
 Workers always run autopilot: it creates the ticket + worktree (`mode:
 worktree` recommended), seeds requirement/design/plan, and **stops at the
 copy-paste `/goal` handoff** — that stop is your review gate. Resuming a
@@ -119,15 +154,15 @@ crashed ticket: same spawn with `/bbs:autopilot builder <ticket>`.
 board and must mirror reality:
 
 - dispatch → `TaskCreate` `<ticket-or-slug>: <requirement one-liner>
-  [<workspace title|tmux session>]`, `in_progress`; beyond `MAX_WORKERS` →
+  [<workspace title>]`, `in_progress`; beyond `MAX_WORKERS` →
   `pending`, flipped when dispatched.
 - phase change / escalation → `TaskUpdate` the `activeForm` (what the worker
-  is doing + which workspace/session to open). Under cmux mirror the phase onto the
-  sidebar pill with `set-status`.
+  is doing + which workspace to open), and mirror the phase onto the sidebar
+  pill with `set-status`.
 - close-out (verdicts verified, pane archived) → `completed`. BLOCKED stays
   `in_progress` with the blocker — never complete a task to tidy the list.
-- bare resume → reconcile the list against `cmux workspace list` (or
-  `tmux ls`) + `board` first.
+- bare resume → reconcile the list against `cmux workspace list` + `board`
+  first.
 
 ## Monitor
 
@@ -147,35 +182,28 @@ while true; do
 done
 ```
 
-Under tmux the loop is identical with the read/alive lines swapped for
-`tmux capture-pane -t "$W" -p` and `tmux has-session -t "$W"`.
-
 ## Driving a worker's terminal
 
 - **Multi-line paste** (the `/goal` block) — clear first (input may hold a
-  pre-filled suggestion; never blind-Enter it), paste **bracketed** so the
-  newlines land in the box instead of submitting each line, then submit:
+  pre-filled suggestion; never blind-Enter it), send the block as-is, then
+  submit:
   ```bash
-  # cmux — paste-buffer is NOT bracketed (it Enters between lines); wrap it yourself
   cmux send-key --workspace "$W" ctrl+u
-  cmux send --workspace "$W" -- "$(printf '\033[200~%s\033[201~' "$BLK")"
+  cmux send --workspace "$W" -- "$BLK"
   cmux send-key --workspace "$W" enter
   ```
-  ```bash
-  # tmux
-  tmux send-keys -t "$W" C-u
-  tmux set-buffer -b blk '<text>'
-  tmux paste-buffer -p -b blk -t "$W"
-  tmux send-keys -t "$W" Enter
-  ```
+  `cmux send` is byte-transparent: embedded newlines arrive as real newlines
+  and land in the input box without submitting each line. **Do not wrap the
+  block in bracketed-paste markers** (`\033[200~` … `\033[201~`) — cmux
+  forwards those bytes literally, so they show up as `[200~` and `[201~`
+  inside the message the worker receives.
 - **Question menus** — `↑/↓` navigate, `Enter` selects the focused option and
-  advances, `Left`/`Right` switch questions, final view is "Submit answers".
-  Under cmux: `cmux send-key --workspace "$W" up|down|left|right|enter`.
+  advances, `Left`/`Right` switch questions, final view is "Submit answers":
+  `cmux send-key --workspace "$W" up|down|left|right|enter`.
   Capture the pane after every keystroke; menus re-render.
 - **Wedged TUI** (no spinner, no prompt, minutes of stillness with the process
-  alive): `Escape`, then a single `C-c` (`cmux send-key … escape` then
-  `ctrl+c`) — that recovers the prompt without killing the worker. Then
-  re-send context as a plain message.
+  alive): `cmux send-key … escape`, then a single `ctrl+c` — that recovers the
+  prompt without killing the worker. Then re-send context as a plain message.
 
 ## The design checkpoint (core)
 
@@ -214,7 +242,19 @@ exception**:
 - **Everything else → escalate** (the default): `AGENT_ROLE=developer` →
   one `AskUserQuestion` (options: greenlight / redirect with note / drop)
   with a one-paragraph design summary + artifact paths + the rubric as
-  filled; other roles → emit the `NEEDS_CONTEXT` block naming ticket +
+  filled; `AGENT_ROLE=dashboard` → publish the checkpoint and block on the
+  human's answer in the web UI, which reads the same artifacts:
+  ```bash
+  bbs ticket approval publish --kind plan --note "<the one question, in one line>"
+  DECISION=$(bbs ticket approval await)   # approved | redirected | dropped
+  bbs ticket approval comments            # anchored feedback, if the human left any
+  ```
+  `approved` → paste the worker's `/goal` block; `redirected` → the note and
+  the comments are the feedback round; `dropped` → stop work on the ticket
+  (nothing is deleted). A comment reads
+  `[plan · "<the line they pointed at>"] <what to change>` — relay it to the
+  worker verbatim, quote included: the quote is what locates the change, and
+  a redirect may carry comments and no note at all. Other roles → emit the `NEEDS_CONTEXT` block naming ticket +
   paths. When in doubt, escalate — a wrong escalation costs the human a
   minute; a wrong greenlight costs a build.
 
@@ -227,12 +267,11 @@ Whenever a worker needs a human — a question you can't answer, a `BLOCKED`/
 worker directly:
 
 ```text
-cmux: open the "bbs <ticket>" workspace in the sidebar   (or: cmux workspace select <ref>)
-tmux: tmux attach -t <session>      # detach when done: Ctrl-b d
+open the "bbs <ticket>" workspace in the sidebar   (or: cmux workspace select <ref>)
 ```
 
-Under cmux also fire `cmux notify --workspace "$W"` and set the status pill
-to the blocker, so the workspace announces itself in the sidebar.
+Also fire `cmux notify --workspace "$W"` and set the status pill to
+`needs-attention`, so the workspace announces itself in the sidebar.
 
 Apply the answer wherever the human gives it: answered you → drive the
 worker's menu/prompt via `send`/`send-key`; answered in the workspace → re-arm the
@@ -246,7 +285,7 @@ Print only what changes the human's picture:
   `prototype.html`) — links, not retellings
 - unknowns / derived assumptions a worker surfaced
 - a requirement or plan **change** mid-flight — what changed and why
-- escalations (with the workspace title / `tmux attach` line)
+- escalations (with the workspace title to open)
 - terminal rows: verdicts, pushed, one-line summary
 
 Normal flow — dispatched, building, QA started, monitor ticks — lives in the
@@ -263,8 +302,8 @@ BABYSIT_TICKET=<id> bbs ticket verdict-status --skill review-pr
 
 then report the row (ticket, branch, verdicts, pushed, one-line summary),
 archive the pane (`cmux capture-pane --workspace "$W" --scrollback --lines
-2000 > <scratch>/$W.txt`, or `tmux capture-pane -p -S -2000`), close the
-workspace/session, and dispatch the next queued assignment. QA across workers
+2000 > <scratch>/$W.txt`), close the workspace, and dispatch the next queued
+assignment. QA across workers
 serializes on `bbs ticket qa-lease` — workers handle that themselves;
 `board` shows who holds it.
 

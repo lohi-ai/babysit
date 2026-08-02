@@ -69,6 +69,8 @@ func newTicketCmd() *cobra.Command {
 				runResume()
 			case "restore":
 				runRestore()
+			case "approval":
+				runApproval(args[1:])
 			case "add-child":
 				runAddChild(args[1:])
 			case "add-relation":
@@ -165,6 +167,12 @@ Subcommands:
   pause [--note M]  human override: stop dispatch, keep status (reversible)
   cancel [--note M] human override: drop from dispatch, keep status (reversible)
   resume            clear a pause      restore   clear a cancel
+  approval publish [--kind K] [--note M]   open a plan/prototype decision on the dashboard
+  approval status                          print {none|pending|approved|redirected|dropped}
+  approval resolve --action approve|redirect|drop [--note M]
+  approval await [--interval S] [--reminder-min M]
+                    block until the human decides; prints the outcome. No timeout —
+                    it reminds once, it never guesses.
   add-child <t>     append a child ticket id
   add-relation <type> <target>
   set-sibling --role R --repo REPO --ticket T

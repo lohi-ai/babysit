@@ -49,6 +49,9 @@ func (s *dashServer) mux() *http.ServeMux {
 	m.HandleFunc("POST /api/tickets", s.handleCreateTicket)
 	m.HandleFunc("POST /api/tickets/{project}/{ticket}/assign", s.handleAssign)
 	m.HandleFunc("POST /api/tickets/{project}/{ticket}/control", s.handleControl)
+	m.HandleFunc("POST /api/tickets/{project}/{ticket}/approval", s.handleApproval)
+	m.HandleFunc("POST /api/tickets/{project}/{ticket}/approval/comment", s.handleApprovalComment)
+	m.HandleFunc("GET /api/tickets/{project}/{ticket}/prototype", s.handlePrototype)
 	m.HandleFunc("POST /api/foremen", s.handleSpawnForeman)
 
 	// index.html loads ./data.js unconditionally, and web/dist/data.js is
@@ -298,6 +301,102 @@ func (s *dashServer) handleControl(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeErr(w, http.StatusBadRequest, "action must be pause, cancel, resume or restore")
 	}
+}
+
+type approvalReq struct {
+	Action string `json:"action"` // approve | redirect | drop
+	Note   string `json:"note"`
+}
+
+// handleApproval is the other end of `bbs ticket approval await`: the worker is
+// blocked on the record, and this is the write that unblocks it. The wake is
+// what turns a 10-second poll into an immediate resume, and — as everywhere
+// else — it is best-effort, because the verdict is already on disk.
+func (s *dashServer) handleApproval(w http.ResponseWriter, r *http.Request) {
+	if !s.guard(w, r) {
+		return
+	}
+	var req approvalReq
+	if !decode(w, r, &req) {
+		return
+	}
+	st, err := s.ticketStore(r.PathValue("project"), r.PathValue("ticket"))
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	state, missing, err := approvalResolve(st, req.Action, req.Note, actorRole())
+	if err != nil {
+		// Bad verb, or a redirect with nothing to redirect to: the request is
+		// wrong, not the server.
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if missing {
+		// 409 the way a double-pause does: two tabs open on the same decision,
+		// and the second one is answering a question already answered.
+		writeErr(w, http.StatusConflict, fmt.Sprintf(
+			"%s has no approval pending — it may have been decided in another tab", st.Env.Ticket))
+		return
+	}
+	s.wakeAssignee(st, fmt.Sprintf(
+		"bbs: the plan/prototype decision on %s is in — %s. Run `bbs ticket approval status` and continue.",
+		st.Env.Ticket, state))
+	writeJSON(w, http.StatusOK, map[string]string{"ticket": st.Env.Ticket, "approval": state})
+}
+
+// handleApprovalComment anchors one piece of feedback to one paragraph or one
+// element. Unlike a decision it does not end the wait, so there is no wake here:
+// the human is mid-review, and poking the worker on every comment would resume
+// it against a half-written redirect.
+func (s *dashServer) handleApprovalComment(w http.ResponseWriter, r *http.Request) {
+	if !s.guard(w, r) {
+		return
+	}
+	var req approvalNote
+	if !decode(w, r, &req) {
+		return
+	}
+	st, err := s.ticketStore(r.PathValue("project"), r.PathValue("ticket"))
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	id, missing, err := approvalAddComment(st, req, actorRole())
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if missing {
+		writeErr(w, http.StatusConflict, fmt.Sprintf(
+			"%s has no approval pending — it may have been decided in another tab", st.Env.Ticket))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"ticket": st.Env.Ticket, "comment": id})
+}
+
+// handlePrototype serves the mock as a real document so `Open in new tab` has
+// somewhere to go. The snapshot already embeds the HTML for the inline frame;
+// this exists because an iframe's srcdoc has no URL a human can open, share, or
+// reload at full width.
+func (s *dashServer) handlePrototype(w http.ResponseWriter, r *http.Request) {
+	st, err := s.ticketStore(r.PathValue("project"), r.PathValue("ticket"))
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	path := filepath.Join(st.Home(), "prototype.html")
+	if _, err := os.Stat(path); err != nil {
+		writeErr(w, http.StatusNotFound, fmt.Sprintf("%s has no prototype.html", st.Env.Ticket))
+		return
+	}
+	// The mock is untrusted markup written by a worker, served same-origin next
+	// to an API that mutates tickets. CSP keeps it from reaching back at that
+	// API; the sandbox drops the ambient authority the same origin would grant.
+	w.Header().Set("Content-Security-Policy", "default-src 'self' 'unsafe-inline' data:; script-src 'unsafe-inline'; connect-src 'none'")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	http.ServeFile(w, r, path)
 }
 
 type spawnReq struct {

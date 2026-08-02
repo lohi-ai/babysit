@@ -51,6 +51,46 @@ export interface TicketControl {
   at: string;
 }
 
+// The design checkpoint, published by a worker and answered here. `state` is
+// the whole lifecycle: `pending` is a question waiting on a human, everything
+// else is the answer it got. `resolved` is absent while pending.
+// One comment anchored to a paragraph of a document or an element of the
+// prototype. `anchor` locates it in the current render; `excerpt` is what the
+// human pointed at, and is what still means something after a rewrite.
+export interface ApprovalComment {
+  id: string;
+  target: 'requirement' | 'plan' | 'design' | 'prototype';
+  anchor?: string;
+  excerpt?: string;
+  body: string;
+  actor: string;
+  at: string;
+}
+
+export interface TicketApproval {
+  state: 'pending' | 'approved' | 'redirected' | 'dropped';
+  kind: string;
+  note: string;
+  requested_by: string;
+  at: string;
+  comments?: ApprovalComment[];
+  resolved?: {
+    outcome: 'approved' | 'redirected' | 'dropped';
+    actor: string;
+    at: string;
+    note: string;
+  };
+}
+
+// The mock the approval is about. `html` is null when the file was too big to
+// embed — the frame then has nothing to show and the tab link is the only way
+// in, which the UI says out loud rather than rendering a blank box.
+export interface TicketPrototype {
+  path: string;
+  bytes: number;
+  html: string | null;
+}
+
 export interface TicketSummary {
   id: string;
   title: string;
@@ -64,6 +104,8 @@ export interface TicketSummary {
   /** Foreman id this ticket is assigned to; null when unassigned. */
   assignee: string | null;
   control: TicketControl | null;
+  /** Pending or last-answered design checkpoint; null when never published. */
+  approval: TicketApproval | null;
 }
 
 export interface NamedFile {
@@ -109,6 +151,8 @@ export interface ManifestRepo {
 export interface TicketDetail extends TicketSummary {
   requirement: string | null;
   plan: string | null;
+  design: string | null;
+  prototype: TicketPrototype | null;
   manifest: string | null;
   repos: ManifestRepo[];
   checkpoint: CheckpointRow | null;
@@ -331,6 +375,7 @@ export function normalizeSnapshot(raw: unknown): LoadedSnapshot {
     for (const t of p.tickets) {
       t.assignee ??= null;
       t.control ??= null;
+      t.approval ??= null;
     }
     for (const id of Object.keys(p.ticketDetail)) {
       const d = p.ticketDetail[id];
@@ -343,6 +388,9 @@ export function normalizeSnapshot(raw: unknown): LoadedSnapshot {
       d.repos ??= [];
       d.assignee ??= null;
       d.control ??= null;
+      d.approval ??= null;
+      d.design ??= null;
+      d.prototype ??= null;
     }
   }
   s.decisions ??= [];

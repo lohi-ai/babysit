@@ -2,18 +2,23 @@ package cmd
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"os/user"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/reallongnguyen/babysit/internal/cmux"
 	"github.com/reallongnguyen/babysit/internal/foreman"
+	"github.com/reallongnguyen/babysit/internal/identity"
+	"github.com/reallongnguyen/babysit/internal/ticket"
 	"github.com/spf13/cobra"
 )
 
 const foremanUsage = `Usage:
   bbs foreman list
+  bbs foreman inbox <id>
   bbs foreman register <id> [--dir <path>] [--workspace-title <title>] [--session <path>]
   bbs foreman heartbeat <id> [--status <status>] [--session <path>]
   bbs foreman spawn [<id>] [--dir <path>] [--command <text>]
@@ -51,6 +56,8 @@ func dispatchForeman(args []string) error {
 	switch sub {
 	case "list":
 		return foremanList()
+	case "inbox":
+		return foremanInbox(rest)
 	case "register":
 		return foremanRegister(rest)
 	case "heartbeat":
@@ -111,6 +118,57 @@ func foremanList() error {
 		}
 		fmt.Printf("%-16s %-12s %-8s %-14s %-28s %s\n",
 			r.ID, r.Owner, live, orDefault(r.Status, "-"), orDefault(r.WorkspaceTitle, "-"), r.WorkspaceDir)
+	}
+	return nil
+}
+
+// foremanInbox is a foreman's read of its own assignment set. It reconciles
+// every ticket before reading it, because the failure this command exists to
+// prevent is a foreman dispatching off a status the filesystem already moved
+// past. Assignment is a field on the ticket, so this scan *is* the queue —
+// there is no second list that can drift away from it.
+func foremanInbox(args []string) error {
+	id, _, err := foremanFlags(args)
+	if err != nil {
+		return err
+	}
+	if id == "" {
+		return fmt.Errorf("foreman inbox: needs an id\n%s", foremanUsage)
+	}
+
+	env := identity.Resolve()
+	tdir := filepath.Join(env.ProjectHome, "tickets")
+	entries, err := os.ReadDir(tdir)
+	if err != nil {
+		return fmt.Errorf("foreman inbox: no tickets at %s", tdir)
+	}
+	names := make([]string, 0, len(entries))
+	for _, e := range entries {
+		if e.IsDir() {
+			names = append(names, e.Name())
+		}
+	}
+	sort.Strings(names)
+
+	rows := 0
+	for _, tid := range names {
+		// Reconcile writes; a paused or cancelled ticket is skipped inside.
+		_ = reconcileOne(io.Discard, env, tid, false, true)
+		doc := ticket.ReadDoc(filepath.Join(tdir, tid, "index.json"))
+		if doc.Get("assignee") != id {
+			continue
+		}
+		if rows == 0 {
+			fmt.Printf("%-16s %-14s %-12s %s\n", "TICKET", "STATUS", "CONTROL", "APPROVAL")
+		}
+		rows++
+		fmt.Printf("%-16s %-14s %-12s %s\n", tid,
+			orDefault(doc.Get("status"), "triage"),
+			orDefault(doc.Get("control.state"), "-"),
+			orDefault(doc.Get("approval.state"), "-"))
+	}
+	if rows == 0 {
+		fmt.Printf("%s: no tickets assigned\n", id)
 	}
 	return nil
 }

@@ -2,7 +2,7 @@
 Classify every decision as **Mechanical**, **Taste**, or **User Challenge**.
 Mechanical → decide silently. Taste → decide using the 6 principles, log one
 audit line. User Challenge → never auto-decide; emit `NEEDS_CONTEXT`
-(delivery per [preamble.md](preamble.md#one-mode-two-escalation-channels)).
+(delivery per [preamble.md](preamble.md#one-mode-three-escalation-channels)).
 Auto-decide replaces the human's *judgment*, not the *analysis*. Order at
 every decision point: classify → act → log.
 ## The 6 Decision Principles

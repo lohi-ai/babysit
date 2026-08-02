@@ -8,6 +8,7 @@ import { FiltersPopover, type FacetDef } from '../components/FiltersPopover';
 import { EmptyState } from '../components/EmptyState';
 import { SectionHeader } from '../components/SectionHeader';
 import { TopBar } from '../components/TopBar';
+import { WaitingOnYou } from '../components/WaitingOnYou';
 import { formatRelative } from '../lib/format';
 import { useFilter } from '../contexts/FilterContext';
 import { useScopedTickets } from '../lib/scope';
@@ -122,6 +123,9 @@ export function TicketsList({ snapshot }: { snapshot: Snapshot }) {
         }
       />
       <div className="px-6 py-4 w-full space-y-4">
+      {/* Unfiltered on purpose: a blocked worker that a status chip happens to
+          hide is exactly the case this section exists to prevent. */}
+      <WaitingOnYou tickets={tickets} />
       <FiltersPopover facets={facets} />
 
       {tickets.length === 0 ? (

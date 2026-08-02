@@ -69,6 +69,47 @@ export function controlTicket(project: string, ticket: string, action: ControlAc
   return post<ControlResult>(`/api/tickets/${project}/${ticket}/control`, { action, note });
 }
 
+export type ApprovalAction = 'approve' | 'redirect' | 'drop';
+
+export interface ApprovalResult {
+  ticket: string;
+  /** approved | redirected | dropped */
+  approval: string;
+}
+
+/** `redirect` needs a note, or at least one inline comment; the server rejects
+ *  a redirect carrying neither with a 400. */
+export function resolveApproval(
+  project: string,
+  ticket: string,
+  action: ApprovalAction,
+  note = '',
+) {
+  return post<ApprovalResult>(`/api/tickets/${project}/${ticket}/approval`, { action, note });
+}
+
+export interface CommentDraft {
+  target: 'requirement' | 'plan' | 'design' | 'prototype';
+  anchor?: string;
+  excerpt?: string;
+  body: string;
+}
+
+/** Anchored feedback on one paragraph or one element. Accepted only while the
+ *  record is pending; a resolved record answers with a 409. */
+export function commentOnApproval(project: string, ticket: string, draft: CommentDraft) {
+  return post<{ ticket: string; comment: string }>(
+    `/api/tickets/${project}/${ticket}/approval/comment`,
+    draft,
+  );
+}
+
+/** Where `Open in new tab` points. Served mode only — over file:// the frame
+ *  falls back to the HTML embedded in the snapshot. */
+export function prototypeUrl(project: string, ticket: string) {
+  return `/api/tickets/${project}/${ticket}/prototype`;
+}
+
 export interface SpawnResult {
   spawned: string;
   dir: string;

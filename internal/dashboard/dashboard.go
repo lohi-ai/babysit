@@ -171,6 +171,9 @@ func projectBlock(o Options, projectDir string) obj {
 			"phase": detail["phase"], "branch": detail["branch"], "parent": detail["parent"],
 			"size": detail["size"], "updated_at": detail["updated_at"], "created_at": detail["created_at"],
 			"assignee": detail["assignee"], "control": detail["control"],
+			// The summary carries the approval record so a list can pin
+			// "waiting on you" without loading every ticket's detail.
+			"approval": detail["approval"],
 		})
 		// timeline: each history row + {ticket: id}
 		if rows, ok := parseJSONL(filepath.Join(tdir, "history.jsonl")); ok {
@@ -237,8 +240,14 @@ func ticketDetail(o Options, tdir string) (obj, bool) {
 		// the rung it interrupted and make resume a guess.
 		"assignee": digRaw(idx, "assignee"),
 		"control":  digRaw(idx, "control"),
+		// The approval record and the artifacts it points at travel together:
+		// the record is the question, these are what the human reads to answer
+		// it, and a screen that had one without the other could not decide.
+		"approval":         digRaw(idx, "approval"),
 		"requirement":      fileCappedOrNull(filepath.Join(tdir, "requirement.md"), 51200),
 		"plan":             fileCappedOrNull(filepath.Join(tdir, "plan.md"), 51200),
+		"design":           fileCappedOrNull(filepath.Join(tdir, "design.md"), 51200),
+		"prototype":        prototype(tdir),
 		"manifest":         fileCappedOrNull(filepath.Join(tdir, "manifest.md"), 51200),
 		"repos":            repos,
 		"checkpoint":       checkpoint,
@@ -249,6 +258,33 @@ func ticketDetail(o Options, tdir string) (obj, bool) {
 		"reviews":          namedFiles(filepath.Join(tdir, "reviews"), ".md"),
 		"evidence":         evidenceFiles(filepath.Join(tdir, "evidence")),
 	}, true
+}
+
+// prototypeCap bounds the mock embedded in the snapshot. A design prototype is
+// one self-contained HTML file; past a megabyte it is carrying assets the
+// approval screen has no business inlining into every poll.
+const prototypeCap = 1 << 20
+
+// prototype reports the ticket's mock and, when it fits, its full source.
+//
+// The HTML rides *inside* the snapshot rather than being fetched, because the
+// file:// path has no server to fetch from — an approval screen that can only
+// show the mock while a server happens to be running is not a design
+// checkpoint. Oversized mocks embed nothing rather than a prefix: half an HTML
+// document renders as garbage, and "open it in a tab" is the better answer.
+func prototype(tdir string) interface{} {
+	path := filepath.Join(tdir, "prototype.html")
+	st, err := os.Stat(path)
+	if err != nil {
+		return nil
+	}
+	out := obj{"path": path, "bytes": st.Size(), "html": nil}
+	if st.Size() <= prototypeCap {
+		if b, err := os.ReadFile(path); err == nil {
+			out["html"] = string(b)
+		}
+	}
+	return out
 }
 
 // ─── analytics ───────────────────────────────────────────────────────────────

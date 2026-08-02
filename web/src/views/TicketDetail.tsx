@@ -6,6 +6,7 @@ import { Tag } from '../components/Tag';
 import { ErrorBox } from '../components/ErrorBox';
 import { Field, inputStyle } from '../components/Field';
 import { Markdown } from '../components/Markdown';
+import { ApprovalPanel } from './ApprovalPanel';
 import { Modal } from '../components/Modal';
 import { controlTone } from '../components/ControlChip';
 import { TopBar } from '../components/TopBar';
@@ -14,7 +15,7 @@ import { useFilter } from '../contexts/FilterContext';
 import { gateProps, useControlPlane, useMutation } from '../contexts/ControlContext';
 import { useScopedTicketDetail } from '../lib/scope';
 
-type Tab = 'requirement' | 'plan' | 'manifest' | 'history' | 'handoffs' | 'verdicts' | 'reviews';
+type Tab = 'approval' | 'requirement' | 'plan' | 'manifest' | 'history' | 'handoffs' | 'verdicts' | 'reviews';
 
 export function TicketDetail({ snapshot, ticketId }: { snapshot: Snapshot; ticketId: string }) {
   const { state } = useFilter();
@@ -35,6 +36,11 @@ export function TicketDetail({ snapshot, ticketId }: { snapshot: Snapshot; ticke
   const workerRunning = (snapshot.sessions?.sessions ?? []).some(s => s.ticket === ticketId);
 
   const tabs: { key: Tab; label: string; available: boolean }[] = detail ? [
+    // First in the strip and first in `firstAvailable`, so a ticket with a
+    // pending decision opens on the decision. It stays in the strip once
+    // answered — the record is how the human sees what they already decided.
+    { key: 'approval',    label: detail.approval?.state === 'pending' ? 'Approval ●' : 'Approval',
+                          available: !!detail.approval },
     { key: 'requirement', label: 'Requirement', available: !!detail.requirement },
     { key: 'plan',        label: 'Plan',        available: !!detail.plan },
     { key: 'manifest',    label: 'Manifest',    available: !!detail.manifest },
@@ -44,7 +50,11 @@ export function TicketDetail({ snapshot, ticketId }: { snapshot: Snapshot; ticke
     { key: 'reviews',     label: `Reviews (${detail.reviews.length})`,   available: detail.reviews.length > 0 },
   ] : [];
 
-  const firstAvailable = tabs.find(t => t.available)?.key ?? 'requirement';
+  // A pending decision is why the human opened the page; an answered one is
+  // reference, so it does not displace the requirement on every past ticket.
+  const firstAvailable: Tab = detail?.approval?.state === 'pending'
+    ? 'approval'
+    : tabs.find(t => t.available && t.key !== 'approval')?.key ?? 'requirement';
   const [tab, setTab] = useState<Tab>(firstAvailable);
 
   if (!detail) {
@@ -130,6 +140,17 @@ export function TicketDetail({ snapshot, ticketId }: { snapshot: Snapshot; ticke
           </div>
 
           <div className="pt-4">
+            {tab === 'approval' && detail.approval && (
+              <ApprovalPanel
+                project={project}
+                ticket={detail.id}
+                approval={detail.approval}
+                requirement={detail.requirement}
+                plan={detail.plan}
+                design={detail.design}
+                prototype={detail.prototype}
+              />
+            )}
             {tab === 'requirement' && (detail.requirement
               ? <Markdown source={detail.requirement} />
               : <EmptyTab label="No requirement." />)}

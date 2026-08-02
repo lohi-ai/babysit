@@ -14,7 +14,7 @@ Drop filler, pleasantries, hedging. Route by consumer:
 | Human — terminal, AskUserQuestion, NEEDS_CONTEXT | **Lite** | Full sentences, professional but tight. |
 | Security/destructive/ambiguous | **Normal** | Full prose. Resume terse after. |
 Skills with their own output format take precedence.
-## One mode, two escalation channels
+## One mode, three escalation channels
 Skills always run autonomously — never prompt mid-flight for taste or
 cosmetic choices. Escalate only when proceeding on a guess would land
 incorrect work: ambiguous requirement with materially different readings,
@@ -25,8 +25,34 @@ and report `BLOCKED` on failure. A second `NEEDS_CONTEXT` in one run means
 you're steering — stop and report.
 `AGENT_ROLE` (fallback `GT_ROLE`) picks the delivery channel:
 `developer` (default, unset) → render as a single `AskUserQuestion`;
+`dashboard` → publish an approval record and wait (below);
 anything else (`mayor`, `general`, `scanner`, …) → print the structured block
 verbatim (an orchestrator relays it; `AskUserQuestion` would hang the run).
+Only the channel changes. The analysis, the artifacts, and the decision itself
+are identical in all three.
+### `AGENT_ROLE=dashboard`
+The human is at the web dashboard, not at this terminal. A design checkpoint
+publishes a record on the ticket and blocks on the answer:
+```bash
+bbs ticket approval publish --kind plan --note "<the one question, in one line>"
+DECISION=$(bbs ticket approval await)   # approved | redirected | dropped
+```
+`await` polls the record every 10s and prints the outcome to stdout, the
+human's note to stderr. Rules for anything that consumes it:
+- **No hard timeout, ever.** Resuming on a timer means resuming on a *guess* at
+  the decision — the exact failure this channel exists to prevent. It reminds
+  the assigned foreman's workspace once at 30 minutes (`--reminder-min`) and
+  then keeps waiting.
+- **`dropped` ends the wait like any other answer.** Stop work on the ticket
+  and report; a drop is a decision, not a failure.
+- **`redirected` always carries a note** (the server rejects an empty one) —
+  rework against it and publish again. The second publish is a new checkpoint,
+  not a retry.
+- Publish once per checkpoint: re-publishing over a `pending` record is a no-op,
+  so a resumed run re-running its checkpoint step will not reset the clock on a
+  decision the human is already reading.
+Honored by `autopilot` (its `/goal` handoff), `foreman` (the design gate), and
+any skill that would otherwise call `AskUserQuestion` at a design checkpoint.
 ### `NEEDS_CONTEXT` shape
 ```
 STATUS: NEEDS_CONTEXT
