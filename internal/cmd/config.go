@@ -19,7 +19,7 @@ const (
 	configUsage = "Usage: bbs-config {get|set|list} [key] [value]\n" +
 		"  Reads ~/.babysit/config.yaml (global). For a repo's own\n" +
 		"  .babysit/config.yaml, use: bbs workspace config"
-	badKeyMsg   = "Error: key must contain only alphanumeric characters and underscores"
+	badKeyMsg = "Error: key must contain only alphanumeric characters and underscores"
 )
 
 // newConfigCmd ports bin/bbs-config as `bbs config`, matching its get/set/list

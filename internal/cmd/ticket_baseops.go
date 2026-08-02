@@ -12,6 +12,7 @@ import (
 
 	"github.com/reallongnguyen/babysit/internal/identity"
 	"github.com/reallongnguyen/babysit/internal/ticket"
+	"github.com/reallongnguyen/babysit/internal/workspace"
 )
 
 // This file ports the git-mutating base-ops family of bin/bbs-ticket.bash:
@@ -702,7 +703,7 @@ func runServe(args []string) {
 				}
 				sp, ok := relatedRepoPath(s.Role, primary)
 				if !ok {
-					fmt.Fprintf(os.Stderr, "serve: sibling %s/%s not released — RELATED repo path for role '%s' unresolved\n", s.Repo, s.Ticket, s.Role)
+					fmt.Fprintf(os.Stderr, "serve: sibling %s/%s not released — no local path for role '%s' in the workspace or .babysit/.env\n", s.Repo, s.Ticket, s.Role)
 					continue
 				}
 				sgd := gitCOut(sp, "rev-parse", "--absolute-git-dir")
@@ -794,16 +795,38 @@ func runServe(args []string) {
 	// sibling repo land there together), then one lease + one switch per repo.
 	type sibRow struct{ path, ticket string }
 	var rows []sibRow
+	// One resolver for the whole fan-out: primary is constant across the loop,
+	// and resolving per sibling would re-read config.yaml and the workspace file
+	// once per sibling.
+	wsr := workspace.NewResolver(primary, gitCOut(primary, "remote", "get-url", "origin"))
+	if err := wsr.Err(); err != nil {
+		fmt.Fprintln(os.Stderr, "STATUS: BLOCKED")
+		fmt.Fprintf(os.Stderr, "REASON: %s\n", err)
+		os.Exit(2)
+	}
 	for _, t := range tickets {
 		for _, s := range sibs(t) {
 			if s.Ticket == "" {
 				continue
 			}
-			sp, ok := relatedRepoPath(s.Role, primary)
+			// In a monorepo the siblings are in this same checkout, already on
+			// the served surface — there is nothing to fan out to, and reporting
+			// an unresolvable path would name a problem that does not exist.
+			if !wsr.FanOut() {
+				continue
+			}
+			sp, ok, cErr := relatedRepoPathVia(wsr, s.Role, primary)
+			if cErr != nil {
+				fmt.Fprintln(os.Stderr, "STATUS: BLOCKED")
+				fmt.Fprintf(os.Stderr, "REASON: %s\n", cErr)
+				fmt.Fprintf(os.Stderr, "RECOMMENDATION: resolve the disagreement, then re-run serve; this repo is already serving %s.\n", list)
+				svRC = 2
+				continue
+			}
 			if !ok {
 				fmt.Fprintln(os.Stderr, "STATUS: NEEDS_CONTEXT")
-				fmt.Fprintf(os.Stderr, "REASON: sibling %s/%s (role '%s') has no resolvable local path — RELATED_*_REPO unset in %s/.babysit/.env.\n", s.Repo, s.Ticket, s.Role, primary)
-				fmt.Fprintf(os.Stderr, "RECOMMENDATION: set it (see setup-project § Related Repos), then re-run serve; this repo is already serving %s.\n", list)
+				fmt.Fprintf(os.Stderr, "REASON: sibling %s/%s (role '%s') has no resolvable local path — no entry with that role in %s, and RELATED_*_REPO unset in %s/.babysit/.env.\n", s.Repo, s.Ticket, s.Role, siblingSourceName(wsr), primary)
+				fmt.Fprintf(os.Stderr, "RECOMMENDATION: bbs workspace add-repo --role %s (preferred), or set RELATED_*_REPO (see setup-project § Related Repos), then re-run serve; this repo is already serving %s.\n", s.Role, list)
 				svRC = 2
 				continue
 			}
@@ -854,6 +877,16 @@ func serveVerdictOK(primary, t, skill string) bool {
 }
 
 // (relatedRepoEnv / relatedRepoPath live in ticket_board.go.)
+
+// siblingSourceName names the authority a failed role lookup consulted, so the
+// message stays accurate for both an unregistered repo (where .env is still
+// the only source) and a registered one.
+func siblingSourceName(r *workspace.Resolver) string {
+	if n := r.Name(); n != "" {
+		return "workspace " + n
+	}
+	return "any workspace (this repo has no .babysit/config.yaml)"
+}
 
 // ─── qa-lease ────────────────────────────────────────────────────────────────
 

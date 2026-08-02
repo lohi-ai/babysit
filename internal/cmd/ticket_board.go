@@ -13,6 +13,7 @@ import (
 	gogit "github.com/go-git/go-git/v5"
 	"github.com/reallongnguyen/babysit/internal/identity"
 	"github.com/reallongnguyen/babysit/internal/ticket"
+	"github.com/reallongnguyen/babysit/internal/workspace"
 )
 
 const boardRowFmt = "%-14s %-12s %-9s %-9s %-7s %-16s %-12s %s\n"
@@ -133,7 +134,7 @@ func runBoard(args []string) {
 func printSiblingRow(sib ticket.Sibling, primary string) {
 	path, ok := relatedRepoPath(sib.Role, primary)
 	if !ok {
-		fmt.Printf("  └─ %s:%s (%s) — path unresolved (RELATED repo env unset)\n", sib.Role, sib.Ticket, sib.Repo)
+		fmt.Printf("  └─ %s:%s (%s) — path unresolved (no workspace entry for this role, RELATED repo env unset)\n", sib.Role, sib.Ticket, sib.Repo)
 		return
 	}
 	if fi, err := os.Stat(path); err != nil || !fi.IsDir() {
@@ -262,8 +263,10 @@ func relatedRepoEnv(role string) (string, bool) {
 	return "", false
 }
 
-// relatedRepoPath resolves a sibling repo's local path from <toplevel>/.babysit/.env.
-func relatedRepoPath(role, toplevel string) (string, bool) {
+// relatedRepoPathEnv resolves a sibling repo's local path from
+// <toplevel>/.babysit/.env — the original and, for an unregistered repo, still
+// the only answer.
+func relatedRepoPathEnv(role, toplevel string) (string, bool) {
 	v, ok := relatedRepoEnv(role)
 	if !ok || toplevel == "" {
 		return "", false
@@ -280,6 +283,45 @@ func relatedRepoPath(role, toplevel string) (string, bool) {
 		return val, true
 	}
 	return "", false
+}
+
+// relatedRepoPathVia resolves a sibling role through a prepared resolver: the
+// workspace registry is authoritative, .babysit/.env answers when the repo is
+// not a workspace member, and a disagreement between the two BLOCKs.
+//
+// Two sources that can each name a different directory for the same role is
+// exactly the failure this ticket exists to avoid, so when both answer and
+// disagree the caller stops rather than picking — the same call the ticket
+// identity ladder makes on a conflicting BABYSIT_TICKET. Agreement is not a
+// conflict, so a repo that registered its siblings and also kept the old .env
+// entries keeps working untouched.
+func relatedRepoPathVia(r *workspace.Resolver, role, toplevel string) (string, bool, error) {
+	envPath, envOK := relatedRepoPathEnv(role, toplevel)
+	wsPath, wsOK := r.RolePath(role)
+	switch {
+	case wsOK && envOK && wsPath != envPath:
+		v, _ := relatedRepoEnv(role)
+		return "", false, fmt.Errorf(
+			"sibling role '%s' resolves two ways: workspace %s says '%s', %s in %s/.babysit/.env says '%s'.\n"+
+				"  Fix: make them agree, or drop %s from .env — the workspace is authoritative",
+			role, r.Name(), wsPath, v, toplevel, envPath, v)
+	case wsOK:
+		return wsPath, true, nil
+	case envOK:
+		return envPath, true, nil
+	}
+	return "", false, nil
+}
+
+// relatedRepoPath is relatedRepoPathVia for a caller resolving a single role,
+// where building a resolver per call costs nothing. A conflict reads as
+// unresolved here; callers in a loop use relatedRepoPathVia and report it.
+func relatedRepoPath(role, toplevel string) (string, bool) {
+	p, ok, err := relatedRepoPathVia(workspace.NewResolver(toplevel, ""), role, toplevel)
+	if err != nil {
+		return "", false
+	}
+	return p, ok
 }
 
 // slugIn runs bbs-slug in dir and returns its SLUG.
