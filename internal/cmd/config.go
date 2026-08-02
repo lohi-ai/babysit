@@ -12,7 +12,13 @@ import (
 var keyRe = regexp.MustCompile(`^[a-zA-Z0-9_]+$`)
 
 const (
-	configUsage = "Usage: bbs-config {get|set|list} [key] [value]"
+	// Two files share the basename config.yaml: the global one this command
+	// owns, and <repo>/.babysit/config.yaml. They are reached by different
+	// commands rather than one scope flag, so the usage line has to say which
+	// is which — otherwise the basename is the only clue.
+	configUsage = "Usage: bbs-config {get|set|list} [key] [value]\n" +
+		"  Reads ~/.babysit/config.yaml (global). For a repo's own\n" +
+		"  .babysit/config.yaml, use: bbs workspace config"
 	badKeyMsg   = "Error: key must contain only alphanumeric characters and underscores"
 )
 
