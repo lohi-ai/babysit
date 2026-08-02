@@ -696,12 +696,19 @@ func runServe(args []string) {
 		} else {
 			fmt.Printf("RELEASED: %s (already free)\n", repo)
 		}
+		rwsr := workspace.NewResolver(primary, gitCOut(primary, "remote", "get-url", "origin"))
 		for _, t := range tickets {
 			for _, s := range sibs(t) {
-				if s.Ticket == "" {
+				if s.Ticket == "" || !rwsr.FanOut() {
 					continue
 				}
-				sp, ok := relatedRepoPath(s.Role, primary)
+				sp, ok, cErr := relatedRepoPathVia(rwsr, s.Role, primary)
+				if cErr != nil {
+					// Release is a cleanup path: report and keep releasing the
+					// rest rather than stopping with leases still held.
+					fmt.Fprintf(os.Stderr, "serve: sibling %s/%s not released — %s\n", s.Repo, s.Ticket, cErr)
+					continue
+				}
 				if !ok {
 					fmt.Fprintf(os.Stderr, "serve: sibling %s/%s not released — no local path for role '%s' in the workspace or .babysit/.env\n", s.Repo, s.Ticket, s.Role)
 					continue

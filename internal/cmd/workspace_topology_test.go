@@ -35,9 +35,9 @@ func TestRelatedRepoPathUnregisteredFallsBackToEnv(t *testing.T) {
 	// today — through .babysit/.env, with no workspace involved.
 	workspace.TestHome(t)
 	top := repoWith(t, "", "RELATED_BACKEND_REPO=/tmp/api\n")
-	got, ok := relatedRepoPath("be", top)
-	if !ok || got != "/tmp/api" {
-		t.Fatalf("want /tmp/api, got %q ok=%v", got, ok)
+	got, ok, err := relatedRepoPathVia(workspace.NewResolver(top, ""), "be", top)
+	if err != nil || !ok || got != "/tmp/api" {
+		t.Fatalf("want /tmp/api, got %q ok=%v err=%v", got, ok, err)
 	}
 }
 
@@ -50,9 +50,9 @@ func TestRelatedRepoPathWorkspaceWins(t *testing.T) {
 	if err := workspace.AddRepo("acme", workspace.Repo{GitURL: "api.git", Path: "/tmp/api", Role: "be"}); err != nil {
 		t.Fatal(err)
 	}
-	got, ok := relatedRepoPath("be", top)
-	if !ok || got != "/tmp/api" {
-		t.Fatalf("workspace should answer: got %q ok=%v", got, ok)
+	got, ok, err := relatedRepoPathVia(workspace.NewResolver(top, ""), "be", top)
+	if err != nil || !ok || got != "/tmp/api" {
+		t.Fatalf("workspace should answer: got %q ok=%v err=%v", got, ok, err)
 	}
 }
 

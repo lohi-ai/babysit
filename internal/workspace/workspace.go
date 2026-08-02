@@ -30,7 +30,9 @@
 package workspace
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -194,6 +196,20 @@ func Create(name string) error {
 	if Exists(name) {
 		return nil
 	}
+	if err := os.MkdirAll(Dir(), 0o755); err != nil {
+		return err
+	}
+	// Under the same lock as AddRepo, and re-checking Exists inside it: without
+	// that, a create racing an add-repo can write its empty workspace over the
+	// entry the add just made.
+	unlock, err := acquireLock(name)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	if Exists(name) {
+		return nil
+	}
 	return Save(Workspace{Version: 1, Name: name})
 }
 
@@ -225,6 +241,12 @@ func AddRepo(name string, r Repo) error {
 
 	w, err := Load(name)
 	if err != nil {
+		// Only an absent file starts a fresh list. A file that exists but does
+		// not parse must abort: overwriting it here would silently delete every
+		// repo already registered because someone left a tab in the yaml.
+		if !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
 		w = Workspace{Version: 1, Name: name}
 	}
 	w.Name = name
@@ -251,7 +273,8 @@ func acquireLock(name string) (func(), error) {
 			return func() { _ = os.RemoveAll(lockPath) }, nil
 		}
 		if tries >= 50 {
-			return nil, fmt.Errorf("workspace %s: failed to acquire lock (%s)", name, lockPath)
+			return nil, fmt.Errorf("workspace %s: failed to acquire lock after 5s (%s)\n"+
+				"  If no other bbs workspace command is running, that directory is a leftover from a killed process — remove it.", name, lockPath)
 		}
 		time.Sleep(100 * time.Millisecond)
 	}

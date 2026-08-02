@@ -1,7 +1,9 @@
 package workspace
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"path/filepath"
 )
 
@@ -36,6 +38,13 @@ func NewResolver(toplevel, gitURL string) *Resolver {
 	}
 	ws, wsErr := Load(cfg.Workspace)
 	if wsErr != nil {
+		if !errors.Is(wsErr, fs.ErrNotExist) {
+			// A registry file that exists but does not parse is a different
+			// problem with a different fix; telling the human to add-repo would
+			// send them to rewrite a file that is already there.
+			r.err = wsErr
+			return r
+		}
 		r.err = fmt.Errorf("repo declares workspace %q, which is not registered on this machine.\n"+
 			"  Fix: bbs workspace add-repo %s --git-url <url> --path %s",
 			cfg.Workspace, cfg.Workspace, toplevel)
@@ -108,14 +117,31 @@ func (r *Resolver) RolePath(role string) (string, bool) {
 	return "", false
 }
 
+// SamePath reports whether two paths name the same directory. It is exported
+// because the same question decides both workspace membership and whether the
+// registry and .babysit/.env disagree about a sibling — and a string compare
+// there would BLOCK on `~/src/api` vs `/Users/x/src/api`, which is not a
+// disagreement.
+func SamePath(a, b string) bool { return samePath(a, b) }
+
 func samePath(a, b string) bool {
 	if a == b {
 		return true
 	}
-	aa, err1 := filepath.Abs(a)
-	bb, err2 := filepath.Abs(b)
-	if err1 != nil || err2 != nil {
-		return false
+	return canonPath(a) == canonPath(b)
+}
+
+// canonPath is absolute + symlinks resolved where possible. On macOS /tmp is a
+// symlink to /private/tmp, so two spellings of one directory are routine; when
+// the path does not exist yet (a repo listed but not cloned here) EvalSymlinks
+// fails and the absolute form is the best available answer.
+func canonPath(p string) string {
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		return filepath.Clean(p)
 	}
-	return filepath.Clean(aa) == filepath.Clean(bb)
+	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+		return resolved
+	}
+	return filepath.Clean(abs)
 }

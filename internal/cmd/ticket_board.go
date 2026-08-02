@@ -132,7 +132,14 @@ func runBoard(args []string) {
 }
 
 func printSiblingRow(sib ticket.Sibling, primary string) {
-	path, ok := relatedRepoPath(sib.Role, primary)
+	path, ok, err := relatedRepoPathVia(workspace.NewResolver(primary, ""), sib.Role, primary)
+	if err != nil {
+		// The board is the screen a human reads to find out why something is
+		// stuck, so a conflict has to read as a conflict here — "unresolved"
+		// would send them to add the entry that already exists.
+		fmt.Printf("  └─ %s:%s (%s) — path conflicts: workspace and .babysit/.env disagree (run `bbs ticket serve` for both paths)\n", sib.Role, sib.Ticket, sib.Repo)
+		return
+	}
 	if !ok {
 		fmt.Printf("  └─ %s:%s (%s) — path unresolved (no workspace entry for this role, RELATED repo env unset)\n", sib.Role, sib.Ticket, sib.Repo)
 		return
@@ -299,7 +306,7 @@ func relatedRepoPathVia(r *workspace.Resolver, role, toplevel string) (string, b
 	envPath, envOK := relatedRepoPathEnv(role, toplevel)
 	wsPath, wsOK := r.RolePath(role)
 	switch {
-	case wsOK && envOK && wsPath != envPath:
+	case wsOK && envOK && !workspace.SamePath(wsPath, envPath):
 		v, _ := relatedRepoEnv(role)
 		return "", false, fmt.Errorf(
 			"sibling role '%s' resolves two ways: workspace %s says '%s', %s in %s/.babysit/.env says '%s'.\n"+
@@ -311,17 +318,6 @@ func relatedRepoPathVia(r *workspace.Resolver, role, toplevel string) (string, b
 		return envPath, true, nil
 	}
 	return "", false, nil
-}
-
-// relatedRepoPath is relatedRepoPathVia for a caller resolving a single role,
-// where building a resolver per call costs nothing. A conflict reads as
-// unresolved here; callers in a loop use relatedRepoPathVia and report it.
-func relatedRepoPath(role, toplevel string) (string, bool) {
-	p, ok, err := relatedRepoPathVia(workspace.NewResolver(toplevel, ""), role, toplevel)
-	if err != nil {
-		return "", false
-	}
-	return p, ok
 }
 
 // slugIn runs bbs-slug in dir and returns its SLUG.

@@ -119,3 +119,42 @@ func TestListSkipsUnparseableFiles(t *testing.T) {
 		t.Fatalf("one bad file must not blank the list, got %+v", got)
 	}
 }
+
+func TestAddRepoRefusesToClobberAMalformedFile(t *testing.T) {
+	// The whole registry for a workspace is one file. If a hand edit breaks the
+	// yaml, an add-repo that "starts fresh" deletes every repo already listed.
+	home := TestHome(t)
+	if err := AddRepo("acme", Repo{GitURL: "web.git", Path: "/tmp/web"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, "workspaces", "acme.yaml"), []byte("repos: [oops\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := AddRepo("acme", Repo{GitURL: "api.git", Path: "/tmp/api"}); err == nil {
+		t.Fatal("add-repo onto an unparseable registry file must fail, not overwrite it")
+	}
+	b, err := os.ReadFile(filepath.Join(home, "workspaces", "acme.yaml"))
+	if err != nil || !strings.Contains(string(b), "oops") {
+		t.Fatalf("the broken file must survive for the human to fix: %q err=%v", b, err)
+	}
+}
+
+func TestSamePathIgnoresSymlinkSpelling(t *testing.T) {
+	// macOS /tmp -> /private/tmp: two spellings of one directory are routine,
+	// and treating them as different turns into a spurious membership BLOCK.
+	dir := t.TempDir()
+	real := filepath.Join(dir, "real")
+	if err := os.Mkdir(real, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	if !SamePath(real, link) {
+		t.Fatalf("%s and %s are the same directory", real, link)
+	}
+	if SamePath(real, dir) {
+		t.Fatal("different directories must not compare equal")
+	}
+}
