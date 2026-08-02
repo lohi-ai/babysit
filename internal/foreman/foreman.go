@@ -50,6 +50,38 @@ type Record struct {
 	Session   string `yaml:"session,omitempty"`
 	Status    string `yaml:"status"`
 	Heartbeat string `yaml:"heartbeat"`
+	// Unreachable is the RFC3339 stamp of the last poke that could not be
+	// delivered to this foreman's workspace, cleared on the next one that
+	// lands. It is a separate field from Status because the two answer
+	// different questions: Status is what the foreman said it was doing,
+	// Unreachable is what the dashboard observed from outside. Overwriting
+	// Status would erase the foreman's own report to record someone else's
+	// failure to reach it.
+	Unreachable string `yaml:"unreachable,omitempty"`
+}
+
+// MarkUnreachable records that a poke did not reach this foreman's workspace.
+// The assignment it failed to announce stays on disk either way — the foreman
+// re-derives its inbox from the tickets on its next tick — so this is a display
+// fact, and a failure to persist it must not fail the assignment.
+func MarkUnreachable(id string) {
+	r, err := Load(id)
+	if err != nil {
+		return
+	}
+	r.Unreachable = Now()
+	_ = Save(r)
+}
+
+// ClearUnreachable is the other half: a poke that landed proves the workspace
+// is there.
+func ClearUnreachable(id string) {
+	r, err := Load(id)
+	if err != nil || r.Unreachable == "" {
+		return
+	}
+	r.Unreachable = ""
+	_ = Save(r)
 }
 
 // Dir is ~/.babysit/foremen.

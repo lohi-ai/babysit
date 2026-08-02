@@ -56,7 +56,8 @@ func dispatchForeman(args []string) error {
 	case "heartbeat":
 		return foremanHeartbeat(rest)
 	case "spawn":
-		return foremanSpawn(rest)
+		_, err := foremanSpawn(rest)
+		return err
 	case "retire":
 		return foremanRetire(rest)
 	case "help", "--help", "-h":
@@ -181,26 +182,28 @@ func foremanHeartbeat(args []string) error {
 
 // foremanSpawn creates the cmux workspace a foreman runs in and registers the
 // record in the same call, so a spawned foreman is never half-present: either
-// both exist or the workspace is left for the operator to see.
-func foremanSpawn(args []string) error {
+// both exist or the workspace is left for the operator to see. It returns the
+// id it settled on — the dashboard sends no id when it wants the default, and
+// still has to name the foreman it just created back to the human.
+func foremanSpawn(args []string) (string, error) {
 	id, kv, err := foremanFlags(args)
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	client, err := cmux.Preflight()
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	dir := kv["dir"]
 	if dir == "" {
 		if dir, err = os.Getwd(); err != nil {
-			return err
+			return "", err
 		}
 	}
 	if dir, err = filepath.Abs(dir); err != nil {
-		return err
+		return "", err
 	}
 	if id == "" {
 		id = "fm-" + filepath.Base(dir)
@@ -208,10 +211,10 @@ func foremanSpawn(args []string) error {
 	// Check before Create, not just in Save: a rejected id after the workspace
 	// exists would leave an orphan workspace with no record naming it.
 	if err := foreman.ValidID(id); err != nil {
-		return err
+		return "", err
 	}
 	if _, err := foreman.Load(id); err == nil {
-		return fmt.Errorf("foreman %s already registered — retire it first", id)
+		return "", fmt.Errorf("foreman %s already registered — retire it first", id)
 	}
 
 	title := "bbs foreman " + id
@@ -221,7 +224,7 @@ func foremanSpawn(args []string) error {
 	}
 	ref, err := client.Create(cmux.CreateOpts{Title: title, Cwd: dir, Command: command})
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	r := foreman.Record{
@@ -231,10 +234,10 @@ func foremanSpawn(args []string) error {
 		Status: "idle", Heartbeat: foreman.Now(),
 	}
 	if err := foreman.Save(r); err != nil {
-		return fmt.Errorf("workspace %s created but registering %s failed: %w", ref, id, err)
+		return "", fmt.Errorf("workspace %s created but registering %s failed: %w", ref, id, err)
 	}
 	fmt.Printf("spawned %s in %s (%s)\n", id, ref, dir)
-	return nil
+	return id, nil
 }
 
 // foremanRetire closes the workspace and drops the record. Retiring is not

@@ -1,6 +1,16 @@
-// Snapshot schema — single source of truth.
-// `bin/bbs-dashboard` writes `web/dist/data.js` conforming to `Snapshot`,
-// loaded via `<script src="./data.js">` into `window.__BBS_DATA__`.
+// Snapshot schema — single source of truth for BOTH data sources.
+//
+// The same `Snapshot` object arrives two ways, and nothing downstream of
+// `loadSnapshot` / `fetchSnapshot` can tell which:
+//
+//   snapshot mode — `bbs dashboard --snapshot` writes `web/dist/data.js` and
+//     the page is opened over file://. `<script src="./data.js">` sets
+//     `window.__BBS_DATA__` before the SPA boots. Read-only: there is no
+//     server to POST to, so mutation controls render disabled.
+//   served mode — `bbs dashboard` runs a localhost server that composes the
+//     very same object and serves it at `GET /api/snapshot`. Its `/data.js`
+//     is deliberately empty, which is what leaves `window.__BBS_DATA__`
+//     undefined and selects this branch.
 
 export type TicketStatus =
   | 'triage' | 'backlog' | 'planned' | 'decomposed'
@@ -218,11 +228,42 @@ declare global {
 
 const _emptyAnalytics: AnalyticsRollup = { rows: [], per_skill: [], per_day: [], outcome: [] };
 
+/** Which of the two sources this page is running against. */
+export type DataSource = 'snapshot' | 'server';
+
+/**
+ * `window.__BBS_DATA__` is the switch. The served page ships an empty
+ * `/data.js`, so its absence means "there is a server behind this page" —
+ * which is also what makes the mutation controls available.
+ */
+export function dataSource(): DataSource {
+  return typeof window !== 'undefined' && window.__BBS_DATA__ ? 'snapshot' : 'server';
+}
+
 export function loadSnapshot(): LoadedSnapshot {
   if (typeof window === 'undefined' || !window.__BBS_DATA__) {
     throw new Error('data.js not loaded — run `bbs-dashboard build` then re-snapshot');
   }
-  const s = window.__BBS_DATA__ as LoadedSnapshot;
+  return normalizeSnapshot(window.__BBS_DATA__);
+}
+
+/** Served mode: the same object, over HTTP. */
+export async function fetchSnapshot(signal?: AbortSignal): Promise<LoadedSnapshot> {
+  const res = await fetch('/api/snapshot', { signal, headers: { Accept: 'application/json' } });
+  if (!res.ok) {
+    throw new Error(`GET /api/snapshot failed: ${res.status} ${res.statusText}`);
+  }
+  return normalizeSnapshot(await res.json());
+}
+
+/**
+ * The defensive-defaults pass both sources share. It mutates and returns its
+ * argument — the snapshot path has always handed views the same object
+ * `window.__BBS_DATA__` points at, and copying it here would only double the
+ * memory of a multi-megabyte snapshot.
+ */
+export function normalizeSnapshot(raw: unknown): LoadedSnapshot {
+  const s = raw as LoadedSnapshot;
 
   // Runtime schema check: if not v2, mark stale and apply defensive defaults.
   const version = (s.meta as { schema_version?: number })?.schema_version ?? 1;

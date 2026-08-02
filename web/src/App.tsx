@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
-import { loadSnapshot, type LoadedSnapshot } from './lib/data';
+import { useEffect, useState } from 'react';
+import { type LoadedSnapshot } from './lib/data';
+import { useSnapshot } from './lib/useSnapshot';
 import { FilterProvider } from './contexts/FilterContext';
 import { Layout } from './components/Layout';
 import { ErrorBox } from './components/ErrorBox';
@@ -34,7 +35,7 @@ function matchTicketDetail(hash: string): string | null {
   return m ? m[1] : null;
 }
 
-function AppInner({ snapshot, hash }: { snapshot: LoadedSnapshot; hash: string }) {
+function AppInner({ snapshot, hash, error }: { snapshot: LoadedSnapshot; hash: string; error: string | null }) {
   const ticketId = matchTicketDetail(hash);
   const route = hash.split('?')[0]; // strip query for route matching
 
@@ -54,6 +55,21 @@ function AppInner({ snapshot, hash }: { snapshot: LoadedSnapshot; hash: string }
 
   return (
     <>
+      {error && (
+        // A poll that fails once we already have data: what is on screen is
+        // still real, just frozen at the last successful read. Say that rather
+        // than replacing the dashboard with an error page.
+        <div
+          className="fixed top-0 left-0 right-0 z-50 px-4 py-2 text-sm"
+          style={{
+            backgroundColor: 'var(--status-blocked-bg)',
+            color: 'var(--status-blocked-text)',
+            borderBottom: '1px solid var(--border-emphasis)',
+          }}
+        >
+          Live updates stopped — showing the last state that loaded. ({error})
+        </div>
+      )}
       {snapshot._stale && (
         <div
           className="fixed top-0 left-0 right-0 z-50 px-4 py-2 text-sm"
@@ -76,20 +92,30 @@ function AppInner({ snapshot, hash }: { snapshot: LoadedSnapshot; hash: string }
 
 export function App() {
   const hash = useHashRoute();
-  const snapshot = useMemo<LoadedSnapshot | null>(() => {
-    try {
-      return loadSnapshot();
-    } catch {
-      return null;
-    }
-  }, []);
+  const { snapshot, loading, error, source } = useSnapshot();
+
+  // Served mode is async: the first paint happens before any data exists. The
+  // views all index into the snapshot at render, so they cannot run yet.
+  if (!snapshot && loading) {
+    return (
+      <Layout meta={null} active={hash}>
+        <div className="p-6 text-sm" style={{ color: 'var(--text-tertiary)' }}>
+          Loading babysit state…
+        </div>
+      </Layout>
+    );
+  }
 
   if (!snapshot) {
     return (
       <Layout meta={null} active={hash}>
         <ErrorBox
-          title="Snapshot not loaded"
-          body="data.js is missing or corrupt. Run `bbs-dashboard` (or `bbs-dashboard --no-open`) from the babysit repo to refresh it."
+          title={source === 'server' ? 'Cannot reach the dashboard server' : 'Snapshot not loaded'}
+          body={
+            source === 'server'
+              ? `GET /api/snapshot failed${error ? `: ${error}` : ''}. The server that served this page is gone — restart it with \`bbs dashboard\`.`
+              : 'data.js is missing or corrupt. Run `bbs dashboard --snapshot` from the babysit repo to refresh it.'
+          }
         />
       </Layout>
     );
@@ -97,7 +123,7 @@ export function App() {
 
   return (
     <FilterProvider activeProject={snapshot.meta.active_project}>
-      <AppInner snapshot={snapshot} hash={hash} />
+      <AppInner snapshot={snapshot} hash={hash} error={error} />
     </FilterProvider>
   );
 }
