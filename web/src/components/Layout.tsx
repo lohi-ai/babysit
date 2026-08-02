@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Home as HomeIcon, Activity, Inbox, Workflow, Zap, Calendar, BarChart3 } from 'lucide-react';
+import { Home as HomeIcon, Activity, HardHat, Inbox, Workflow, Zap, Calendar, BarChart3 } from 'lucide-react';
 import type { Meta, Snapshot } from '../lib/data';
 import { formatDate } from '../lib/format';
 import { ProjectSwitcher } from './ProjectSwitcher';
@@ -13,6 +13,7 @@ import { useFilterOptional } from '../contexts/FilterContext';
 const NAV_ITEMS = [
   { hash: '#/',              label: 'Home',         kbd: 'H', Icon: HomeIcon },
   { hash: '#/live',          label: 'Live',         kbd: 'L', Icon: Activity },
+  { hash: '#/foremen',       label: 'Foremen',      kbd: 'F', Icon: HardHat },
   { hash: '#/tickets',       label: 'Tickets',      kbd: 'T', Icon: Inbox },
   { hash: '#/decisions',     label: 'Decisions',    kbd: 'D', Icon: Workflow },
   { hash: '#/skill-events',  label: 'Skill events', kbd: 'S', Icon: Zap },

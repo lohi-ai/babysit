@@ -1,4 +1,6 @@
 import type { ReactNode } from 'react';
+import { Tag } from './Tag';
+import { useControlPlane } from '../contexts/ControlContext';
 
 export function TopBar({
   title,
@@ -11,6 +13,7 @@ export function TopBar({
   breadcrumb?: ReactNode;
   actions?: ReactNode;
 }) {
+  const { mode, reason } = useControlPlane();
   return (
     <div
       className="sticky top-0 z-10 flex items-center justify-between"
@@ -45,7 +48,16 @@ export function TopBar({
           </span>
         )}
       </div>
-      {actions && <div className="flex items-center gap-2">{actions}</div>}
+      <div className="flex items-center gap-3">
+        {/* Why the buttons beside it are dim. Without this the only explanation
+            is a tooltip, which a human never hovers to find. */}
+        {mode === 'readonly' && (
+          <span title={reason} className="whitespace-nowrap">
+            <Tag tone="muted">read-only snapshot</Tag>
+          </span>
+        )}
+        {actions && <div className="flex items-center gap-2">{actions}</div>}
+      </div>
     </div>
   );
 }

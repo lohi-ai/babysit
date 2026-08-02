@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { type LoadedSnapshot } from './lib/data';
 import { useSnapshot } from './lib/useSnapshot';
 import { FilterProvider } from './contexts/FilterContext';
+import { ControlProvider } from './contexts/ControlContext';
 import { Layout } from './components/Layout';
 import { ErrorBox } from './components/ErrorBox';
 import { Home } from './views/Home';
@@ -10,6 +11,7 @@ import { TicketDetail } from './views/TicketDetail';
 import { Timeline } from './views/Timeline';
 import { Analytics } from './views/Analytics';
 import { LiveStatus } from './views/LiveStatus';
+import { Foremen } from './views/Foremen';
 import { DecisionsFeed } from './views/DecisionsFeed';
 import { SkillEvents } from './views/SkillEvents';
 
@@ -35,7 +37,7 @@ function matchTicketDetail(hash: string): string | null {
   return m ? m[1] : null;
 }
 
-function AppInner({ snapshot, hash, error }: { snapshot: LoadedSnapshot; hash: string; error: string | null }) {
+function AppInner({ snapshot, hash, error, retry }: { snapshot: LoadedSnapshot; hash: string; error: string | null; retry: () => void }) {
   const ticketId = matchTicketDetail(hash);
   const route = hash.split('?')[0]; // strip query for route matching
 
@@ -46,6 +48,7 @@ function AppInner({ snapshot, hash, error }: { snapshot: LoadedSnapshot; hash: s
   else if (route === '#/timeline') view = <Timeline snapshot={snapshot} />;
   else if (route === '#/analytics') view = <Analytics snapshot={snapshot} />;
   else if (route === '#/live') view = <LiveStatus snapshot={snapshot} />;
+  else if (route === '#/foremen') view = <Foremen snapshot={snapshot} />;
   else if (route === '#/decisions') view = <DecisionsFeed snapshot={snapshot} />;
   else if (route === '#/skill-events') view = <SkillEvents snapshot={snapshot} />;
   else {
@@ -67,7 +70,15 @@ function AppInner({ snapshot, hash, error }: { snapshot: LoadedSnapshot; hash: s
             borderBottom: '1px solid var(--border-emphasis)',
           }}
         >
-          Live updates stopped — showing the last state that loaded. ({error})
+          <span>Lost connection to the dashboard server — showing the last data received. ({error})</span>
+          <button
+            type="button"
+            onClick={retry}
+            className="ml-3 underline"
+            style={{ color: 'inherit' }}
+          >
+            Retry
+          </button>
         </div>
       )}
       {snapshot._stale && (
@@ -92,7 +103,7 @@ function AppInner({ snapshot, hash, error }: { snapshot: LoadedSnapshot; hash: s
 
 export function App() {
   const hash = useHashRoute();
-  const { snapshot, loading, error, source } = useSnapshot();
+  const { snapshot, loading, error, source, refresh } = useSnapshot();
 
   // Served mode is async: the first paint happens before any data exists. The
   // views all index into the snapshot at render, so they cannot run yet.
@@ -123,7 +134,9 @@ export function App() {
 
   return (
     <FilterProvider activeProject={snapshot.meta.active_project}>
-      <AppInner snapshot={snapshot} hash={hash} error={error} />
+      <ControlProvider source={source} error={error} refresh={refresh}>
+        <AppInner snapshot={snapshot} hash={hash} error={error} retry={refresh} />
+      </ControlProvider>
     </FilterProvider>
   );
 }

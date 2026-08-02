@@ -7,25 +7,34 @@ import { Button } from './Button';
 import { Kbd } from './Kbd';
 
 export interface FacetDef {
-  kind: 'status' | 'phase' | 'label';
+  kind: 'status' | 'phase' | 'label' | 'foreman' | 'control';
   label: string;
   options: string[];
+  /** Per-option match count, shown next to the label. Used by the control
+   *  facet so a default-hidden bucket ("cancelled 3") is visibly one click
+   *  away rather than gone. */
+  counts?: Record<string, number>;
 }
 
 interface FiltersPopoverProps {
   facets: FacetDef[];
 }
 
-type Draft = Pick<FilterState, 'status' | 'phase' | 'label'>;
+type Draft = Pick<FilterState, 'status' | 'phase' | 'label' | 'foreman' | 'control'>;
+
+const FACET_KINDS: FacetDef['kind'][] = ['status', 'phase', 'label', 'foreman', 'control'];
 
 function snapshotDraft(state: FilterState): Draft {
-  return { status: [...state.status], phase: [...state.phase], label: [...state.label] };
+  return {
+    status: [...state.status], phase: [...state.phase], label: [...state.label],
+    foreman: [...state.foreman], control: [...state.control],
+  };
 }
 
-const EMPTY_DRAFT: Draft = { status: [], phase: [], label: [] };
+const EMPTY_DRAFT: Draft = { status: [], phase: [], label: [], foreman: [], control: [] };
 
 function totalCount(draft: Draft): number {
-  return draft.status.length + draft.phase.length + draft.label.length;
+  return FACET_KINDS.reduce((n, k) => n + draft[k].length, 0);
 }
 
 /**
@@ -42,11 +51,10 @@ function totalCount(draft: Draft): number {
 export function FiltersPopover({ facets }: FiltersPopoverProps) {
   const { state, dispatch } = useFilter();
 
-  const committed = useMemo(
-    () => ({ status: state.status, phase: state.phase, label: state.label }),
-    [state.status, state.phase, state.label],
+  const committedCount = useMemo(
+    () => FACET_KINDS.reduce((n, k) => n + state[k].length, 0),
+    [state],
   );
-  const committedCount = committed.status.length + committed.phase.length + committed.label.length;
 
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
@@ -112,8 +120,7 @@ export function FiltersPopover({ facets }: FiltersPopoverProps) {
   };
 
   const apply = () => {
-    const facetKinds: FacetDef['kind'][] = ['status', 'phase', 'label'];
-    for (const kind of facetKinds) {
+    for (const kind of FACET_KINDS) {
       const live = state[kind];
       const next = draft[kind];
       for (const v of next) if (!live.includes(v)) dispatch({ type: 'toggle', facet: kind, value: v });
@@ -292,6 +299,14 @@ function FacetSection({
                   {checked && <Check size={10} strokeWidth={3} aria-hidden="true" />}
                 </span>
                 <span className="truncate">{opt}</span>
+                {facet.counts?.[opt] !== undefined && (
+                  <span
+                    className="ml-auto font-mono shrink-0"
+                    style={{ fontSize: 11, color: 'var(--text-muted)', fontVariantNumeric: 'tabular-nums' }}
+                  >
+                    {facet.counts[opt]}
+                  </span>
+                )}
               </button>
             );
           })}

@@ -1,7 +1,11 @@
 import type { ButtonHTMLAttributes, ReactNode } from 'react';
 
 type Variant = 'primary' | 'secondary' | 'ghost';
-type Size = 'sm' | 'md';
+// `lg` exists for dialog and decision actions: 24/28px are under the 44px
+// touch-target floor, which is not acceptable for the highest-stakes buttons
+// in the app. The floor is applied below 640px only — a mouse-driven desktop
+// row of 44px buttons would tower over the dense chrome around it.
+type Size = 'sm' | 'md' | 'lg';
 
 interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: Variant;
@@ -18,7 +22,9 @@ export function Button({
 }: ButtonProps) {
   const sz = size === 'sm'
     ? { height: 24, padding: '0 8px', fontSize: 12 }
-    : { height: 28, padding: '0 12px', fontSize: 13 };
+    : size === 'lg'
+      ? { height: 36, padding: '0 16px', fontSize: 13 }
+      : { height: 28, padding: '0 12px', fontSize: 13 };
 
   const v = variantStyles(variant);
 
@@ -26,7 +32,7 @@ export function Button({
     <button
       type="button"
       {...rest}
-      className={`inline-flex items-center justify-center gap-1.5 font-medium ${rest.className ?? ''}`}
+      className={`inline-flex items-center justify-center gap-1.5 font-medium ${size === 'lg' ? 'max-[639px]:min-h-[44px]' : ''} ${rest.className ?? ''}`}
       style={{
         ...sz,
         ...v.base,

@@ -127,12 +127,14 @@ func (r Record) Live() bool {
 }
 
 // Load reads one record.
-func Load(id string) (Record, error) {
+func Load(id string) (Record, error) { return loadFrom(Dir(), id) }
+
+func loadFrom(dir, id string) (Record, error) {
 	var r Record
 	if err := ValidID(id); err != nil {
 		return r, err
 	}
-	b, err := os.ReadFile(Path(id))
+	b, err := os.ReadFile(filepath.Join(dir, id+".yaml"))
 	if err != nil {
 		return r, fmt.Errorf("foreman %s: %w", id, err)
 	}
@@ -179,8 +181,14 @@ func Save(r Record) error {
 
 // List returns every record, id-sorted. A record that fails to parse is
 // skipped rather than fatal: one bad file must not blank the foreman list.
-func List() []Record {
-	entries, err := os.ReadDir(Dir())
+func List() []Record { return ListIn(Dir()) }
+
+// ListIn is List against an explicit directory. The dashboard composes a
+// snapshot for a state dir it was handed (--state-dir, BABYSIT_STATE_DIR),
+// which is not necessarily the identity's BabysitHome() — reading Dir() there
+// would silently list the wrong machine's foremen.
+func ListIn(dir string) []Record {
+	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil
 	}
@@ -189,7 +197,7 @@ func List() []Record {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".yaml") {
 			continue
 		}
-		if r, err := Load(strings.TrimSuffix(e.Name(), ".yaml")); err == nil && r.ID != "" {
+		if r, err := loadFrom(dir, strings.TrimSuffix(e.Name(), ".yaml")); err == nil && r.ID != "" {
 			out = append(out, r)
 		}
 	}

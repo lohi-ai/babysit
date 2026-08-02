@@ -76,6 +76,7 @@ const G_ROUTES: Record<string, string> = {
   h: '#/',
   t: '#/tickets',
   l: '#/live',
+  f: '#/foremen',
   d: '#/decisions',
   s: '#/skill-events',
   m: '#/timeline',
@@ -119,6 +120,9 @@ export function useGlobalKeyboard(
       if (!(t instanceof HTMLElement)) return false;
       if (t instanceof HTMLInputElement) return true;
       if (t instanceof HTMLTextAreaElement) return true;
+      // A focused select swallows letters for native type-ahead; without this
+      // typing in one of the dialog selects fires the g-routes instead.
+      if (t instanceof HTMLSelectElement) return true;
       if (t.isContentEditable) return true;
       if (includeSummary && t.tagName === 'SUMMARY') return true;
       return false;

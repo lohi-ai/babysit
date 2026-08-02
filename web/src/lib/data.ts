@@ -39,6 +39,18 @@ export interface TruncationMarker {
   forced?: boolean;
 }
 
+// A human's override of the lifecycle, orthogonal to `status`. `prior_status`
+// is the rung the ticket was on when the override landed, which is what makes
+// resume/restore exact rather than a guess — so a control action never writes
+// `status`, and `status` here is never the string "paused".
+export interface TicketControl {
+  state: 'paused' | 'cancelled';
+  prior_status: TicketStatus | string;
+  note: string;
+  actor: string;
+  at: string;
+}
+
 export interface TicketSummary {
   id: string;
   title: string;
@@ -49,6 +61,9 @@ export interface TicketSummary {
   size: string | null;
   updated_at: string | null;
   created_at: string | null;
+  /** Foreman id this ticket is assigned to; null when unassigned. */
+  assignee: string | null;
+  control: TicketControl | null;
 }
 
 export interface NamedFile {
@@ -200,6 +215,33 @@ export interface SessionsInfo {
   sessions?: ActiveSession[];
 }
 
+// One ~/.babysit/foremen/<id>.yaml record. `assigned` is derived server-side
+// from the tickets; liveness is NOT — the raw `heartbeat` stamp is graded at
+// render time, since a snapshot that baked "live" in would keep claiming it
+// long after the foreman died.
+export interface ForemanRow {
+  id: string;
+  owner: string;
+  project_dir: string;
+  workspace_dir: string;
+  workspace_ref: string;
+  workspace_title: string;
+  session: string;
+  status: string;
+  heartbeat: string;
+  /** RFC3339 stamp of the last poke that could not be delivered; '' when reachable. */
+  unreachable: string;
+  assigned: number;
+}
+
+/** Mirrors internal/foreman.StaleAfter — no heartbeat within this window reads as dead. */
+export const FOREMAN_STALE_MS = 10 * 60 * 1000;
+
+export function foremanLive(f: ForemanRow, now = Date.now()): boolean {
+  const t = Date.parse(f.heartbeat ?? '');
+  return Number.isFinite(t) && now - t < FOREMAN_STALE_MS;
+}
+
 export interface Snapshot {
   meta: Meta;
   // v2: per-project data keyed by slug
@@ -210,6 +252,7 @@ export interface Snapshot {
   builderProfile: BuilderRow[];
   journalTail: string[];
   sessions: SessionsInfo;
+  foremen: ForemanRow[];
   // v1 compat fields (present on v1 snapshots, absent on v2)
   tickets?: TicketSummary[];
   ticketDetail?: Record<string, TicketDetail>;
@@ -282,6 +325,13 @@ export function normalizeSnapshot(raw: unknown): LoadedSnapshot {
     p.ticketDetail ??= {};
     p.timeline ??= [];
     p.analytics ??= { ..._emptyAnalytics };
+    // A data.js written before the control plane shipped has neither key; the
+    // views read them unconditionally, so default here rather than at every
+    // call site.
+    for (const t of p.tickets) {
+      t.assignee ??= null;
+      t.control ??= null;
+    }
     for (const id of Object.keys(p.ticketDetail)) {
       const d = p.ticketDetail[id];
       d.history ??= [];
@@ -291,6 +341,8 @@ export function normalizeSnapshot(raw: unknown): LoadedSnapshot {
       d.reviews ??= [];
       d.evidence ??= [];
       d.repos ??= [];
+      d.assignee ??= null;
+      d.control ??= null;
     }
   }
   s.decisions ??= [];
@@ -302,6 +354,7 @@ export function normalizeSnapshot(raw: unknown): LoadedSnapshot {
     s.sessions = { count: (s.sessions as unknown as ActiveSession[]).length ?? 0, sessions: [] };
   }
   s.sessions.sessions ??= [];
+  s.foremen ??= [];
   s.meta.truncations ??= [];
 
   // v1 compat: if top-level tickets/timeline/analytics present (v1 shape),
