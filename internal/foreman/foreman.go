@@ -64,6 +64,12 @@ type Record struct {
 // The assignment it failed to announce stays on disk either way — the foreman
 // re-derives its inbox from the tickets on its next tick — so this is a display
 // fact, and a failure to persist it must not fail the assignment.
+//
+// Load-modify-Save with no lock, deliberately: this races the foreman's own
+// heartbeat writer, and the loser's field is dropped. Each Save is atomic
+// (temp + rename), so the file is never torn, and the only value at stake is
+// one heartbeat stamp that the next beat rewrites — not worth a lock file per
+// foreman on the poke path.
 func MarkUnreachable(id string) {
 	r, err := Load(id)
 	if err != nil {

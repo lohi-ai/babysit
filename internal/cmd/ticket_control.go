@@ -33,13 +33,16 @@ func controlApply(st *ticket.Store, state, note, actor string) (status, conflict
 	// silently overwrite the winner's record.
 	err = withLock(st, func() error {
 		doc := loadForMutate(st)
-		if cur := doc.Get("control.state"); cur != "" {
-			conflict = cur
-			return nil
-		}
 		status = doc.Get("status")
 		if status == "" {
 			status = "triage"
+		}
+		// status is reported even when the write is declined, so a caller that
+		// treats "already in that state" as success (the dashboard's idempotent
+		// re-pause) still gets the rung the ticket is parked at.
+		if cur := doc.Get("control.state"); cur != "" {
+			conflict = cur
+			return nil
 		}
 		obj, err := json.Marshal(map[string]interface{}{
 			"state": state, "prior_status": status, "note": note,

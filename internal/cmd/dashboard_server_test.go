@@ -208,6 +208,53 @@ func TestControlConflictIs409AndNamesTheUndoVerb(t *testing.T) {
 	}
 }
 
+// Re-pausing an already-paused ticket is a no-op the UI treats as success, so
+// the response still has to carry the rung the ticket is parked at — a blank
+// status would blank the badge the dashboard just rendered.
+func TestRepeatedPauseStillReportsTheStatus(t *testing.T) {
+	s, _ := sandboxServer(t)
+	post(t, s, "/api/tickets/proj/bs-aaaa1111/control", `{"action":"pause"}`)
+
+	w := post(t, s, "/api/tickets/proj/bs-aaaa1111/control", `{"action":"pause"}`)
+	if w.Code != 200 {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	var resp map[string]string
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
+	if resp["status"] != "planned" {
+		t.Errorf("status = %q, want planned", resp["status"])
+	}
+}
+
+// A ticket dir with no index.json is what a crashed create leaves behind.
+// Treating it as a ticket would let the mutation finish materializing it.
+func TestAnIndexlessTicketDirIsNotATicket(t *testing.T) {
+	s, _ := sandboxServer(t)
+	orphan := filepath.Join(s.stateDir, "projects", "proj", "tickets", "bs-orphan01")
+	if err := os.MkdirAll(orphan, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if w := post(t, s, "/api/tickets/proj/bs-orphan01/control", `{"action":"pause"}`); w.Code != 400 {
+		t.Fatalf("want 400, got %d: %s", w.Code, w.Body)
+	}
+	if _, err := os.Stat(filepath.Join(orphan, "index.json")); err == nil {
+		t.Error("the refused mutation wrote an index.json anyway")
+	}
+}
+
+func TestCreateTicketTakesAnExplicitTitle(t *testing.T) {
+	s, _ := sandboxServer(t)
+	w := post(t, s, "/api/tickets", `{"project":"proj","requirement":"line one\nline two","title":"A better title"}`)
+	if w.Code != 200 {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	var resp map[string]string
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
+	if got := readIndex(t, resp["home"])["title"]; got != "A better title" {
+		t.Errorf("title = %v", got)
+	}
+}
+
 func TestControlRejectsAnUnknownAction(t *testing.T) {
 	s, _ := sandboxServer(t)
 	if w := post(t, s, "/api/tickets/proj/bs-aaaa1111/control", `{"action":"delete"}`); w.Code != 400 {

@@ -180,23 +180,29 @@ func foremanHeartbeat(args []string) error {
 	return foreman.Save(r)
 }
 
-// foremanSpawn creates the cmux workspace a foreman runs in and registers the
-// record in the same call, so a spawned foreman is never half-present: either
-// both exist or the workspace is left for the operator to see. It returns the
-// id it settled on — the dashboard sends no id when it wants the default, and
-// still has to name the foreman it just created back to the human.
 func foremanSpawn(args []string) (string, error) {
 	id, kv, err := foremanFlags(args)
 	if err != nil {
 		return "", err
 	}
+	return spawnForeman(id, kv["dir"], kv["command"])
+}
 
+// spawnForeman creates the cmux workspace a foreman runs in and registers the
+// record in the same call, so a spawned foreman is never half-present: either
+// both exist or the workspace is left for the operator to see. It returns the
+// id it settled on — the dashboard sends no id when it wants the default, and
+// still has to name the foreman it just created back to the human.
+//
+// It takes its inputs typed rather than as an argv: the dashboard's fields
+// arrive as JSON, and round-tripping them through the flag parser would let an
+// id beginning with "-" be re-read as a flag.
+func spawnForeman(id, dir, command string) (string, error) {
 	client, err := cmux.Preflight()
 	if err != nil {
 		return "", err
 	}
 
-	dir := kv["dir"]
 	if dir == "" {
 		if dir, err = os.Getwd(); err != nil {
 			return "", err
@@ -218,7 +224,6 @@ func foremanSpawn(args []string) (string, error) {
 	}
 
 	title := "bbs foreman " + id
-	command := kv["command"]
 	if command == "" {
 		command = "claude"
 	}

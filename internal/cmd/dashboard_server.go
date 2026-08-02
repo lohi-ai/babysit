@@ -109,8 +109,10 @@ func (s *dashServer) projectEnv(project string) (identity.Env, error) {
 }
 
 // ticketStore resolves {project}/{ticket} to a store for an EXISTING ticket.
-// Requiring the directory to be there already is what keeps a typo'd id from
-// materializing an empty ticket as a side effect of pausing it.
+// The existence check is index.json rather than the directory: an empty ticket
+// dir is what a crashed or half-failed create leaves behind, and accepting one
+// would let a mutation finish materializing the phantom ticket it was supposed
+// to refuse.
 func (s *dashServer) ticketStore(project, id string) (*ticket.Store, error) {
 	env, err := s.projectEnv(project)
 	if err != nil {
@@ -121,7 +123,7 @@ func (s *dashServer) ticketStore(project, id string) (*ticket.Store, error) {
 	}
 	env.Ticket = id
 	st := ticket.New(env)
-	if fi, err := os.Stat(st.Home()); err != nil || !fi.IsDir() {
+	if _, err := os.Stat(st.IndexPath()); err != nil {
 		return nil, fmt.Errorf("no ticket %q in project %q", id, project)
 	}
 	return st, nil
@@ -130,7 +132,7 @@ func (s *dashServer) ticketStore(project, id string) (*ticket.Store, error) {
 type createTicketReq struct {
 	Project     string `json:"project"`
 	Requirement string `json:"requirement"`
-	SlugHint    string `json:"slug_hint"`
+	Title       string `json:"title"` // defaults to the requirement's first line
 }
 
 // handleCreateTicket seeds a ticket on disk: the directory, index.json with
@@ -158,9 +160,9 @@ func (s *dashServer) handleCreateTicket(w http.ResponseWriter, r *http.Request) 
 
 	env.Ticket = newTicketID()
 	st := ticket.New(env)
-	st.EnsureDirs()
+	st.EnsureDirs() // the lock file lives in the ticket dir, so this precedes it
 	reqPath := filepath.Join(st.Home(), "requirement.md")
-	title := req.SlugHint
+	title := strings.TrimSpace(req.Title)
 	if title == "" {
 		title = firstLineOf(req.Requirement)
 	}
@@ -267,6 +269,11 @@ func (s *dashServer) handleControl(w http.ResponseWriter, r *http.Request) {
 				"%s is already %s — clear it first (%s)", st.Env.Ticket, conflict, undoVerb(conflict)))
 			return
 		}
+		// Pause is the urgent one: the foreman may be dispatching this ticket
+		// right now, and its next tick is too late. Same channel as assign, and
+		// the same non-fatal treatment — the control state is already on disk.
+		s.wakeAssignee(st, fmt.Sprintf(
+			"bbs: ticket %s was %s from the dashboard — stop work on it.", st.Env.Ticket, state))
 		writeJSON(w, http.StatusOK, map[string]string{
 			"ticket": st.Env.Ticket, "control": state, "status": status,
 		})
@@ -311,14 +318,7 @@ func (s *dashServer) handleSpawnForeman(w http.ResponseWriter, r *http.Request) 
 		writeErr(w, http.StatusBadRequest, "dir is required — a foreman is bound to one project folder")
 		return
 	}
-	args := []string{req.ID, "--dir", req.Dir}
-	if req.ID == "" {
-		args = args[1:]
-	}
-	if req.Command != "" {
-		args = append(args, "--command", req.Command)
-	}
-	id, err := foremanSpawn(args)
+	id, err := spawnForeman(req.ID, req.Dir, req.Command)
 	if err != nil {
 		// Spawn failures are the human's to read: cmux missing, token denied,
 		// id already registered. All of them are 400-class — the server is
@@ -334,6 +334,17 @@ func (s *dashServer) handleSpawnForeman(w http.ResponseWriter, r *http.Request) 
 type wakeResult struct {
 	state  string // sent | unreachable | cmux-unavailable | unknown-foreman
 	detail string
+}
+
+// wakeAssignee pokes whoever owns the ticket, if anyone does. Used by the
+// control verbs, where the foreman is not named in the request the way it is
+// in an assignment.
+func (s *dashServer) wakeAssignee(st *ticket.Store, msg string) {
+	id := ticket.ReadDoc(st.IndexPath()).Get("assignee")
+	if id == "" {
+		return
+	}
+	s.wake(id, msg)
 }
 
 // wake pokes a foreman's cmux workspace with the same input channel a human
@@ -419,8 +430,10 @@ func decode(w http.ResponseWriter, r *http.Request, into interface{}) bool {
 
 func firstLineOf(s string) string {
 	line := strings.TrimSpace(strings.SplitN(strings.TrimSpace(s), "\n", 2)[0])
-	if len(line) > 120 {
-		line = line[:120]
+	// Cut on a rune boundary — babysit's own requirements are full of em-dashes
+	// and arrows, and a byte cut mid-sequence stores a U+FFFD in the title.
+	if r := []rune(line); len(r) > 120 {
+		line = string(r[:120])
 	}
 	return line
 }

@@ -191,6 +191,12 @@ func runDashboard(args []string) error {
 			mode = "snapshot"
 		}
 	}
+	if port != 0 && mode != "server" {
+		// Silently dropping it would leave the human waiting for a server on a
+		// port nothing ever bound. --no-open --port is the likely shape.
+		dashErr("--port only applies to server mode; add --server (or drop --no-open)")
+		os.Exit(1)
+	}
 	if mode == "server" {
 		return serveDashboard(&dashServer{
 			stateDir:  stateDir,

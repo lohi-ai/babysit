@@ -43,13 +43,17 @@ func acquireOrDie(st *ticket.Store) {
 // withLock is mutateLocked for callers that must not exit the process — the
 // dashboard server runs the same mutations as the CLI, in a goroutine serving
 // one request, where os.Exit would take the whole server down.
+//
+// The release is deferred, unlike mutateLocked's: net/http recovers a panicking
+// handler and keeps serving, so a plain release would leave .index.lock on disk
+// for the life of the machine, blocking every later write to that ticket from
+// the server and the CLI alike.
 func withLock(st *ticket.Store, fn func() error) error {
 	if err := st.AcquireLock(); err != nil {
 		return fmt.Errorf("failed to acquire lock after 5s — remove %s if no writer is active", st.LockPath())
 	}
-	err := fn()
-	st.ReleaseLock()
-	return err
+	defer st.ReleaseLock()
+	return fn()
 }
 
 // mutateLocked mirrors `acquire_lock || exit 1` + the EXIT-trap release: fn must

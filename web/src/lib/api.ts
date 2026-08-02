@@ -33,11 +33,12 @@ export interface CreateTicketResult {
   requirement: string;
 }
 
-export function createTicket(project: string, requirement: string, slugHint?: string) {
+/** `title` defaults to the requirement's first line. */
+export function createTicket(project: string, requirement: string, title?: string) {
   return post<CreateTicketResult>('/api/tickets', {
     project,
     requirement,
-    slug_hint: slugHint ?? '',
+    title: title ?? '',
   });
 }
 
