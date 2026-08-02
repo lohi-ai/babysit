@@ -22,6 +22,7 @@ const workspaceUsage = `Usage:
   bbs workspace config show
   bbs workspace config get <key>
   bbs workspace config set <key> <value>
+  bbs workspace config stamp                 record the running babysit version
 
 'config' reads and writes <repo>/.babysit/config.yaml for the current repo.
 The global ~/.babysit/config.yaml is a different file with a different
@@ -217,6 +218,21 @@ func workspaceConfig(args []string) error {
 			return nil
 		}
 		return fmt.Errorf("unknown key %q (workspace|harness_version|name|description|repo_type)", args[1])
+	case "stamp":
+		// setup-project's one-liner for AC5. A dedicated verb rather than
+		// `set harness_version "$(bbs --version | ...)"` because the running
+		// version is already known here, and a skill parsing it back out of
+		// version output is a needless place to go wrong.
+		v := resolveVersion()
+		if v == "unknown" {
+			return fmt.Errorf("this build reports no version — leaving harness_version null, which is a legal value, rather than recording a fake one")
+		}
+		cfg.HarnessVersion = &v
+		if err := workspace.SaveRepoConfig(top, cfg); err != nil {
+			return err
+		}
+		fmt.Printf("%s: harness_version=%s\n", workspace.RepoConfigPath(top), v)
+		return nil
 	case "set":
 		if len(args) < 3 {
 			return fmt.Errorf("usage: bbs workspace config set <key> <value>")
