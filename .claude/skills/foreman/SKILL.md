@@ -262,6 +262,51 @@ Worker questions mid-flight (menus) follow the same split: answer Mechanical/
 Taste from the requirement + framework via send-keys; escalate User
 Challenges.
 
+### Under a grant, you resolve the checkpoint yourself
+
+A human can delegate this checkpoint to you durably —
+`bbs foreman grant <id> --hours N --max N [--tickets a,b]`, or `--unbounded`,
+which must be typed. Check with `bbs foreman grant show <id>`; `inbox` marks a
+row you may resolve as `pending(grantable)` rather than `pending`.
+
+A grant changes **who resolves** the checkpoint, never **what evidence is
+required**. Fill the rubric exactly as above, then hand it over instead of
+asking:
+
+```bash
+bbs ticket approval publish --kind plan --note "<the one question, in one line>"
+bbs ticket approval self-resolve --foreman "$FM" --rubric-file rubric.md
+```
+
+It writes the same approval verdict the dashboard writes — one mechanism, two
+resolvers — and logs the filled rubric to `decisions.jsonl` so the human can
+audit afterwards. Route on the exit code:
+
+| Exit | Meaning | Do |
+|---|---|---|
+| 0 | approved | paste the worker's `/goal` block |
+| 3 | **non-delegable floor** — money, auth, or irreversible data | escalate to the human; no grant covers this, including `--unbounded` |
+| 4 | rubric not filled with named evidence | feedback round (max 2), then `BLOCKED` naming the unfilled lines it printed |
+| 5 | no grant, expired, budget spent, or ticket out of scope | escalate to the human as usual |
+
+The floor reads the artifacts, not just your rubric: `requirement.md`,
+`plan.md`, `design.md` and `prototype.html` at the ticket root, plus whatever
+`pointers.requirement/plan/design` name. A bland `design.md` over a checkout
+prototype still escalates.
+
+Two rules the grant does not relax. The floor is not overridable — a change
+touching money, auth or an irreversible data path escalates even under an
+unbounded grant, and the check is deliberately over-eager, so an escalation
+you think is spurious is still an escalation. And a rubric you cannot fill
+after 2 rounds ends in **`BLOCKED` with the specific gaps named** — never a
+silent approval, never an indefinite wait. With nobody watching, a loud local
+failure is the only safe terminal state.
+
+Revocation (`bbs foreman grant revoke <id>`) takes effect at your next
+checkpoint, because the grant is re-read from disk each time. Work already
+approved stands and in-flight workers keep building; you simply escalate by
+default again.
+
 Whenever a worker needs a human — a question you can't answer, a `BLOCKED`/
 `NEEDS_CONTEXT` status — relay the worker's exact ask AND how to reach the
 worker directly:

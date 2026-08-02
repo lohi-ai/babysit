@@ -200,3 +200,109 @@ func TestRemoveIsIdempotent(t *testing.T) {
 		t.Fatal("record still loads after Remove")
 	}
 }
+
+// ─── grant ───────────────────────────────────────────────────────────────────
+
+func TestNoGrantSerializesToNothing(t *testing.T) {
+	sandbox(t)
+	if err := Save(Record{ID: "fm-a", Heartbeat: Now()}); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(Path("fm-a"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Criterion 8: without a grant the record must be what it always was.
+	if strings.Contains(string(b), "grant") {
+		t.Errorf("a record with no grant mentions grant:\n%s", b)
+	}
+}
+
+func TestGrantRoundTrips(t *testing.T) {
+	sandbox(t)
+	want := Record{ID: "fm-a", Heartbeat: Now(), Grant: &Grant{
+		GrantedBy: "long", At: Now(), ExpiresAt: Now(),
+		MaxApprovals: 3, Used: 1, Tickets: []string{"bs-a", "bs-b"},
+	}}
+	if err := Save(want); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Load("fm-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Grant == nil {
+		t.Fatal("grant did not survive the round trip")
+	}
+	if got.Grant.GrantedBy != "long" || got.Grant.MaxApprovals != 3 ||
+		got.Grant.Used != 1 || len(got.Grant.Tickets) != 2 {
+		t.Errorf("grant came back changed: %+v", got.Grant)
+	}
+}
+
+func TestAllows(t *testing.T) {
+	now := time.Date(2026, 8, 2, 12, 0, 0, 0, time.UTC)
+	past := now.Add(-time.Hour).Format(time.RFC3339)
+	future := now.Add(time.Hour).Format(time.RFC3339)
+
+	cases := []struct {
+		name   string
+		grant  *Grant
+		ticket string
+		ok     bool
+		reason string
+	}{
+		{"no grant escalates", nil, "bs-a", false, "no grant"},
+		{"unbounded allows anything", &Grant{}, "bs-a", true, ""},
+		{"unexpired allows", &Grant{ExpiresAt: future}, "bs-a", true, ""},
+		{"expired denies", &Grant{ExpiresAt: past}, "bs-a", false, "grant expired"},
+		{"corrupt expiry denies", &Grant{ExpiresAt: "soon"}, "bs-a", false, "unreadable"},
+		{"budget left allows", &Grant{MaxApprovals: 2, Used: 1}, "bs-a", true, ""},
+		{"budget spent denies", &Grant{MaxApprovals: 2, Used: 2}, "bs-a", false, "budget spent"},
+		{"in scope allows", &Grant{Tickets: []string{"bs-a"}}, "bs-a", true, ""},
+		{"out of scope denies", &Grant{Tickets: []string{"bs-b"}}, "bs-a", false, "outside the grant"},
+		{"scoped but unnamed denies", &Grant{Tickets: []string{"bs-b"}}, "", false, "no ticket was named"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			ok, reason := Record{ID: "fm-a", Grant: c.grant}.Allows(c.ticket, now)
+			if ok != c.ok {
+				t.Fatalf("Allows = %v (%s), want %v", ok, reason, c.ok)
+			}
+			if !ok && !strings.Contains(reason, c.reason) {
+				t.Errorf("reason %q does not mention %q", reason, c.reason)
+			}
+		})
+	}
+}
+
+// The budget only bounds anything if spending it is recorded.
+func TestConsumeSpendsBudget(t *testing.T) {
+	sandbox(t)
+	if err := Save(Record{ID: "fm-a", Heartbeat: Now(), Grant: &Grant{MaxApprovals: 1}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := Consume("fm-a"); err != nil {
+		t.Fatal(err)
+	}
+	r, err := Load("fm-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Grant.Used != 1 {
+		t.Fatalf("Used = %d, want 1", r.Grant.Used)
+	}
+	if ok, reason := r.Allows("bs-a", time.Now()); ok {
+		t.Errorf("a spent grant still allows (%s)", reason)
+	}
+}
+
+func TestConsumeWithoutGrantErrors(t *testing.T) {
+	sandbox(t)
+	if err := Save(Record{ID: "fm-a", Heartbeat: Now()}); err != nil {
+		t.Fatal(err)
+	}
+	if err := Consume("fm-a"); err == nil {
+		t.Fatal("consuming a nonexistent grant must error")
+	}
+}
