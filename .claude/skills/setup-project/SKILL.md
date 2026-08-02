@@ -7,7 +7,8 @@ Set up only the config the repo needs. Re-running should be safe.
 ## Create Or Update
 - `.babysit/git-flow.yaml`: minimal `base_branch`, `branch_prefix`, `push`, and `mode`.
 - `.babysit/qa.yaml`: minimal local `url`, `start`, `check`, and `flows`.
-- `.babysit/.env`: gitignored machine-local values, including related repo paths.
+- `.babysit/config.yaml`: committed — which workspace this repo belongs to, plus optional `name`, `description`, `repo_type`. Written via `bbs workspace config set`; only when the repo joins a workspace.
+- `.babysit/.env`: gitignored machine-local values (credentials; related repo paths only when there is no workspace entry).
 - `.gitignore`: include `.babysit/.env` if missing.
 - `AGENTS.md` or `CLAUDE.md`: add/update only a tiny Babysit pointer section.
 ## Rules
@@ -36,7 +37,8 @@ Set up only the config the repo needs. Re-running should be safe.
   a real diff viewer, a browser split beside the dev server — and that
   `foreman` requires it outright. It is a machine preference, so it goes in
   the message, not in committed config or the landing doc.
-- Related repos (FE/BE counterpart, shared schemas) feed planning and API-contract checks: meaning goes in `AGENTS.md`, machine-specific paths in `.babysit/.env` under stable names (`RELATED_BACKEND_REPO`, `RELATED_FRONTEND_REPO`, `RELATED_SHARED_REPO`).
+- Related repos (FE/BE counterpart, shared schemas) feed planning and API-contract checks. Their paths belong in the **workspace registry** — `bbs workspace add-repo <ws> --git-url <url> --path <dir> --role <fe|be|shared>` — which is the authority babysit reads. `RELATED_*_REPO` in `.babysit/.env` still resolves for repos that never joined a workspace, but it is a fallback: when both name a role and disagree, babysit blocks instead of picking. Meaning (what each repo is *for*) still goes in `AGENTS.md`.
+- Record the harness version once the config is written: `bbs workspace config stamp`. It is what makes "this repo was set up by an older babysit" visible in `bbs workspace show`. A repo with no `harness_version` is not a problem — that is every repo configured before this existed — so never warn about it.
 ## QA Harness Notes
 Prefer this committed shape:
 ```yaml
@@ -100,26 +102,35 @@ section:
 
 Use these repos for investigation and planning when a task crosses FE/BE,
 API contracts, generated types, or shared schemas. Local paths are machine
-specific and live in `.babysit/.env`.
+specific: they live in the workspace registry (`bbs workspace show`), which
+is the authority. `$RELATED_*_REPO` in `.babysit/.env` is a fallback for
+repos outside a workspace.
 
-- Backend API: `$RELATED_BACKEND_REPO`
-- Frontend app: `$RELATED_FRONTEND_REPO`
-- Shared package: `$RELATED_SHARED_REPO`
+- Backend API: role `be`
+- Frontend app: role `fe`
+- Shared package: role `shared`
 ```
 Include only repos that apply. If a `## Related Repos` section already exists,
 replace only that section. Do not commit absolute local paths to `AGENTS.md` or
 `CLAUDE.md`.
-Seed `.babysit/.env` with commented placeholders or detected local paths after
+Register each related repo the human names:
+```bash
+bbs workspace create <workspace>          # idempotent
+bbs workspace add-repo <workspace> --git-url <origin-url> --path <local-dir> --role be
+bbs workspace config set workspace <workspace>   # writes this repo's .babysit/config.yaml
+```
+The registry lives in `~/.babysit/workspaces/` — machine-local, never
+committed, which is what keeps absolute paths out of git.
+On a repo that is not joining a workspace, seed `.babysit/.env` instead, after
 ensuring it is gitignored:
 ```bash
-# .babysit/.env  (gitignored)
+# .babysit/.env  (gitignored) — fallback when there is no workspace entry
 RELATED_BACKEND_REPO=../api
 RELATED_FRONTEND_REPO=../web
 RELATED_SHARED_REPO=../shared
 ```
-Do not fail setup when a related repo path is absent. Record the env-var name in
-the landing doc and leave the `.babysit/.env` value blank or commented so each
-developer can fill their local path.
+Don't seed both for the same role. Do not fail setup when a related repo path
+is absent — record where the path is expected to come from and leave it unset.
 ## Output
 ```text
 STATUS: DONE | DONE_WITH_CONCERNS | NEEDS_CONTEXT | BLOCKED

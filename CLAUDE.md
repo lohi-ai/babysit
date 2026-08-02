@@ -231,6 +231,7 @@ babysit/
 │   │                  #   bbs slug      derive slug / ticket / branch from git remote + branch
 │   │                  #   bbs autopilot checkpoint + timeline runner behind the autopilot skill
 │   │                  #   bbs ticket    ticket identity (the big subcommand)
+│   │                  #   bbs workspace multi-repo registry + <repo>/.babysit/config.yaml
 │   │                  #   bbs design    query DESIGN.md tokens / suggest products / list components / ux-check
 │   │                  #   bbs update-check, upgrade, telemetry-log, codex-competitive, …
 │   ├── bbs-*          # argv0 symlinks to bbs, kept for legacy callers — skills call `bbs <sub>`
@@ -238,13 +239,24 @@ babysit/
 │   └── setup-skills   # Builds bbs, links it into ~/.local/bin/ and the bbs-* aliases into ~/.claude/
 ├── hooks/hooks.json   # plugin hook wiring (artifact-gated approval — see docs/artifact-gated-approval.md)
 ├── tests/             # shell + python suites for bins, workflows, and autopilot integration
-├── docs/              # roadmap, identity, operations, artifact-gated-approval
+├── docs/              # roadmap, identity, workspaces, operations, artifact-gated-approval
 ├── web/               # snapshot dashboard (Vite/React) over ~/.babysit state
 └── .claude/
     └── skills/        # see "Skill inventory by invocation mode" above
 ```
 
 Skills are namespaced with the `bbs:` prefix when installed globally (e.g. `bbs:implement`).
+
+## Workspaces — three meanings, one registry
+
+"Workspace" names three different things here: a **cmux workspace** (a visible
+worker's panes), the **worktree pool** (`.babysit/worktrees/<ticket>_<slug>`),
+and the **registry workspace** (`bbs workspace` — a named list of repos that
+form one product). When you write output or docs, meaning 3 always carries its
+name ("workspace acme"), meaning 1 always carries the `cmux` prefix, and
+meaning 2 is called a worktree. See [docs/workspaces.md](docs/workspaces.md)
+for the registry's files, the `RELATED_*_REPO` fallback rule, and the
+`BABYSIT_HOME` test guard.
 
 ## Ticket identity
 

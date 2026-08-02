@@ -43,7 +43,9 @@ web/*.tsbuildinfo
 # Browse skill runtime IPC (sidebar-inbox observation queue)
 .context/
 repositories/
-workspace/
+# Anchored: this is the top-level agent scratch dir, not any directory named
+# "workspace" — unanchored it also swallowed internal/workspace.
+/workspace/
 .babysit/
 .repos/
 dev/

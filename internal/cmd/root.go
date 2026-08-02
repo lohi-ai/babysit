@@ -72,7 +72,7 @@ func NewRootCmd() *cobra.Command {
 	root.AddCommand(
 		newConfigCmd(), newEnvCmd(), newSlugCmd(), newTicketCmd(), newQAConfigCmd(),
 		newCodexCompetitiveCmd(), newSecretsCmd(), newDesignCmd(), newDashboardCmd(),
-		newForemanCmd(),
+		newForemanCmd(), newWorkspaceCmd(),
 		guardHelp(newUpdateCheckCmd()), guardHelp(newUpgradeCmd()),
 		guardHelp(newLearningsLogCmd()), guardHelp(newLearningsSearchCmd()),
 		guardHelp(newTelemetryLogCmd()), guardHelp(newAnalyticsCronCmd()),
