@@ -5,16 +5,21 @@ export interface FilterState {
   status: string[];
   phase: string[];
   label: string[];
+  /** Foreman ids. Empty = any assignee. */
+  foreman: string[];
+  /** Control states: active | paused | cancelled. Empty = the default view,
+   *  which hides control-cancelled tickets — hidden, never deleted. */
+  control: string[];
 }
 
 export type FilterAction =
   | { type: 'replace'; payload: FilterState }
   | { type: 'setProject'; payload: string }
-  | { type: 'toggle'; facet: 'status' | 'phase' | 'label'; value: string }
+  | { type: 'toggle'; facet: 'status' | 'phase' | 'label' | 'foreman' | 'control'; value: string }
   | { type: 'clear' };
 
 export function initialFilterState(activeProject?: string): FilterState {
-  return { project: activeProject ?? 'all', status: [], phase: [], label: [] };
+  return { project: activeProject ?? 'all', status: [], phase: [], label: [], foreman: [], control: [] };
 }
 
 export function filterReducer(state: FilterState, action: FilterAction): FilterState {
@@ -23,7 +28,7 @@ export function filterReducer(state: FilterState, action: FilterAction): FilterS
       return action.payload;
     case 'setProject':
       // Reset per-view filter chips when switching project
-      return { project: action.payload, status: [], phase: [], label: [] };
+      return { project: action.payload, status: [], phase: [], label: [], foreman: [], control: [] };
     case 'toggle': {
       const arr = state[action.facet];
       const next = arr.includes(action.value)
@@ -32,7 +37,7 @@ export function filterReducer(state: FilterState, action: FilterAction): FilterS
       return { ...state, [action.facet]: next };
     }
     case 'clear':
-      return { ...state, status: [], phase: [], label: [] };
+      return { ...state, status: [], phase: [], label: [], foreman: [], control: [] };
     default:
       return state;
   }
@@ -53,6 +58,12 @@ export function serializeFilter(state: FilterState): string {
   if (state.label.length > 0) {
     params.push(`label=${state.label.map(encodeURIComponent).join(',')}`);
   }
+  if (state.foreman.length > 0) {
+    params.push(`foreman=${state.foreman.map(encodeURIComponent).join(',')}`);
+  }
+  if (state.control.length > 0) {
+    params.push(`control=${state.control.map(encodeURIComponent).join(',')}`);
+  }
   return params.join('&');
 }
 
@@ -69,7 +80,7 @@ export function parseFilterQuery(query: string, defaultProject = 'all'): FilterS
     const decoded = decodeURIComponent(rawVal);
     if (key === 'project') {
       state.project = decoded || defaultProject;
-    } else if (key === 'status' || key === 'phase' || key === 'label') {
+    } else if (key === 'status' || key === 'phase' || key === 'label' || key === 'foreman' || key === 'control') {
       state[key] = decoded.split(',').filter(Boolean);
     }
   }

@@ -145,7 +145,7 @@ When adding or editing a skill, don't write new ad-hoc prompts. Classify the
 decision point, let the framework route it, and log every Taste decision to
 `~/.babysit/analytics/decisions.jsonl`.
 
-### One mode, two escalation channels — design skills accordingly
+### One mode, three escalation channels — design skills accordingly
 
 Every skill always runs autonomously: decisions go through the Auto-Decision
 Framework, and skills *never* prompt mid-flight for taste, style, or cosmetic
@@ -154,6 +154,10 @@ for `NEEDS_CONTEXT`, picked by `AGENT_ROLE` (or legacy `GT_ROLE`):
 
 - `AGENT_ROLE=developer` (default, no env var) — render `NEEDS_CONTEXT` as a
   single `AskUserQuestion`. The human is at the Claude Code terminal.
+- `AGENT_ROLE=dashboard` — publish the question as a durable approval record
+  (`bbs ticket approval publish`) and block on `approval await`. The human
+  answers in the web dashboard, where the artifacts are readable; nobody is
+  watching this terminal.
 - `AGENT_ROLE=mayor|general|scanner|...` — emit the structured `NEEDS_CONTEXT`
   block. An orchestrator (babysit-office, gastown, cron) relays via its own
   channel. `AskUserQuestion` here would hang the run.
@@ -164,7 +168,7 @@ analysis, artifacts, and decision logic are identical either way.
 
 **The operational rules — when to escalate, the `NEEDS_CONTEXT` format the
 orchestrator expects, the `INVOKER` values — live in
-[.claude/skills/references/preamble.md § One mode, two escalation channels](.claude/skills/references/preamble.md#one-mode-two-escalation-channels).**
+[.claude/skills/references/preamble.md § One mode, three escalation channels](.claude/skills/references/preamble.md#one-mode-three-escalation-channels).**
 That file is loaded at skill-invocation time regardless of which repo the skill
 runs in. *This* `CLAUDE.md` is only in context when someone is working inside
 the babysit repo itself; non-`developer` invocations from babysit-office or
@@ -188,7 +192,7 @@ Workflows are split along the four points where a human actually adds value:
 
 1. **Requirement accepted** → `requirement.md` on the ticket. Autopilot drafts it in Flow steps 1–2 and stops at `--stop-after=requirement` if requested; requirement drafting is part of autopilot, not a separate skill.
 2. **Plan accepted** → `plan.md` on the ticket. Owner: autopilot init via `plan-draft`; user-facing work routes through `design-ui` inside it, so the plan carries the UI spec + prototype **before** the `/goal` handoff — the handoff is where the human reviews design ahead of implementation (builder build mode covers the case init didn't seed it); stops at `--stop-after=plan` if requested.
-3. **QA ready** → branch implemented, reviewed, checked with `qa` or a named fallback. Owner: `builder` (implement / build / child / verify modes) — the default end-to-end stop. For a batch of *independent* tickets, the `foreman` skill owns this checkpoint batch-wide: one visible worker per ticket in its own cmux workspace (tmux session when cmux is absent), each running autopilot, a design-review gate at the plan handoff (greenlight by pasting the worker's `/goal` block, or escalate taste-heavy designs to the human), QA serialized on `bbs ticket qa-lease` (one test surface), verdicts verified on disk.
+3. **QA ready** → branch implemented, reviewed, checked with `qa` or a named fallback. Owner: `builder` (implement / build / child / verify modes) — the default end-to-end stop. For a batch of *independent* tickets, the `foreman` skill owns this checkpoint batch-wide: one visible worker per ticket in its own cmux workspace (cmux is a hard dependency — foreman preflights and fails fast without it), each running autopilot, a design-review gate at the plan handoff (greenlight by pasting the worker's `/goal` block, escalate to the human via `AskUserQuestion` or the dashboard's approval record), QA serialized on `bbs ticket qa-lease` (one test surface), verdicts verified on disk.
 4. **PR ready** → human reviews the QA handoff and invokes `create-pr`. Autopilot does not create PRs.
 
 When adding or editing a workflow, be explicit about which checkpoint it stops at, and make sure the final step's handoff comment ends with a `Next:` line pointing at the human's next action (read + accept plan, review QA evidence, run `create-pr`, etc.). A workflow that crosses a checkpoint without stopping should say so in its frontmatter description (see `builder.md`).

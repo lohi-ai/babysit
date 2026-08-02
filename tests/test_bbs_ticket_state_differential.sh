@@ -141,8 +141,13 @@ fi
 # ── assert resulting index.json JSON-equivalent ──────────────────────
 BIDX="$ROOT/bash-home/projects/slug/tickets/bs-state01/index.json"
 GIDX="$ROOT/go-home/projects/slug/tickets/bs-state01/index.json"
+# Fields added to the schema *after* the port completed have no bash counterpart
+# — the oracle is frozen, so it can never grow one. Drop them from both sides:
+# this harness answers "does Go match bash on ported behavior", and post-port
+# surface has its own tests (control → test_bbs_ticket_control.sh).
+POST_PORT='del(.control)'
 if [ -f "$BIDX" ] && [ -f "$GIDX" ]; then
-  if diff -u <(jq -S . "$BIDX" | mask) <(jq -S . "$GIDX" | mask) > "$ROOT/idx.diff"; then
+  if diff -u <(jq -S "$POST_PORT" "$BIDX" | mask) <(jq -S "$POST_PORT" "$GIDX" | mask) > "$ROOT/idx.diff"; then
     ok "index.json semantically identical (jq -S)"
   else
     fail "index.json diverged" "$(cat "$ROOT/idx.diff")"

@@ -1,6 +1,16 @@
-// Snapshot schema — single source of truth.
-// `bin/bbs-dashboard` writes `web/dist/data.js` conforming to `Snapshot`,
-// loaded via `<script src="./data.js">` into `window.__BBS_DATA__`.
+// Snapshot schema — single source of truth for BOTH data sources.
+//
+// The same `Snapshot` object arrives two ways, and nothing downstream of
+// `loadSnapshot` / `fetchSnapshot` can tell which:
+//
+//   snapshot mode — `bbs dashboard --snapshot` writes `web/dist/data.js` and
+//     the page is opened over file://. `<script src="./data.js">` sets
+//     `window.__BBS_DATA__` before the SPA boots. Read-only: there is no
+//     server to POST to, so mutation controls render disabled.
+//   served mode — `bbs dashboard` runs a localhost server that composes the
+//     very same object and serves it at `GET /api/snapshot`. Its `/data.js`
+//     is deliberately empty, which is what leaves `window.__BBS_DATA__`
+//     undefined and selects this branch.
 
 export type TicketStatus =
   | 'triage' | 'backlog' | 'planned' | 'decomposed'
@@ -29,6 +39,58 @@ export interface TruncationMarker {
   forced?: boolean;
 }
 
+// A human's override of the lifecycle, orthogonal to `status`. `prior_status`
+// is the rung the ticket was on when the override landed, which is what makes
+// resume/restore exact rather than a guess — so a control action never writes
+// `status`, and `status` here is never the string "paused".
+export interface TicketControl {
+  state: 'paused' | 'cancelled';
+  prior_status: TicketStatus | string;
+  note: string;
+  actor: string;
+  at: string;
+}
+
+// The design checkpoint, published by a worker and answered here. `state` is
+// the whole lifecycle: `pending` is a question waiting on a human, everything
+// else is the answer it got. `resolved` is absent while pending.
+// One comment anchored to a paragraph of a document or an element of the
+// prototype. `anchor` locates it in the current render; `excerpt` is what the
+// human pointed at, and is what still means something after a rewrite.
+export interface ApprovalComment {
+  id: string;
+  target: 'requirement' | 'plan' | 'design' | 'prototype';
+  anchor?: string;
+  excerpt?: string;
+  body: string;
+  actor: string;
+  at: string;
+}
+
+export interface TicketApproval {
+  state: 'pending' | 'approved' | 'redirected' | 'dropped';
+  kind: string;
+  note: string;
+  requested_by: string;
+  at: string;
+  comments?: ApprovalComment[];
+  resolved?: {
+    outcome: 'approved' | 'redirected' | 'dropped';
+    actor: string;
+    at: string;
+    note: string;
+  };
+}
+
+// The mock the approval is about. `html` is null when the file was too big to
+// embed — the frame then has nothing to show and the tab link is the only way
+// in, which the UI says out loud rather than rendering a blank box.
+export interface TicketPrototype {
+  path: string;
+  bytes: number;
+  html: string | null;
+}
+
 export interface TicketSummary {
   id: string;
   title: string;
@@ -39,6 +101,11 @@ export interface TicketSummary {
   size: string | null;
   updated_at: string | null;
   created_at: string | null;
+  /** Foreman id this ticket is assigned to; null when unassigned. */
+  assignee: string | null;
+  control: TicketControl | null;
+  /** Pending or last-answered design checkpoint; null when never published. */
+  approval: TicketApproval | null;
 }
 
 export interface NamedFile {
@@ -84,6 +151,8 @@ export interface ManifestRepo {
 export interface TicketDetail extends TicketSummary {
   requirement: string | null;
   plan: string | null;
+  design: string | null;
+  prototype: TicketPrototype | null;
   manifest: string | null;
   repos: ManifestRepo[];
   checkpoint: CheckpointRow | null;
@@ -190,6 +259,33 @@ export interface SessionsInfo {
   sessions?: ActiveSession[];
 }
 
+// One ~/.babysit/foremen/<id>.yaml record. `assigned` is derived server-side
+// from the tickets; liveness is NOT — the raw `heartbeat` stamp is graded at
+// render time, since a snapshot that baked "live" in would keep claiming it
+// long after the foreman died.
+export interface ForemanRow {
+  id: string;
+  owner: string;
+  project_dir: string;
+  workspace_dir: string;
+  workspace_ref: string;
+  workspace_title: string;
+  session: string;
+  status: string;
+  heartbeat: string;
+  /** RFC3339 stamp of the last poke that could not be delivered; '' when reachable. */
+  unreachable: string;
+  assigned: number;
+}
+
+/** Mirrors internal/foreman.StaleAfter — no heartbeat within this window reads as dead. */
+export const FOREMAN_STALE_MS = 10 * 60 * 1000;
+
+export function foremanLive(f: ForemanRow, now = Date.now()): boolean {
+  const t = Date.parse(f.heartbeat ?? '');
+  return Number.isFinite(t) && now - t < FOREMAN_STALE_MS;
+}
+
 export interface Snapshot {
   meta: Meta;
   // v2: per-project data keyed by slug
@@ -200,6 +296,7 @@ export interface Snapshot {
   builderProfile: BuilderRow[];
   journalTail: string[];
   sessions: SessionsInfo;
+  foremen: ForemanRow[];
   // v1 compat fields (present on v1 snapshots, absent on v2)
   tickets?: TicketSummary[];
   ticketDetail?: Record<string, TicketDetail>;
@@ -218,11 +315,42 @@ declare global {
 
 const _emptyAnalytics: AnalyticsRollup = { rows: [], per_skill: [], per_day: [], outcome: [] };
 
+/** Which of the two sources this page is running against. */
+export type DataSource = 'snapshot' | 'server';
+
+/**
+ * `window.__BBS_DATA__` is the switch. The served page ships an empty
+ * `/data.js`, so its absence means "there is a server behind this page" —
+ * which is also what makes the mutation controls available.
+ */
+export function dataSource(): DataSource {
+  return typeof window !== 'undefined' && window.__BBS_DATA__ ? 'snapshot' : 'server';
+}
+
 export function loadSnapshot(): LoadedSnapshot {
   if (typeof window === 'undefined' || !window.__BBS_DATA__) {
     throw new Error('data.js not loaded — run `bbs-dashboard build` then re-snapshot');
   }
-  const s = window.__BBS_DATA__ as LoadedSnapshot;
+  return normalizeSnapshot(window.__BBS_DATA__);
+}
+
+/** Served mode: the same object, over HTTP. */
+export async function fetchSnapshot(signal?: AbortSignal): Promise<LoadedSnapshot> {
+  const res = await fetch('/api/snapshot', { signal, headers: { Accept: 'application/json' } });
+  if (!res.ok) {
+    throw new Error(`GET /api/snapshot failed: ${res.status} ${res.statusText}`);
+  }
+  return normalizeSnapshot(await res.json());
+}
+
+/**
+ * The defensive-defaults pass both sources share. It mutates and returns its
+ * argument — the snapshot path has always handed views the same object
+ * `window.__BBS_DATA__` points at, and copying it here would only double the
+ * memory of a multi-megabyte snapshot.
+ */
+export function normalizeSnapshot(raw: unknown): LoadedSnapshot {
+  const s = raw as LoadedSnapshot;
 
   // Runtime schema check: if not v2, mark stale and apply defensive defaults.
   const version = (s.meta as { schema_version?: number })?.schema_version ?? 1;
@@ -241,6 +369,14 @@ export function loadSnapshot(): LoadedSnapshot {
     p.ticketDetail ??= {};
     p.timeline ??= [];
     p.analytics ??= { ..._emptyAnalytics };
+    // A data.js written before the control plane shipped has neither key; the
+    // views read them unconditionally, so default here rather than at every
+    // call site.
+    for (const t of p.tickets) {
+      t.assignee ??= null;
+      t.control ??= null;
+      t.approval ??= null;
+    }
     for (const id of Object.keys(p.ticketDetail)) {
       const d = p.ticketDetail[id];
       d.history ??= [];
@@ -250,6 +386,11 @@ export function loadSnapshot(): LoadedSnapshot {
       d.reviews ??= [];
       d.evidence ??= [];
       d.repos ??= [];
+      d.assignee ??= null;
+      d.control ??= null;
+      d.approval ??= null;
+      d.design ??= null;
+      d.prototype ??= null;
     }
   }
   s.decisions ??= [];
@@ -261,6 +402,7 @@ export function loadSnapshot(): LoadedSnapshot {
     s.sessions = { count: (s.sessions as unknown as ActiveSession[]).length ?? 0, sessions: [] };
   }
   s.sessions.sessions ??= [];
+  s.foremen ??= [];
   s.meta.truncations ??= [];
 
   // v1 compat: if top-level tickets/timeline/analytics present (v1 shape),

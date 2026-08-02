@@ -13,6 +13,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/reallongnguyen/babysit/internal/foreman"
 )
 
 func timeNow() int64 { return time.Now().Unix() }
@@ -102,7 +104,48 @@ func Compose(o Options) obj {
 		"builderProfile": jsonlArray(filepath.Join(o.StateDir, "builder-profile.jsonl")),
 		"journalTail":    journalTail(filepath.Join(o.StateDir, "journal.log")),
 		"sessions":       activeSessions(o.StateDir),
+		"foremen":        foremen(o.StateDir, projects),
 	}
+}
+
+// foremen lists ~/.babysit/foremen/<id>.yaml with the count of tickets assigned
+// to each. The count is derived here rather than stored on the record because
+// the assignment lives on the ticket — a counter on the foreman would be a
+// second copy of the same fact, free to drift the moment a ticket is assigned
+// by a writer that doesn't know the record exists.
+//
+// Liveness is deliberately NOT derived here: heartbeat age changes every
+// second, and a snapshot that bakes it in reads as live long after it stopped
+// being true. The SPA grades the raw stamps at render time.
+func foremen(stateDir string, projects obj) arr {
+	assigned := map[string]int{}
+	for _, p := range projects {
+		block, _ := p.(obj)
+		list, _ := block["tickets"].(arr)
+		for _, t := range list {
+			row, _ := t.(obj)
+			if id, ok := row["assignee"].(string); ok && id != "" {
+				assigned[id]++
+			}
+		}
+	}
+	out := arr{}
+	for _, r := range foreman.ListIn(filepath.Join(stateDir, "foremen")) {
+		out = append(out, obj{
+			"id":              r.ID,
+			"owner":           r.Owner,
+			"project_dir":     r.ProjectDir,
+			"workspace_dir":   r.WorkspaceDir,
+			"workspace_ref":   r.WorkspaceRef,
+			"workspace_title": r.WorkspaceTitle,
+			"session":         r.Session,
+			"status":          r.Status,
+			"heartbeat":       r.Heartbeat,
+			"unreachable":     r.Unreachable,
+			"assigned":        assigned[r.ID],
+		})
+	}
+	return out
 }
 
 // ─── project block ───────────────────────────────────────────────────────────
@@ -127,6 +170,10 @@ func projectBlock(o Options, projectDir string) obj {
 			"id": detail["id"], "title": detail["title"], "status": detail["status"],
 			"phase": detail["phase"], "branch": detail["branch"], "parent": detail["parent"],
 			"size": detail["size"], "updated_at": detail["updated_at"], "created_at": detail["created_at"],
+			"assignee": detail["assignee"], "control": detail["control"],
+			// The summary carries the approval record so a list can pin
+			// "waiting on you" without loading every ticket's detail.
+			"approval": detail["approval"],
 		})
 		// timeline: each history row + {ticket: id}
 		if rows, ok := parseJSONL(filepath.Join(tdir, "history.jsonl")); ok {
@@ -187,8 +234,20 @@ func ticketDetail(o Options, tdir string) (obj, bool) {
 		"size":             digPath(idx, "pointers", "ticket_size"),
 		"updated_at":       digRaw(idx, "updated_at"),
 		"created_at":       digRaw(idx, "created_at"),
+		// assignee and control ride alongside status, never merged into it:
+		// status is the reconciled lifecycle rung, control is the human's
+		// override on top of it. Folding "paused" into status would destroy
+		// the rung it interrupted and make resume a guess.
+		"assignee": digRaw(idx, "assignee"),
+		"control":  digRaw(idx, "control"),
+		// The approval record and the artifacts it points at travel together:
+		// the record is the question, these are what the human reads to answer
+		// it, and a screen that had one without the other could not decide.
+		"approval":         digRaw(idx, "approval"),
 		"requirement":      fileCappedOrNull(filepath.Join(tdir, "requirement.md"), 51200),
 		"plan":             fileCappedOrNull(filepath.Join(tdir, "plan.md"), 51200),
+		"design":           fileCappedOrNull(filepath.Join(tdir, "design.md"), 51200),
+		"prototype":        prototype(tdir),
 		"manifest":         fileCappedOrNull(filepath.Join(tdir, "manifest.md"), 51200),
 		"repos":            repos,
 		"checkpoint":       checkpoint,
@@ -199,6 +258,33 @@ func ticketDetail(o Options, tdir string) (obj, bool) {
 		"reviews":          namedFiles(filepath.Join(tdir, "reviews"), ".md"),
 		"evidence":         evidenceFiles(filepath.Join(tdir, "evidence")),
 	}, true
+}
+
+// prototypeCap bounds the mock embedded in the snapshot. A design prototype is
+// one self-contained HTML file; past a megabyte it is carrying assets the
+// approval screen has no business inlining into every poll.
+const prototypeCap = 1 << 20
+
+// prototype reports the ticket's mock and, when it fits, its full source.
+//
+// The HTML rides *inside* the snapshot rather than being fetched, because the
+// file:// path has no server to fetch from — an approval screen that can only
+// show the mock while a server happens to be running is not a design
+// checkpoint. Oversized mocks embed nothing rather than a prefix: half an HTML
+// document renders as garbage, and "open it in a tab" is the better answer.
+func prototype(tdir string) interface{} {
+	path := filepath.Join(tdir, "prototype.html")
+	st, err := os.Stat(path)
+	if err != nil {
+		return nil
+	}
+	out := obj{"path": path, "bytes": st.Size(), "html": nil}
+	if st.Size() <= prototypeCap {
+		if b, err := os.ReadFile(path); err == nil {
+			out["html"] = string(b)
+		}
+	}
+	return out
 }
 
 // ─── analytics ───────────────────────────────────────────────────────────────

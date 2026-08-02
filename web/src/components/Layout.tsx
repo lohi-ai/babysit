@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Home as HomeIcon, Activity, Inbox, Workflow, Zap, Calendar, BarChart3 } from 'lucide-react';
+import { Home as HomeIcon, Activity, HardHat, Inbox, Workflow, Zap, Calendar, BarChart3 } from 'lucide-react';
 import type { Meta, Snapshot } from '../lib/data';
 import { formatDate } from '../lib/format';
 import { ProjectSwitcher } from './ProjectSwitcher';
@@ -9,10 +9,12 @@ import { ThemeToggle } from './ThemeToggle';
 import { ShortcutsHelp } from './ShortcutsHelp';
 import { FocusScopeContext, FilterKeyContext, useGlobalKeyboard, type FocusScope, type FilterKeyRef } from '../lib/keyboard';
 import { useFilterOptional } from '../contexts/FilterContext';
+import { pendingApprovals } from './WaitingOnYou';
 
 const NAV_ITEMS = [
   { hash: '#/',              label: 'Home',         kbd: 'H', Icon: HomeIcon },
   { hash: '#/live',          label: 'Live',         kbd: 'L', Icon: Activity },
+  { hash: '#/foremen',       label: 'Foremen',      kbd: 'F', Icon: HardHat },
   { hash: '#/tickets',       label: 'Tickets',      kbd: 'T', Icon: Inbox },
   { hash: '#/decisions',     label: 'Decisions',    kbd: 'D', Icon: Workflow },
   { hash: '#/skill-events',  label: 'Skill events', kbd: 'S', Icon: Zap },
@@ -63,6 +65,17 @@ export function Layout({
   const withProject = (hash: string) =>
     projectParam ? `${hash}${hash.includes('?') ? '&' : '?'}${projectParam}` : hash;
 
+  // The second entry point to the design checkpoint. Home carries the first,
+  // but the human may never open Home — and a decision nobody notices blocks a
+  // worker for as long as it goes unnoticed.
+  const pendingApprovalCount = useMemo(() => {
+    if (!snapshot) return 0;
+    const project = filter?.state.project ?? 'all';
+    return Object.entries(snapshot.projects)
+      .filter(([slug]) => project === 'all' || slug === project)
+      .reduce((n, [, p]) => n + pendingApprovals(p.tickets ?? []).length, 0);
+  }, [snapshot, filter]);
+
   return (
     <FocusScopeContext.Provider value={scopeRef}>
       <FilterKeyContext.Provider value={filterKeyRef}>
@@ -111,11 +124,30 @@ export function Layout({
                       <Icon size={14} strokeWidth={1.75} aria-hidden="true" />
                       <span className="truncate">{item.label}</span>
                     </span>
-                    <span
-                      className="opacity-0 group-hover:opacity-60"
-                      style={{ transition: 'opacity var(--dur-fast) var(--ease-out)' }}
-                    >
-                      <Kbd dim>G {item.kbd}</Kbd>
+                    <span className="flex items-center gap-1.5 shrink-0">
+                      {item.hash === '#/tickets' && pendingApprovalCount > 0 && (
+                        <span
+                          className="font-mono"
+                          aria-label={`${pendingApprovalCount} waiting on you`}
+                          style={{
+                            fontSize: 11,
+                            padding: '0 6px',
+                            lineHeight: '16px',
+                            borderRadius: 'var(--radius-sm)',
+                            backgroundColor: 'var(--accent)',
+                            color: 'var(--accent-fg)',
+                            fontVariantNumeric: 'tabular-nums',
+                          }}
+                        >
+                          {pendingApprovalCount}
+                        </span>
+                      )}
+                      <span
+                        className="opacity-0 group-hover:opacity-60"
+                        style={{ transition: 'opacity var(--dur-fast) var(--ease-out)' }}
+                      >
+                        <Kbd dim>G {item.kbd}</Kbd>
+                      </span>
                     </span>
                   </a>
                 </li>

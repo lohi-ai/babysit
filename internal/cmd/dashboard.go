@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/reallongnguyen/babysit/internal/dashboard"
+	"github.com/reallongnguyen/babysit/internal/identity"
 	"github.com/spf13/cobra"
 )
 
@@ -30,16 +31,23 @@ func newDashboardCmd() *cobra.Command {
 	}
 }
 
-const dashUsage = `bbs-dashboard — snapshot babysit state into web/dist/data.js and open the dashboard.
+const dashUsage = `bbs-dashboard — serve the babysit dashboard, or snapshot it to a static file.
 
 Usage:
-  bbs-dashboard                  Walk every project under ~/.babysit/projects/ (v2 default).
+  bbs-dashboard                  Serve the dashboard + JSON API on localhost and open it.
+                                 This is the control plane: tickets can be created, assigned,
+                                 paused and cancelled, and foremen spawned.
+  bbs-dashboard --snapshot       Static mode: write web/dist/data.js and open the file:// build.
+                                 Read-only — every mutation control renders disabled.
   bbs-dashboard build            Run ` + "`npm install && npm run build`" + ` in web/.
+  bbs-dashboard --port <n>       Serve on this port (default 0 = pick a free one).
   bbs-dashboard --slug <name>    DEPRECATED: kept for one release; cross-project view is now default.
                                  Filter the snapshot to a single project by slug.
-  bbs-dashboard --no-open        Snapshot only -- don't open browser (for CI/tests).
+  bbs-dashboard --no-open        Don't open a browser. On its own it implies --snapshot
+                                 (its long-standing meaning: snapshot only, for CI/tests);
+                                 with --server it runs a headless server.
   bbs-dashboard --dev            Dev mode: snapshot to web/public/data.js, run vite dev on :5173
-                                 with HMR, open browser. Sibling of the default file:// path.
+                                 with HMR, open browser. Sibling of the file:// path.
   bbs-dashboard --help           Print usage.
 
 Env overrides:
@@ -47,6 +55,8 @@ Env overrides:
   BABYSIT_DASHBOARD_REPO         Default: dirname of this script's repo root
   BBS_DASHBOARD_MAX_BYTES        Default: 5000000. If data.js exceeds this, caps are
                                  tightened to 1000/100 and one retry is attempted.
+  CMUX_SOCKET_CAPABILITY         The cmux socket token, inherited from the terminal that
+                                 started the server. Required to spawn or wake a foreman.
 `
 
 func dashErr(msg string) { fmt.Fprintf(os.Stderr, retarget("bbs-dashboard: %s\n"), msg) }
@@ -55,6 +65,12 @@ func runDashboard(args []string) error {
 	// ── flag parse ──
 	subcmd, slugOverride := "", ""
 	open, dev := true, false
+	port := 0
+	// mode is "" until a flag names one. --no-open has meant "snapshot only"
+	// since the bash version and every existing caller relies on that, so it
+	// still selects snapshot mode — but only when nothing else already picked
+	// one, which is what makes `--server --no-open` a headless server.
+	mode := ""
 	i := 0
 	for i < len(args) {
 		a := args[i]
@@ -64,6 +80,22 @@ func runDashboard(args []string) error {
 			return nil
 		case a == "--no-open":
 			open = false
+		case a == "--snapshot":
+			mode = "snapshot"
+		case a == "--server":
+			mode = "server"
+		case a == "--port":
+			if i+1 >= len(args) {
+				dashErr("--port requires a number")
+				os.Exit(1)
+			}
+			n, err := strconv.Atoi(args[i+1])
+			if err != nil || n < 0 || n > 65535 {
+				dashErr("invalid port: " + args[i+1])
+				os.Exit(1)
+			}
+			port = n
+			i++
 		case a == "--dev":
 			dev = true
 		case a == "--slug":
@@ -145,15 +177,41 @@ func runDashboard(args []string) error {
 		}
 	}
 
-	// ── reconcile statuses before snapshotting ──
-	if os.Getenv("BBS_DASHBOARD_NO_RECONCILE") == "" {
-		reconcileProjects(scriptDir, stateDir)
-	}
-
 	version := "unknown"
 	if b, err := os.ReadFile(filepath.Join(repoRoot, "VERSION")); err == nil {
 		version = strings.TrimSpace(string(b))
 	}
+
+	// ── mode ──
+	// --dev is its own long-standing path (vite + public/data.js); it is not a
+	// third mode to resolve here.
+	if mode == "" && !dev {
+		mode = "server"
+		if !open {
+			mode = "snapshot"
+		}
+	}
+	if port != 0 && mode != "server" {
+		// Silently dropping it would leave the human waiting for a server on a
+		// port nothing ever bound. --no-open --port is the likely shape.
+		dashErr("--port only applies to server mode; add --server (or drop --no-open)")
+		os.Exit(1)
+	}
+	if mode == "server" {
+		return serveDashboard(&dashServer{
+			stateDir:  stateDir,
+			distDir:   distDir,
+			version:   version,
+			slug:      slugOverride,
+			reconcile: os.Getenv("BBS_DASHBOARD_NO_RECONCILE") == "",
+		}, port, open)
+	}
+
+	// ── reconcile statuses before snapshotting ──
+	if os.Getenv("BBS_DASHBOARD_NO_RECONCILE") == "" {
+		reconcileProjects(stateDir)
+	}
+
 	snapshotAt := time.Now().UTC().Format("2006-01-02T15:04:05Z")
 
 	compose := func(decisionsCap, skillEventsCap int) dashboard.Options {
@@ -236,15 +294,12 @@ func badDashSlug(s string) bool {
 	return s == "" || s == "." || s == ".." || strings.Contains(s, "/") || dashSlugBad.MatchString(s)
 }
 
-func reconcileProjects(scriptDir, stateDir string) {
-	ticketBin := filepath.Join(scriptDir, "bbs-ticket")
-	if _, err := os.Stat(ticketBin); err != nil {
-		if p, err := exec.LookPath("bbs-ticket"); err == nil {
-			ticketBin = p
-		} else {
-			return
-		}
-	}
+// reconcileProjects advances every project's ticket statuses before composing a
+// snapshot, so the dashboard never shows a rung the filesystem has already left
+// behind. It calls reconcileOne directly — both live in package cmd, so the old
+// fork/exec of a sibling `bbs-ticket` bought nothing but a missing-binary failure
+// mode and one process per project. Logs go to stderr; stdout is the report.
+func reconcileProjects(stateDir string) {
 	projects := filepath.Join(stateDir, "projects")
 	entries, err := os.ReadDir(projects)
 	if err != nil {
@@ -255,14 +310,17 @@ func reconcileProjects(scriptDir, stateDir string) {
 			continue
 		}
 		projDir := filepath.Join(projects, e.Name())
-		if _, err := os.Stat(filepath.Join(projDir, "tickets")); err != nil {
+		ticketsDir := filepath.Join(projDir, "tickets")
+		tickets, err := os.ReadDir(ticketsDir)
+		if err != nil {
 			continue
 		}
-		cmd := exec.Command(ticketBin, "reconcile", "--all", "--quiet")
-		cmd.Env = append(os.Environ(), "BABYSIT_PROJECT_HOME="+projDir)
-		cmd.Stdout = os.Stderr // reconcile log → stderr, off stdout
-		cmd.Stderr = os.Stderr
-		_ = cmd.Run()
+		env := identity.Env{ProjectHome: projDir}
+		for _, t := range tickets {
+			if t.IsDir() {
+				_ = reconcileOne(os.Stderr, env, t.Name(), false, true)
+			}
+		}
 	}
 }
 

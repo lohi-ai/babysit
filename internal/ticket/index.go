@@ -91,6 +91,11 @@ func (d Doc) EnsureDefaults(ticketID string) {
 	setDefault(d, "siblings", []interface{}{})
 	setDefault(d, "labels", []interface{}{})
 	setDefault(d, "assignee", nil)
+	// control is the human override axis (pause/cancel). It is deliberately
+	// separate from status: status is the derived lifecycle rung, control is an
+	// explicit act, so clearing control returns the ticket to the ladder at the
+	// rung it never left. nil means "not controlled".
+	setDefault(d, "control", nil)
 	setDefault(d, "origin", map[string]interface{}{
 		"type": "standalone", "parent": nil, "seed": nil,
 		"plan": nil, "position": nil, "design_doc": nil,
@@ -139,6 +144,21 @@ func (d Doc) Set(dotted, value string) {
 	}
 	parent, key := walk(d, strings.Split(dotted, "."))
 	parent[key] = v
+}
+
+// SetObj sets a dotted path to a decoded JSON value, for fields that are objects
+// rather than scalars (control). Set coerces everything to a string, which would
+// store the object as JSON text.
+func (d Doc) SetObj(dotted, objJSON string) error {
+	dec := json.NewDecoder(strings.NewReader(objJSON))
+	dec.UseNumber()
+	var obj interface{}
+	if err := dec.Decode(&obj); err != nil {
+		return err
+	}
+	parent, key := walk(d, strings.Split(dotted, "."))
+	parent[key] = obj
+	return nil
 }
 
 // Append mirrors the json_mutate append op: setdefault a list, then append the

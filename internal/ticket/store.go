@@ -94,6 +94,18 @@ type Index struct {
 		PR string `json:"pr"`
 	} `json:"pointers"`
 	Siblings []Sibling `json:"siblings"`
+	Control  *Control  `json:"control"`
+}
+
+// Control is the human override axis (see internal/cmd/ticket_control.go). A
+// pointer because `null` — no override — is the common case and has to stay
+// distinguishable from a zero-valued record.
+type Control struct {
+	State       string `json:"state"`
+	PriorStatus string `json:"prior_status"`
+	Note        string `json:"note"`
+	Actor       string `json:"actor"`
+	At          string `json:"at"`
 }
 
 type Sibling struct {

@@ -1,6 +1,8 @@
-import { useEffect, useMemo, useState } from 'react';
-import { loadSnapshot, type LoadedSnapshot } from './lib/data';
+import { useEffect, useState } from 'react';
+import { type LoadedSnapshot } from './lib/data';
+import { useSnapshot } from './lib/useSnapshot';
 import { FilterProvider } from './contexts/FilterContext';
+import { ControlProvider } from './contexts/ControlContext';
 import { Layout } from './components/Layout';
 import { ErrorBox } from './components/ErrorBox';
 import { Home } from './views/Home';
@@ -9,6 +11,7 @@ import { TicketDetail } from './views/TicketDetail';
 import { Timeline } from './views/Timeline';
 import { Analytics } from './views/Analytics';
 import { LiveStatus } from './views/LiveStatus';
+import { Foremen } from './views/Foremen';
 import { DecisionsFeed } from './views/DecisionsFeed';
 import { SkillEvents } from './views/SkillEvents';
 
@@ -34,7 +37,7 @@ function matchTicketDetail(hash: string): string | null {
   return m ? m[1] : null;
 }
 
-function AppInner({ snapshot, hash }: { snapshot: LoadedSnapshot; hash: string }) {
+function AppInner({ snapshot, hash, error, retry }: { snapshot: LoadedSnapshot; hash: string; error: string | null; retry: () => void }) {
   const ticketId = matchTicketDetail(hash);
   const route = hash.split('?')[0]; // strip query for route matching
 
@@ -45,6 +48,7 @@ function AppInner({ snapshot, hash }: { snapshot: LoadedSnapshot; hash: string }
   else if (route === '#/timeline') view = <Timeline snapshot={snapshot} />;
   else if (route === '#/analytics') view = <Analytics snapshot={snapshot} />;
   else if (route === '#/live') view = <LiveStatus snapshot={snapshot} />;
+  else if (route === '#/foremen') view = <Foremen snapshot={snapshot} />;
   else if (route === '#/decisions') view = <DecisionsFeed snapshot={snapshot} />;
   else if (route === '#/skill-events') view = <SkillEvents snapshot={snapshot} />;
   else {
@@ -54,6 +58,29 @@ function AppInner({ snapshot, hash }: { snapshot: LoadedSnapshot; hash: string }
 
   return (
     <>
+      {error && (
+        // A poll that fails once we already have data: what is on screen is
+        // still real, just frozen at the last successful read. Say that rather
+        // than replacing the dashboard with an error page.
+        <div
+          className="fixed top-0 left-0 right-0 z-50 px-4 py-2 text-sm"
+          style={{
+            backgroundColor: 'var(--status-blocked-bg)',
+            color: 'var(--status-blocked-text)',
+            borderBottom: '1px solid var(--border-emphasis)',
+          }}
+        >
+          <span>Lost connection to the dashboard server — showing the last data received. ({error})</span>
+          <button
+            type="button"
+            onClick={retry}
+            className="ml-3 underline"
+            style={{ color: 'inherit' }}
+          >
+            Retry
+          </button>
+        </div>
+      )}
       {snapshot._stale && (
         <div
           className="fixed top-0 left-0 right-0 z-50 px-4 py-2 text-sm"
@@ -76,20 +103,30 @@ function AppInner({ snapshot, hash }: { snapshot: LoadedSnapshot; hash: string }
 
 export function App() {
   const hash = useHashRoute();
-  const snapshot = useMemo<LoadedSnapshot | null>(() => {
-    try {
-      return loadSnapshot();
-    } catch {
-      return null;
-    }
-  }, []);
+  const { snapshot, loading, error, source, refresh } = useSnapshot();
+
+  // Served mode is async: the first paint happens before any data exists. The
+  // views all index into the snapshot at render, so they cannot run yet.
+  if (!snapshot && loading) {
+    return (
+      <Layout meta={null} active={hash}>
+        <div className="p-6 text-sm" style={{ color: 'var(--text-tertiary)' }}>
+          Loading babysit state…
+        </div>
+      </Layout>
+    );
+  }
 
   if (!snapshot) {
     return (
       <Layout meta={null} active={hash}>
         <ErrorBox
-          title="Snapshot not loaded"
-          body="data.js is missing or corrupt. Run `bbs-dashboard` (or `bbs-dashboard --no-open`) from the babysit repo to refresh it."
+          title={source === 'server' ? 'Cannot reach the dashboard server' : 'Snapshot not loaded'}
+          body={
+            source === 'server'
+              ? `GET /api/snapshot failed${error ? `: ${error}` : ''}. The server that served this page is gone — restart it with \`bbs dashboard\`.`
+              : 'data.js is missing or corrupt. Run `bbs dashboard --snapshot` from the babysit repo to refresh it.'
+          }
         />
       </Layout>
     );
@@ -97,7 +134,9 @@ export function App() {
 
   return (
     <FilterProvider activeProject={snapshot.meta.active_project}>
-      <AppInner snapshot={snapshot} hash={hash} />
+      <ControlProvider source={source} error={error} refresh={refresh}>
+        <AppInner snapshot={snapshot} hash={hash} error={error} retry={refresh} />
+      </ControlProvider>
     </FilterProvider>
   );
 }

@@ -5,6 +5,7 @@ import { DenseRow } from '../components/DenseRow';
 import { EmptyState } from '../components/EmptyState';
 import { SectionHeader } from '../components/SectionHeader';
 import { TopBar } from '../components/TopBar';
+import { WaitingOnYou } from '../components/WaitingOnYou';
 import { formatRelative } from '../lib/format';
 import { useFilter } from '../contexts/FilterContext';
 import { useScopedTickets, useScopedTimeline } from '../lib/scope';
@@ -33,6 +34,7 @@ export function Home({ snapshot }: { snapshot: Snapshot }) {
     <>
       <TopBar title={state.project === 'all' ? 'Dashboard — all projects' : 'Dashboard'} />
       <div className="px-6 py-4 w-full space-y-6">
+        <WaitingOnYou tickets={tickets} />
         <section>
           <SectionHeader title="Active work" />
           {meta.active_pair ? (
