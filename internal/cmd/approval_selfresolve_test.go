@@ -42,6 +42,48 @@ func TestFloorIsBiasedToEscalate(t *testing.T) {
 	}
 }
 
+// Three words are auth vocabulary in the abstract and presentation vocabulary
+// in practice — design tokens, ARIA roles, Claude Code sessions. Matching them
+// bare fired the floor on every user-facing ticket, i.e. on exactly the work
+// the grant exists to automate. These are the real strings from the
+// bs-bfq34gq0 design artifacts.
+func TestFloorDoesNotTripOnPresentationVocabulary(t *testing.T) {
+	misses := []string{
+		"tokens come from web/src/styles; the badge is token-skinned",
+		"reuses the existing status and text tokens from DESIGN.md",
+		`<div role="tab" aria-selected="true">Plan</div>`,
+		`the dialog is role="dialog" with role="img" on the thumbnail`,
+		"one worker per Claude Code session, listed under ~/.babysit/sessions/",
+		"the sessions column shows which foreman owns the workspace",
+	}
+	for _, s := range misses {
+		if got := floorHits(s); len(got) > 0 {
+			t.Errorf("floor tripped on presentation vocabulary: %q hit %v", s, got)
+		}
+	}
+}
+
+// Precision, not a weaker floor: the genuine auth paths behind those same
+// words still escalate, spelled the way an auth path is actually written.
+func TestFloorStillCatchesTheGenuineAuthPaths(t *testing.T) {
+	hits := []string{
+		"the endpoint authenticates on a bearer token",
+		"stores the access token in localStorage",
+		"rotates the refresh token on every request",
+		"the session cookie is now SameSite=None",
+		"lets an operator change a user role from the members table",
+		"gates the export behind an admin role check",
+		"adds role-based access to the settings page",
+		"the pricing page gains an annual toggle",
+		"an operator can update price on the plan row",
+	}
+	for _, s := range hits {
+		if got := floorHits(s); len(got) == 0 {
+			t.Errorf("floor missed a genuine non-delegable path: %q", s)
+		}
+	}
+}
+
 func TestParseRubricAcceptsMarkdown(t *testing.T) {
 	rubric := `
 - **Coverage** — AC1 maps to plan step 2, AC2 to the empty-state section

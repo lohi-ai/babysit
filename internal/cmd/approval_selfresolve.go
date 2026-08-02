@@ -40,29 +40,44 @@ const (
 	exitGrant  = 5 // no grant, or the grant does not cover this — escalate
 )
 
-// floorPattern matches the paths a grant may never cover. It is deliberately
-// broad: the requirement asks for a floor that holds, and the cost of the two
-// error directions is wildly asymmetric — a false positive costs the human one
-// escalation to read, a false negative auto-approves a change to money, auth,
-// or data that cannot be un-deleted. Anything ambiguous therefore counts as a
-// hit, and this list should get longer over time, never shorter.
+// floorPattern matches the paths a grant may never cover. It is biased to
+// escalate — the cost of the two error directions is wildly asymmetric, so a
+// genuinely ambiguous mention counts as a hit and this list should get longer
+// over time rather than shorter.
 //
-// Word boundaries keep the noise merely high rather than absurd ("author" is
-// not an auth hit), but no attempt is made to understand context: the string
-// "no payment code is touched" trips the money rule, and that is working as
-// intended.
+// Bias is not the same as imprecision, though, and a few words are ambiguous
+// only in the abstract. Three of them are core *presentation* vocabulary in
+// any repo with a design system, and matching them bare made the floor fire on
+// essentially every user-facing ticket — the exact population this grant
+// exists to automate, which left the grant inert rather than safe:
+//
+//   - "token" is a design token. The bs-bfq34gq0 artifacts contain 12, all
+//     visual ("tokens come from", "token-skinned"), plus exactly one real auth
+//     hit ("bearer token").
+//   - "role" is an ARIA attribute. That same prototype contains 37, every one
+//     of them role="tab" / role="img" / role="dialog" / role="link".
+//   - "session" is a Claude Code session and ~/.babysit/sessions/.
+//
+// So these three require context — "bearer", "access token", "user role" —
+// while every genuine money/auth/data phrase stays a bare match. Nothing is
+// exempted: the auth path is still caught, it is just spelled the way an auth
+// path is actually written.
 var floorPattern = regexp.MustCompile(`(?i)\b(` + strings.Join([]string{
 	// money
 	"payment", "payments", "billing", "invoice", "invoices", "charge", "charges",
-	"refund", "refunds", "price", "prices", "pricing", "checkout", "subscription",
-	"subscriptions", "stripe", "paypal", "paywall", "payout", "payouts", "currency",
-	"credit card", "purchase", "purchases", "coupon", "discount",
+	"refund", "refunds", "checkout", "subscription", "subscriptions", "stripe",
+	"paypal", "paywall", "payout", "payouts", "currency", "credit card",
+	"purchase", "purchases", "coupon", "discount",
+	"price change", "pricing page", "update price", "prices",
 	// auth
-	"auth", "authentication", "authorization", "login", "logout", "signup",
-	"sign-in", "sign-up", "password", "passwords", "credential", "credentials",
-	"secret", "secrets", "token", "tokens", "session", "sessions", "oauth", "sso",
-	"permission", "permissions", "role", "roles", "access control", "mfa", "2fa",
-	"jwt", "api key", "api keys",
+	"auth", "authentication", "authorization", "authenticate", "authenticates",
+	"authenticated", "login", "logout", "signup", "sign-in", "sign-up",
+	"password", "passwords", "credential", "credentials", "secret", "secrets",
+	"oauth", "sso", "permission", "permissions", "access control", "mfa", "2fa",
+	"jwt", "api key", "api keys", "bearer",
+	"auth token", "access token", "refresh token", "api token", "session token",
+	"user role", "admin role", "role change", "role-based", "rbac",
+	"session cookie", "user session", "session hijack",
 	// irreversible data
 	"delete", "deletes", "deletion", "drop", "truncate", "purge", "destroy",
 	"wipe", "erase", "irreversible", "migration", "migrations", "migrate",
