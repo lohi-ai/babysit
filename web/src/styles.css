@@ -272,10 +272,13 @@ h1 { letter-spacing: var(--tracking-display); }
 /* TicketDetail status strip — the ticket's facts across the top instead of down
    a rail. auto-fit rather than a fixed count, so the same markup is one row at
    1440px and two columns on a phone with no breakpoint to keep in sync. The
-   1px gap over a hairline background is what draws the dividers. */
+   1px gap over a hairline background is what draws the dividers.
+   `min(150px, 100%)` rather than a bare 150px: the track wants 150px but must
+   be allowed to go under it, or the strip overflows a main column narrower
+   than that and the labels get clipped by the shell's `overflow-x-clip`. */
 .ticket-status-strip {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(150px, 100%), 1fr));
   gap: 1px;
   border: 1px solid var(--border-hairline);
   border-radius: var(--radius-md);

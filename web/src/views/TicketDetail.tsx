@@ -26,6 +26,11 @@ type Tab =
 
 const OVERFLOW: Tab[] = ['activity', 'reviews', 'manifest', 'repos', 'approval'];
 
+// One panel serves every tab, so the association is a constant rather than a
+// per-tab id. Without it the tablist announces "tab 2 of 4" over a panel a
+// screen reader has no way to reach from the tab.
+const TABPANEL_ID = 'ticket-tabpanel';
+
 /** A tab as the strip renders it. `count` is omitted where a number says nothing. */
 interface TabSpec {
   key: Tab;
@@ -178,7 +183,7 @@ export function TicketDetail({ snapshot, ticketId }: { snapshot: Snapshot; ticke
           )}
         </div>
 
-        <div className="pt-4">
+        <div className="pt-4" id={TABPANEL_ID} role="tabpanel">
           {activeTab === 'requirement' && detail.requirement && <Markdown source={detail.requirement} />}
           {activeTab === 'plan' && detail.plan && <Markdown source={detail.plan} />}
           {activeTab === 'prototype' && (
@@ -775,6 +780,7 @@ function TabButton({
     <button
       role="tab"
       aria-selected={active}
+      aria-controls={TABPANEL_ID}
       onClick={onClick}
       className="px-3 py-2 text-sm whitespace-nowrap"
       style={{
