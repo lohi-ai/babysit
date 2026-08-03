@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Home as HomeIcon, Activity, HardHat, Inbox, Workflow, Zap, Calendar, BarChart3 } from 'lucide-react';
+import { Home as HomeIcon, Activity, HardHat, Inbox, Workflow, Zap, Calendar, BarChart3, ChevronDown, ChevronRight, MoreHorizontal } from 'lucide-react';
 import type { Meta, Snapshot } from '../lib/data';
 import { formatDate } from '../lib/format';
 import { ProjectSwitcher } from './ProjectSwitcher';
@@ -11,16 +11,26 @@ import { FocusScopeContext, FilterKeyContext, useGlobalKeyboard, type FocusScope
 import { useFilterOptional } from '../contexts/FilterContext';
 import { pendingApprovals } from './WaitingOnYou';
 
-const NAV_ITEMS = [
+// Two lists, not one: the dashboard is for watching tickets, so those two
+// routes stay in the nav and the six reference views fold behind a disclosure.
+// Nothing is unreachable — `G <key>` still routes to every one of them
+// (lib/keyboard.ts owns that map independently), and the panel opens itself
+// when the active route lives inside it.
+const PRIMARY_ITEMS = [
   { hash: '#/',              label: 'Home',         kbd: 'H', Icon: HomeIcon },
+  { hash: '#/tickets',       label: 'Tickets',      kbd: 'T', Icon: Inbox },
+] as const;
+
+const MORE_ITEMS = [
   { hash: '#/live',          label: 'Live',         kbd: 'L', Icon: Activity },
   { hash: '#/foremen',       label: 'Foremen',      kbd: 'F', Icon: HardHat },
-  { hash: '#/tickets',       label: 'Tickets',      kbd: 'T', Icon: Inbox },
   { hash: '#/decisions',     label: 'Decisions',    kbd: 'D', Icon: Workflow },
   { hash: '#/skill-events',  label: 'Skill events', kbd: 'S', Icon: Zap },
   { hash: '#/timeline',      label: 'Timeline',     kbd: 'M', Icon: Calendar },
   { hash: '#/analytics',     label: 'Analytics',    kbd: 'A', Icon: BarChart3 },
 ] as const;
+
+type NavItem = (typeof PRIMARY_ITEMS)[number] | (typeof MORE_ITEMS)[number];
 
 export function Layout({
   meta,
@@ -56,6 +66,12 @@ export function Layout({
     hash === '#/'
       ? (activeRoute === '#/' || activeRoute === '' || activeRoute === '#')
       : activeRoute.startsWith(hash);
+
+  // Opened by hand, or forced open because the route the human is on lives in
+  // there — landing on Analytics with an empty nav would read as "you are
+  // nowhere".
+  const [moreOpen, setMoreOpen] = useState(false);
+  const moreShown = moreOpen || MORE_ITEMS.some(i => isActive(i.hash));
 
   const filter = useFilterOptional();
   const projectParam =
@@ -98,62 +114,57 @@ export function Layout({
             </div>
           )}
 
-          <ul className="space-y-0.5 flex-1">
-            {NAV_ITEMS.map(item => {
-              const isOn = isActive(item.hash);
-              const Icon = item.Icon;
-              return (
+          <div className="flex-1">
+            <ul className="space-y-0.5">
+              {PRIMARY_ITEMS.map(item => (
                 <li key={item.hash}>
-                  <a
+                  <NavLink
+                    item={item}
                     href={withProject(item.hash)}
-                    className="group flex items-center justify-between px-3 py-1.5 rounded text-sm"
-                    style={{
-                      backgroundColor: isOn ? 'var(--surface-nav-elevated)' : 'transparent',
-                      color: isOn ? 'var(--text-nav-active)' : 'var(--text-nav)',
-                      borderRadius: 'var(--radius-sm)',
-                      transition: 'background-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out)',
-                    }}
-                    onMouseEnter={e => {
-                      if (!isOn) e.currentTarget.style.backgroundColor = 'var(--surface-hover)';
-                    }}
-                    onMouseLeave={e => {
-                      if (!isOn) e.currentTarget.style.backgroundColor = 'transparent';
-                    }}
-                  >
-                    <span className="flex items-center gap-2 min-w-0">
-                      <Icon size={14} strokeWidth={1.75} aria-hidden="true" />
-                      <span className="truncate">{item.label}</span>
-                    </span>
-                    <span className="flex items-center gap-1.5 shrink-0">
-                      {item.hash === '#/tickets' && pendingApprovalCount > 0 && (
-                        <span
-                          className="font-mono"
-                          aria-label={`${pendingApprovalCount} waiting on you`}
-                          style={{
-                            fontSize: 11,
-                            padding: '0 6px',
-                            lineHeight: '16px',
-                            borderRadius: 'var(--radius-sm)',
-                            backgroundColor: 'var(--accent)',
-                            color: 'var(--accent-fg)',
-                            fontVariantNumeric: 'tabular-nums',
-                          }}
-                        >
-                          {pendingApprovalCount}
-                        </span>
-                      )}
-                      <span
-                        className="opacity-0 group-hover:opacity-60"
-                        style={{ transition: 'opacity var(--dur-fast) var(--ease-out)' }}
-                      >
-                        <Kbd dim>G {item.kbd}</Kbd>
-                      </span>
-                    </span>
-                  </a>
+                    isOn={isActive(item.hash)}
+                    badge={item.hash === '#/tickets' ? pendingApprovalCount : 0}
+                  />
                 </li>
-              );
-            })}
-          </ul>
+              ))}
+            </ul>
+
+            <button
+              type="button"
+              onClick={() => setMoreOpen(o => !o)}
+              aria-expanded={moreShown}
+              aria-controls="nav-more"
+              className="group flex items-center justify-between w-full px-3 py-1.5 mt-0.5 text-sm"
+              style={{
+                color: moreShown ? 'var(--text-nav-active)' : 'var(--text-nav)',
+                borderRadius: 'var(--radius-sm)',
+                backgroundColor: 'transparent',
+                transition: 'background-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out)',
+              }}
+              onMouseEnter={e => { e.currentTarget.style.backgroundColor = 'var(--surface-hover)'; }}
+              onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'transparent'; }}
+            >
+              <span className="flex items-center gap-2 min-w-0">
+                <MoreHorizontal size={14} strokeWidth={1.75} aria-hidden="true" />
+                <span className="truncate">More</span>
+              </span>
+              {moreShown
+                ? <ChevronDown size={14} strokeWidth={1.75} aria-hidden="true" />
+                : <ChevronRight size={14} strokeWidth={1.75} aria-hidden="true" />}
+            </button>
+
+            <ul
+              id="nav-more"
+              hidden={!moreShown}
+              className="space-y-0.5 mt-0.5 ml-3 pl-2"
+              style={{ borderLeft: '1px solid var(--border-nav)' }}
+            >
+              {MORE_ITEMS.map(item => (
+                <li key={item.hash}>
+                  <NavLink item={item} href={withProject(item.hash)} isOn={isActive(item.hash)} badge={0} />
+                </li>
+              ))}
+            </ul>
+          </div>
 
           <button
             type="button"
@@ -228,5 +239,69 @@ export function Layout({
       <ShortcutsHelp open={helpOpen} onClose={() => setHelpOpen(false)} />
       </FilterKeyContext.Provider>
     </FocusScopeContext.Provider>
+  );
+}
+
+/** One nav row. Shared by the primary list and the More panel so a route reads
+ *  the same wherever it sits. */
+function NavLink({
+  item,
+  href,
+  isOn,
+  badge,
+}: {
+  item: NavItem;
+  href: string;
+  isOn: boolean;
+  badge: number;
+}) {
+  const Icon = item.Icon;
+  return (
+    <a
+      href={href}
+      className="group flex items-center justify-between px-3 py-1.5 rounded text-sm"
+      style={{
+        backgroundColor: isOn ? 'var(--surface-nav-elevated)' : 'transparent',
+        color: isOn ? 'var(--text-nav-active)' : 'var(--text-nav)',
+        borderRadius: 'var(--radius-sm)',
+        transition: 'background-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out)',
+      }}
+      onMouseEnter={e => {
+        if (!isOn) e.currentTarget.style.backgroundColor = 'var(--surface-hover)';
+      }}
+      onMouseLeave={e => {
+        if (!isOn) e.currentTarget.style.backgroundColor = 'transparent';
+      }}
+    >
+      <span className="flex items-center gap-2 min-w-0">
+        <Icon size={14} strokeWidth={1.75} aria-hidden="true" />
+        <span className="truncate">{item.label}</span>
+      </span>
+      <span className="flex items-center gap-1.5 shrink-0">
+        {badge > 0 && (
+          <span
+            className="font-mono"
+            aria-label={`${badge} waiting on you`}
+            style={{
+              fontSize: 11,
+              padding: '0 6px',
+              lineHeight: '16px',
+              borderRadius: 'var(--radius-sm)',
+              backgroundColor: 'var(--accent)',
+              color: 'var(--accent-fg)',
+              fontVariantNumeric: 'tabular-nums',
+            }}
+          >
+            {badge}
+          </span>
+        )}
+        <span
+          className="opacity-0 group-hover:opacity-60"
+          style={{ transition: 'opacity var(--dur-fast) var(--ease-out)' }}
+        >
+          <Kbd dim>G {item.kbd}</Kbd>
+        </span>
+      </span>
+    </a>
   );
 }

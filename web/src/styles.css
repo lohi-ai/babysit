@@ -269,26 +269,38 @@ h1 { letter-spacing: var(--tracking-display); }
   border-bottom: 1px solid var(--border-emphasis);
 }
 
-/* TicketDetail two-column layout — 720 main + 280 sidebar; collapses below 1024px. */
-.ticket-detail-grid {
+/* TicketDetail status strip — the ticket's facts across the top instead of down
+   a rail. auto-fit rather than a fixed count, so the same markup is one row at
+   1440px and two columns on a phone with no breakpoint to keep in sync. The
+   1px gap over a hairline background is what draws the dividers. */
+.ticket-status-strip {
   display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 1.5rem;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 1px;
+  border: 1px solid var(--border-hairline);
+  border-radius: var(--radius-md);
+  overflow: hidden;
 }
-.ticket-detail-sidebar {
+/* The dividers ride on the cells, not on a hairline backdrop showing through
+   the gaps — a last row that only half fills would otherwise end in a slab of
+   border colour where the missing cells are. */
+.ticket-status-strip > div {
+  background-color: var(--surface-bg);
+  box-shadow: 0 0 0 1px var(--border-hairline);
+  padding: 10px 12px;
   min-width: 0;
 }
-@media (min-width: 1024px) {
-  .ticket-detail-grid {
-    grid-template-columns: minmax(0, 1fr) 280px;
-  }
-  .ticket-detail-sidebar {
-    position: sticky;
-    top: 60px; /* TopBar height (44) + breathing room */
-    align-self: start;
-    max-height: calc(100vh - 60px);
-    overflow-y: auto;
-  }
+.ticket-status-strip dt {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-caption);
+  color: var(--text-muted);
+  margin-bottom: 4px;
+}
+.ticket-status-strip dd {
+  font-size: 13px;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
 }
 
 /* Markdown prose -- minimal, since we render with a hand-written renderer
