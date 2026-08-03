@@ -9,8 +9,10 @@ set -uo pipefail
 
 # Resolve bbs-autopilot (same logic as preamble).
 _bbs_resolve() {
-  local shim="$HOME/.claude/$1" repo="$HOME/.claude/skills/babysit/bin/$1"
+  local shim="$HOME/.claude/$1" plug="${CLAUDE_PLUGIN_ROOT:-/nonexistent}/bin/$1" \
+        repo="$HOME/.claude/skills/babysit/bin/$1"
   if [ -x "$shim" ]; then echo "$shim"
+  elif [ -x "$plug" ]; then echo "$plug"
   elif [ -x "$repo" ]; then echo "$repo"
   else echo "$1"; fi
 }

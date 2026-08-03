@@ -36,11 +36,15 @@ trap 'rm -rf "$T"' EXIT
 BIN="$T/bbs"
 (cd "$REPO" && go build -o "$BIN" ./cmd/bbs) || { echo "FAIL: go build" >&2; exit 1; }
 
-# Extract the first ```bash fence (the preamble block) and name the skill.
+# Extract the preamble block and name the skill. Select it by content, not by
+# position: preamble.md grew an earlier ```bash fence (the AGENT_ROLE=dashboard
+# approval snippet), and "first fence" silently started matching that one —
+# which tripped the guard below and skipped every case in this file.
 python3 - "$PREAMBLE" > "$T/preamble.sh" <<'PY'
 import re, sys
 src = open(sys.argv[1]).read()
-block = re.search(r'```bash\n(.*?)```', src, re.S).group(1)
+blocks = [m.group(1) for m in re.finditer(r'```bash\n(.*?)```', src, re.S)]
+block = next((b for b in blocks if 'Bin reachability' in b), blocks[0])
 print(block.replace('_SKILL_NAME="SKILL_NAME"', '_SKILL_NAME="test"', 1))
 PY
 grep -q 'Bin reachability' "$T/preamble.sh" \

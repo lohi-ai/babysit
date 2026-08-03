@@ -138,6 +138,22 @@ out="$(echo '{"tool_input":{"command":"git push origin HEAD"}}' | \
   env -i PATH="$NC:/usr/bin:/bin" HOME="$EMPTY" bash "$GATE" 2>/dev/null)"
 check "probe: bbs without 'ticket' is rejected, still denies" deny "$(decision "$out")"
 
+# ── Plugin install: the babysit running this hook is NOT under
+# ~/.claude/skills/babysit and nothing is on PATH — the only bbs lives in
+# $CLAUDE_PLUGIN_ROOT/bin. Before that candidate existed this shape denied every
+# push on a machine with a perfectly working install, which is worse than the
+# bug this file already guards: there, at least, nothing was installed.
+PR="$T/pluginroot"; mkdir -p "$PR/bin"
+cp "$MC/bbs" "$PR/bin/bbs"
+out="$(echo '{"tool_input":{"command":"git push origin HEAD"}}' | \
+  env -i PATH=/usr/bin:/bin HOME="$EMPTY" CLAUDE_PLUGIN_ROOT="$PR" bash "$GATE" 2>/dev/null)"
+check "plugin-root: bbs only under \$CLAUDE_PLUGIN_ROOT/bin → ask" ask "$(decision "$out")"
+
+# An empty CLAUDE_PLUGIN_ROOT must stay inert, not probe /bin/bbs-ticket.
+out="$(echo '{"tool_input":{"command":"git push origin HEAD"}}' | \
+  env -i PATH=/usr/bin:/bin HOME="$EMPTY" CLAUDE_PLUGIN_ROOT="" bash "$GATE" 2>/dev/null)"
+check "plugin-root: empty value still denies (no /bin probe)" deny "$(decision "$out")"
+
 echo
 if [ "$FAIL" -eq 0 ]; then g PASS; printf '  %d/%d\n' "$PASS" "$((PASS+FAIL))"; exit 0
 else r FAIL; printf '  %d/%d\n' "$PASS" "$((PASS+FAIL))"; exit 1; fi

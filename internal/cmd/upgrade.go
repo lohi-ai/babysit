@@ -62,18 +62,36 @@ func runUpgrade(args []string) error {
 		return errSilent
 	}
 	if exec.Command("git", "rev-parse", "--git-dir").Run() != nil {
-		fmt.Fprintln(os.Stderr, "babysit was not installed via git clone — cannot auto-upgrade")
-		fmt.Fprintln(os.Stderr, "Reinstall manually: https://github.com/reallongnguyen/babysit")
+		fmt.Fprintln(os.Stderr, "babysit was not installed via git clone — nothing here to pull.")
+		for _, ln := range upgradeHints(babysit) {
+			fmt.Fprintln(os.Stderr, ln)
+		}
 		return errSilent
 	}
 
 	fmt.Println("→ Pulling latest babysit...")
-	pull := exec.Command("git", "pull", "--ff-only")
+	pullArgs := []string{"pull", "--ff-only"}
+	failMsg := "git pull failed — resolve conflicts then re-run bbs-upgrade"
+	if !gitOK("rev-parse", "--abbrev-ref", "@{upstream}") {
+		// No tracking branch. A bare `git pull` fails outright here, and git's
+		// own reason ("no tracking information for the current branch") is
+		// nothing like the conflict the message below sends the operator
+		// looking for. Name the remote explicitly instead of failing.
+		branch := gitOut("rev-parse", "--abbrev-ref", "HEAD")
+		if branch == "" || branch == "HEAD" {
+			fmt.Fprintln(os.Stderr, "cannot upgrade from a detached HEAD — check out a branch first")
+			return errSilent
+		}
+		fmt.Printf("  (no upstream for '%s' — pulling origin/%s explicitly)\n", branch, branch)
+		pullArgs = append(pullArgs, "origin", branch)
+		failMsg = "git pull origin " + branch + " failed — see git's output above, then re-run bbs-upgrade"
+	}
+	pull := exec.Command("git", pullArgs...)
 	// Inherited, not captured: git's progress and conflict output is the
 	// operator's only view of why a pull failed.
 	pull.Stdout, pull.Stderr = os.Stdout, os.Stderr
 	if pull.Run() != nil {
-		fmt.Fprintln(os.Stderr, retarget("git pull failed — resolve conflicts then re-run bbs-upgrade"))
+		fmt.Fprintln(os.Stderr, retarget(failMsg))
 		return errSilent
 	}
 
@@ -110,6 +128,34 @@ func runUpgrade(args []string) error {
 	}
 	fmt.Printf("✓ babysit upgraded%s\n", suffix)
 	return nil
+}
+
+// upgradeHints names the commands that actually upgrade an install with no
+// checkout behind it — a brew binary, or a Claude Code plugin installed from
+// the GitHub marketplace.
+//
+// `bbs upgrade` deliberately does not do this work itself. A brew binary has no
+// remote to pull, and a plugin is refreshed by `claude`, not by us: shelling out
+// would couple babysit to a CLI it doesn't own, and the `claude` on PATH is not
+// necessarily the one running this session. So print the exact commands, name
+// the restart, and stop — a wrong guess about the install shape is worse than
+// two commands the operator can read.
+func upgradeHints(babysit string) []string {
+	out := []string{"  CLI:    brew upgrade bbs"}
+	if !strings.Contains(babysit, "/Cellar/") {
+		out[0] += "   (or re-download from https://github.com/lohi-ai/babysit/releases)"
+	}
+	home, _ := os.UserHomeDir()
+	switch {
+	case home == "":
+	case isDir(filepath.Join(home, ".claude", "plugins", "cache", "babysit")):
+		out = append(out, "  Skills: claude plugin marketplace update babysit && claude plugin update bbs@babysit")
+	case isDir(filepath.Join(home, ".claude", "skills", "babysit")):
+		out = append(out, "  Skills: ~/.claude/skills/babysit is a skills-dir install — re-sync it from a checkout")
+	default:
+		out = append(out, "  Skills: claude plugin marketplace update babysit && claude plugin update bbs@babysit")
+	}
+	return append(out, "  Then restart Claude Code — plugin changes only apply on restart.")
 }
 
 // runSnooze silences upgrade prompts for the pending version without upgrading.

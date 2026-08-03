@@ -82,7 +82,9 @@ _TEL_START=$(date +%s)
 # install does not ship (Formula/bbs.rb aliases just two subcommands).
 # Net for shells that don't inherit a login PATH (cron, tmux workers, spawned
 # orchestrators): prepend the absolute install dirs when they exist.
-for _d in "$HOME/.local/bin" "$HOME/.claude" "$HOME/.claude/skills/babysit/bin"; do
+# $CLAUDE_PLUGIN_ROOT covers a marketplace / skills-dir plugin install, whose
+# root is not ~/.claude/skills/babysit; `:-/nonexistent` keeps it inert unset.
+for _d in "$HOME/.local/bin" "$HOME/.claude" "${CLAUDE_PLUGIN_ROOT:-/nonexistent}/bin" "$HOME/.claude/skills/babysit/bin"; do
   case ":$PATH:" in *":$_d:"*) ;; *) [ -d "$_d" ] && PATH="$_d:$PATH" ;; esac
 done
 export PATH
@@ -94,7 +96,7 @@ export PATH
 # run a real git pull. (`bbs help <sub>` is NOT usable: cobra exits 0 for
 # unknown topics.)
 bbs ticket --help >/dev/null 2>&1 || echo \
-  "BBS_DEGRADED: no working \`bbs\` on PATH — run ~/.claude/skills/babysit/bin/setup-skills" >&2
+  "BBS_DEGRADED: no working \`bbs\` on PATH — run bin/setup-skills from a checkout, or \`brew install lohi-ai/babysit/bbs\` (a plugin install ships no compiled binary)" >&2
 
 # Auto-update check — cache-friendly, silent when up-to-date.
 # Prints UPGRADE_AVAILABLE <old> <new> or JUST_UPGRADED <old> <new> to stderr.

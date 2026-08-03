@@ -61,7 +61,7 @@ if [ -n "$EVIDENCE_KIND" ]; then
   _resolve() { # $1=bbs-<sub>
     local name="$1" sub="${1#bbs-}" c
     BBS_ARGV=()
-    for c in "$HOME/.claude/$name" "$HOME/.claude/skills/babysit/bin/$name"; do
+    for c in "$HOME/.claude/$name" "${CLAUDE_PLUGIN_ROOT:-/nonexistent}/bin/$name" "$HOME/.claude/skills/babysit/bin/$name"; do
       if [ -x "$c" ]; then BBS_ARGV=("$c"); return 0; fi
     done
     if command -v "$name" >/dev/null 2>&1; then BBS_ARGV=("$name"); return 0; fi
@@ -69,7 +69,7 @@ if [ -n "$EVIDENCE_KIND" ]; then
     # Probe the multicall binary for <sub> before trusting it: `bbs <sub>` on a
     # binary without that subcommand exits 1 silently (root.go SilenceErrors).
     # `bbs help <sub>` is not a usable probe — cobra exits 0 for unknown topics.
-    for c in "$HOME/.claude/bbs" "$HOME/.claude/skills/babysit/bin/bbs" bbs; do
+    for c in "$HOME/.claude/bbs" "${CLAUDE_PLUGIN_ROOT:-/nonexistent}/bin/bbs" "$HOME/.claude/skills/babysit/bin/bbs" bbs; do
       if command -v "$c" >/dev/null 2>&1 && "$c" "$sub" --help >/dev/null 2>&1; then
         BBS_ARGV=("$c" "$sub"); return 0
       fi

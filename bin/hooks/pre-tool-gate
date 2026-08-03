@@ -57,10 +57,14 @@ esac
 # that may not run. This gate cannot use that contract — an unrunnable bin here
 # means unverified verdicts, so it must be distinguishable from a working one.
 # Don't "unify" them by copying the string version back over this.
+# $CLAUDE_PLUGIN_ROOT is the install this hook is running as — set by Claude
+# Code for a marketplace or skills-dir plugin, where the babysit that owns the
+# gate need not be under ~/.claude/skills/babysit at all. `:-/nonexistent`
+# keeps the candidate inert when it's unset or empty rather than probing /bin.
 _bbs_resolve() { # $1=bbs-<sub>
   local name="$1" sub="${1#bbs-}" c
   BBS_ARGV=()
-  for c in "$HOME/.claude/$name" "$HOME/.claude/skills/babysit/bin/$name"; do
+  for c in "$HOME/.claude/$name" "${CLAUDE_PLUGIN_ROOT:-/nonexistent}/bin/$name" "$HOME/.claude/skills/babysit/bin/$name"; do
     if [ -x "$c" ]; then BBS_ARGV=("$c"); return 0; fi
   done
   if command -v "$name" >/dev/null 2>&1; then BBS_ARGV=("$name"); return 0; fi
@@ -73,7 +77,7 @@ _bbs_resolve() { # $1=bbs-<sub>
   # bbs-ticket's own "no ticket" exit 1. Probing capability up front is what
   # keeps an unusable binary from being mistaken for a working one. `bbs help
   # <sub>` is NOT a usable probe — cobra exits 0 for unknown help topics.
-  for c in "$HOME/.claude/bbs" "$HOME/.claude/skills/babysit/bin/bbs" bbs; do
+  for c in "$HOME/.claude/bbs" "${CLAUDE_PLUGIN_ROOT:-/nonexistent}/bin/bbs" "$HOME/.claude/skills/babysit/bin/bbs" bbs; do
     if command -v "$c" >/dev/null 2>&1 && "$c" "$sub" --help >/dev/null 2>&1; then
       BBS_ARGV=("$c" "$sub"); return 0
     fi
@@ -86,7 +90,7 @@ _bbs_resolve() { # $1=bbs-<sub>
 # disable the enforcement boundary while looking exactly like the legitimate
 # "ad-hoc shell, no ticket" defer below — that indistinguishability is the bug
 # this guards. Deny loudly instead, in wording no defer path shares.
-_bbs_resolve bbs-ticket || emit deny "pre-tool-gate: GATE OFFLINE — cannot resolve bbs-ticket, so the $STAGE cannot be checked against its verdicts. Blocking rather than allowing an unverified $STAGE. Fix: run bin/setup-skills (or 'go build -o bin/bbs ./cmd/bbs'), then retry."
+_bbs_resolve bbs-ticket || emit deny "pre-tool-gate: GATE OFFLINE — cannot resolve bbs-ticket, so the $STAGE cannot be checked against its verdicts. Blocking rather than allowing an unverified $STAGE. Fix: from a checkout, run bin/setup-skills (or 'go build -o bin/bbs ./cmd/bbs'); from a plugin install with no checkout behind it, 'brew install lohi-ai/babysit/bbs' — the plugin ships no compiled binary. Then retry."
 TICKET_BIN=("${BBS_ARGV[@]}")
 
 # Resolve the ticket. exit 0 = id; 1 = no ticket; 2 = conflict. Only gate

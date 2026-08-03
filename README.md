@@ -128,6 +128,24 @@ Then inside Claude Code:
 /plugin install bbs@babysit
 ```
 
+**Or straight from GitHub — no checkout at all.** Claude Code clones the
+marketplace itself, so nothing lands in your workspace:
+
+```bash
+brew install lohi-ai/babysit/bbs      # required, see below
+claude plugin marketplace add lohi-ai/babysit
+claude plugin install bbs@babysit
+```
+
+Update it with `claude plugin marketplace update babysit && claude plugin update
+bbs@babysit`, then restart Claude Code.
+
+The `brew install` is **not optional in this shape**: `bin/bbs` is a build
+artifact and is not committed, so a plugin installed from GitHub ships no
+compiled binary. Without `bbs` on `PATH` the push/PR gate can't read a ticket's
+verdicts and denies every `git push` (it fails closed by design). The two
+checkout-based installs above build the binary for you.
+
 Requirements: Claude Code with plugin support, Git.
 
 Recommended: **[cmux](https://cmux.com)**, a terminal built for agentic development — and **required by `foreman`** (and by the dashboard's spawn action), which has no other backend: it gives each parallel worker its own sidebar workspace with a live status pill and notification badge, diffs open in a real viewer instead of scrolling past in a pane, and the running app sits in a browser split next to them. Everything else in babysit runs in any terminal; `foreman` fails fast with an install message when cmux is missing.

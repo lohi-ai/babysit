@@ -8,8 +8,11 @@
 # identical environment and diffs all three channels — so any drift from the
 # original is a failure, not a judgement call. Same shape as test_bbs_env.sh.
 #
-# One case is exempt: `--help`/`-h` is a deliberate divergence (the bash upgraded
-# anyway) and is asserted against the Go side alone. See the marked block below.
+# Three exemptions are deliberate divergences, asserted against the Go side
+# alone (each marked below): `--help`/`-h` (the bash upgraded anyway), the
+# no-checkout install (the bash said "reinstall manually"; the port names the
+# brew / `claude plugin` commands), and a branch with no upstream (the bash's
+# bare `git pull` failed and blamed conflicts that don't exist).
 #
 # Both implementations are staged into their own throwaway project root (bin/ +
 # VERSION + a setup-skills stub) so BABYSIT_DIR resolves the same way for each.
@@ -205,10 +208,22 @@ new_case
 CASE_PATH="$NOGIT"; cmp_run; CASE_PATH=""
 report "upgrade-without-git-on-PATH-exits-1"
 
+# Deliberate divergence (see the header). The bash said "reinstall manually"
+# and printed a repo URL. A brew or plugin install does have an upgrade path —
+# it just isn't a pull — so the port names those commands instead. Asserted
+# against the Go side alone. $HOME is scratch here, so neither plugin dir
+# exists and the marketplace branch of upgradeHints is the deterministic one.
 new_case
-cmp_run   # staged roots are not git repos
-same_state just-upgraded-from
-report "upgrade-outside-a-git-clone-exits-1"
+CMP_MSG=""
+( cd "$BD" && env -i PATH="$RUNPATH" HOME="$HOME_DIR" BABYSIT_DIR="$BD" BABYSIT_STATE_DIR="$S2" \
+    "$BD/bin/bbs-upgrade" >"$T/g.out" 2>"$T/g.err" ); grc=$?
+[ "$grc" = 1 ] || CMP_MSG="exit=$grc want 1;"
+grep -q 'not installed via git clone' "$T/g.err" || CMP_MSG="$CMP_MSG no-shape-line;"
+grep -q 'brew upgrade bbs' "$T/g.err" || CMP_MSG="$CMP_MSG no-cli-hint;"
+grep -q 'claude plugin update' "$T/g.err" || CMP_MSG="$CMP_MSG no-plugin-hint;"
+grep -q 'restart Claude Code' "$T/g.err" || CMP_MSG="$CMP_MSG no-restart-line;"
+[ -f "$S2/just-upgraded-from" ] && CMP_MSG="$CMP_MSG marker-written;"
+report "upgrade-outside-a-git-clone-names-the-real-upgrade-path"
 
 new_case; prep_clones "1.0.0\n" "2.0.0\n"
 cmp_run; same_state just-upgraded-from; same_state last-update-check; same_state update-snoozed
@@ -278,6 +293,21 @@ report "upgrade-cache-is-a-directory-fails-the-rm"
 new_case 0; prep_clones "1.0.0\n" "2.0.0\n"
 cmp_run --snooze-typo junk
 report "upgrade-unknown-args-fall-through-to-upgrade"
+
+# Deliberate divergence (see the header). A branch with no upstream fails the
+# bash's bare `git pull --ff-only`, and the error it prints blames conflicts
+# that don't exist — the shape reported on 2026-08-02. The port pulls
+# origin/<branch> explicitly. Go side alone: the oracle cannot pass this.
+new_case 0; prep_clones "1.0.0\n" "2.0.0\n"
+CMP_MSG=""
+( cd "$BD" && git branch --unset-upstream >/dev/null 2>&1 )
+( cd "$BD" && env -i PATH="$RUNPATH" HOME="$HOME_DIR" BABYSIT_DIR="$BD" BABYSIT_STATE_DIR="$S2" \
+    "$BD/bin/bbs-upgrade" >"$T/g.out" 2>"$T/g.err" ); grc=$?
+[ "$grc" = 0 ] || CMP_MSG="exit=$grc want 0; stderr[$(head -2 "$T/g.err" | tr '\n' '|')]"
+grep -q 'no upstream' "$T/g.out" || CMP_MSG="$CMP_MSG no-fallback-notice;"
+[ "$(cat "$BD/VERSION")" = "2.0.0" ] || CMP_MSG="$CMP_MSG not-pulled[VERSION=$(cat "$BD/VERSION")];"
+[ -f "$S2/just-upgraded-from" ] || CMP_MSG="$CMP_MSG no-marker;"
+report "upgrade-branch-without-upstream-pulls-origin-explicitly"
 
 # ── Deliberate divergence from the oracle ──────────────────────────────
 # The bash treated --help as junk and upgraded anyway. The port intercepts it:
