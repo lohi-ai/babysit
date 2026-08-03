@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/reallongnguyen/babysit/internal/config"
 	"github.com/reallongnguyen/babysit/internal/slug"
 	"github.com/spf13/cobra"
 )
@@ -40,7 +41,6 @@ type apState struct {
 	branch    string
 	ticket    string // DERIVED_TICKET
 	stateRoot string // PROJECT_HOME
-	scriptDir string
 }
 
 func runAutopilot(args []string) {
@@ -104,7 +104,7 @@ func resolveAP() *apState {
 			ph = filepath.Join(babysitHome(), "projects", slugv)
 		}
 	}
-	return &apState{slug: slugv, branch: branch, ticket: derived, stateRoot: ph, scriptDir: apScriptDir()}
+	return &apState{slug: slugv, branch: branch, ticket: derived, stateRoot: ph}
 }
 
 func babysitHome() string {
@@ -115,34 +115,21 @@ func babysitHome() string {
 	return filepath.Join(home, ".babysit")
 }
 
-func apScriptDir() string {
+// selfBin is the path to the running binary. Companion subcommands are reached
+// through it as `<self> ticket …` rather than through a bbs-ticket argv0 alias:
+// the bash resolved siblings by $SCRIPT_DIR → PATH → ~/.claude, which silently
+// found nothing on a brew install (it ships only bbs-config and bbs-env), and
+// the callers' isExecutable() guards then reported every artifact as absent.
+// The binary can always reach itself.
+func selfBin() string {
 	exe, err := os.Executable()
 	if err != nil {
-		return ""
+		return "bbs"
 	}
-	if real, err := filepath.EvalSymlinks(exe); err == nil {
-		exe = real
+	if real, e := filepath.EvalSymlinks(exe); e == nil {
+		return real
 	}
-	return filepath.Dir(exe)
-}
-
-// sibling resolves a companion bin the same way bin/bbs-autopilot does:
-// $SCRIPT_DIR/<name> → PATH → ~/.claude/<name>.
-func (a *apState) sibling(name string) string {
-	p := filepath.Join(a.scriptDir, name)
-	if isExecutable(p) {
-		return p
-	}
-	if lp, err := exec.LookPath(name); err == nil {
-		return lp
-	}
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".claude", name)
-}
-
-func isExecutable(p string) bool {
-	fi, err := os.Stat(p)
-	return err == nil && !fi.IsDir() && fi.Mode()&0o111 != 0
+	return exe
 }
 
 // ─── shared helpers ──────────────────────────────────────────────────────────
@@ -194,8 +181,13 @@ func (a *apState) ticketDir(t string) (string, bool) {
 }
 
 // gitOut runs git and returns trimmed stdout, or "" on error.
-func gitOut(args ...string) string {
-	out, err := exec.Command("git", args...).Output()
+func gitOut(args ...string) string { return gitOutIn("", args...) }
+
+// gitOutIn is gitOut scoped to dir ("" = process cwd).
+func gitOutIn(dir string, args ...string) string {
+	c := exec.Command("git", args...)
+	c.Dir = dir
+	out, err := c.Output()
 	if err != nil {
 		return ""
 	}
@@ -203,8 +195,13 @@ func gitOut(args ...string) string {
 }
 
 // gitOK reports whether git exited 0 (for --verify probes).
-func gitOK(args ...string) bool {
-	return exec.Command("git", args...).Run() == nil
+func gitOK(args ...string) bool { return gitOKIn("", args...) }
+
+// gitOKIn is gitOK scoped to dir ("" = process cwd).
+func gitOKIn(dir string, args ...string) bool {
+	c := exec.Command("git", args...)
+	c.Dir = dir
+	return c.Run() == nil
 }
 
 func (a *apState) postComment(ticket, body string) {
@@ -587,8 +584,7 @@ func (a *apState) recover() {
 		} else {
 			fmt.Println("LATEST_CHECKPOINT: none (no prior state for this ticket)")
 		}
-		ticketBin := a.sibling("bbs-ticket")
-		if isExecutable(ticketBin) {
+		{
 			evStatus := a.ticketOut(a.ticket, "evidence-status", "--kind", "verification")
 			if evStatus == "" {
 				evStatus = "none"
@@ -620,11 +616,21 @@ func (a *apState) recover() {
 
 // ─── base-branch ─────────────────────────────────────────────────────────────
 
-func (a *apState) baseBranch() string {
+func (a *apState) baseBranch() string { return baseBranchIn("") }
+
+// baseBranchIn resolves the base branch for the repo at dir ("" = process cwd):
+// BBS_BASE_BRANCH → the repo's git-flow.yaml → global config → origin/HEAD →
+// "main". It takes no apState because nothing in the ladder is run-scoped, and
+// ticket base-ops needs the same answer for a worktree it is not standing in.
+//
+// The global-config rung reads ~/.babysit/config.yaml in-process. The bash
+// shelled out to a sibling bbs-config and skipped the rung when that alias was
+// absent, which made the answer depend on how babysit was installed.
+func baseBranchIn(dir string) string {
 	if v := os.Getenv("BBS_BASE_BRANCH"); v != "" {
 		return v
 	}
-	top := gitOut("rev-parse", "--show-toplevel")
+	top := gitOutIn(dir, "rev-parse", "--show-toplevel")
 	if top != "" {
 		gf := filepath.Join(top, ".babysit", "git-flow.yaml")
 		if b, err := os.ReadFile(gf); err == nil {
@@ -633,17 +639,11 @@ func (a *apState) baseBranch() string {
 			}
 		}
 	}
-	cfg := a.sibling("bbs-config")
-	if isExecutable(cfg) {
-		out, err := exec.Command(cfg, "get", "base_branch").Output()
-		if err == nil {
-			if v := strings.TrimRight(string(out), "\n"); v != "" {
-				return v
-			}
-		}
+	if v, ok := config.Get("base_branch"); ok && v != "" {
+		return v
 	}
-	if gitOK("rev-parse", "--verify", "-q", "origin/HEAD") {
-		h := gitOut("rev-parse", "--abbrev-ref", "origin/HEAD")
+	if gitOKIn(dir, "rev-parse", "--verify", "-q", "origin/HEAD") {
+		h := gitOutIn(dir, "rev-parse", "--abbrev-ref", "origin/HEAD")
 		h = strings.TrimPrefix(h, "origin/")
 		if h != "" {
 			return h
@@ -808,8 +808,7 @@ func (a *apState) probeState(ticket string) probeResult {
 		ticket = a.ticket
 	}
 	r := probeResult{ticket: ticket, commitsAhead: "0", branch: a.branch, slug: a.slug}
-	ticketBin := a.sibling("bbs-ticket")
-	if ticket != "" && isExecutable(ticketBin) {
+	if ticket != "" {
 		a.ticketRun(ticket, "init")
 		if req := a.ticketOut(ticket, "path", "requirement", "--read"); req != "" && fileNonEmpty(req) {
 			r.requirementMD = 1
@@ -1303,7 +1302,7 @@ func sortStrings(s []string) {
 // ─── bbs-ticket exec + checkpoint JSON ───────────────────────────────────────
 
 func (a *apState) ticketOut(ticket string, args ...string) string {
-	c := exec.Command(a.sibling("bbs-ticket"), args...)
+	c := exec.Command(selfBin(), append([]string{"ticket"}, args...)...)
 	c.Env = append(os.Environ(), "BBS_TICKET="+ticket)
 	out, err := c.Output()
 	if err != nil {
@@ -1313,7 +1312,7 @@ func (a *apState) ticketOut(ticket string, args ...string) string {
 }
 
 func (a *apState) ticketRun(ticket string, args ...string) {
-	c := exec.Command(a.sibling("bbs-ticket"), args...)
+	c := exec.Command(selfBin(), append([]string{"ticket"}, args...)...)
 	c.Env = append(os.Environ(), "BBS_TICKET="+ticket)
 	_ = c.Run()
 }

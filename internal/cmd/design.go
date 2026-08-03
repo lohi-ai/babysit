@@ -169,18 +169,19 @@ func resolveDesignPaths(designArg string) (master, override string) {
 	} else if fi, err := os.Stat("DESIGN.md"); err == nil && !fi.IsDir() {
 		master = "DESIGN.md"
 	}
-	if _, err := exec.LookPath("bbs-ticket"); err == nil {
-		if p := strings.TrimSpace(ticketOut("get", "pointers.design")); p != "" && isFile(p) {
-			override = p
-		} else if p := strings.TrimSpace(ticketOut("path", "design", "--read")); p != "" && isFile(p) {
-			override = p
-		}
+	if p := strings.TrimSpace(ticketOut("get", "pointers.design")); p != "" && isFile(p) {
+		override = p
+	} else if p := strings.TrimSpace(ticketOut("path", "design", "--read")); p != "" && isFile(p) {
+		override = p
 	}
 	return master, override
 }
 
+// ticketOut reaches the ticket subcommand through the running binary. The bash
+// called a bare `bbs-ticket` off PATH and skipped the ticket-scoped design
+// override entirely when that alias was missing — which is every brew install.
 func ticketOut(args ...string) string {
-	out, err := exec.Command("bbs-ticket", args...).Output()
+	out, err := exec.Command(selfBin(), append([]string{"ticket"}, args...)...).Output()
 	if err != nil {
 		return ""
 	}

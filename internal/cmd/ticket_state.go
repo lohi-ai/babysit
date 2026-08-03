@@ -91,13 +91,25 @@ func printJSONRead(st *ticket.Store, path string) {
 	fmt.Println() // the subcommand's trailing `echo`
 }
 
+// runTicketEnv prints the whole identity as shell assignments, for
+// `eval "$(bbs ticket env)"`. It absorbed the derivation half — SLUG, BRANCH,
+// BABYSIT_PROJECT_HOME — from the retired top-level `slug` command, so a
+// preamble gets project *and* ticket scope from one call.
+//
+// No ticket is not an error here: outside a ticket branch the derivation half
+// is still valid, and the preamble runs everywhere. The two ticket-scoped paths
+// are simply omitted, so an eval'ing caller can test for an empty $TICKET.
 func runTicketEnv() {
 	env := identity.Resolve()
-	needTicket(env)
-	st := ticket.New(env)
+	fmt.Printf("SLUG=%s\n", env.Slug)
+	fmt.Printf("BRANCH=%s\n", env.Branch)
 	fmt.Printf("TICKET=%s\n", env.Ticket)
-	fmt.Printf("TICKET_HOME=%s\n", st.Home())
-	fmt.Printf("INDEX=%s\n", st.IndexPath())
+	fmt.Printf("BABYSIT_PROJECT_HOME=%s\n", env.ProjectHome)
+	if env.Ticket != "" {
+		st := ticket.New(env)
+		fmt.Printf("TICKET_HOME=%s\n", st.Home())
+		fmt.Printf("INDEX=%s\n", st.IndexPath())
+	}
 	os.Exit(0)
 }
 

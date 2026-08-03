@@ -16,37 +16,16 @@ bbs config list                      # show all keys + annotated docs
 
 Skill runs append JSON Lines to `~/.babysit/analytics/skill-usage.jsonl`. Because babysit runs unattended, telemetry is the *primary* feedback channel — treat it as load-bearing, not decoration. Local-only by default; nothing leaves the machine.
 
-Nothing summarizes that file on demand — the reader is the `/bbs:analytics-review` skill, dispatched on the [weekly cadence](#weekly-review-cadence) below. To look at the raw rows, read the JSONL directly.
+Nothing summarizes that file on demand — the reader is the `/bbs:analytics-review` skill. Dispatch it by hand (`/bbs:analytics-review`) when you want a report; to look at the raw rows, read the JSONL directly.
 
-### Decision search
-
-```bash
-bbs learnings-search                    # last 10 decisions, current project
-bbs learnings-search "autopilot" --limit 5
-bbs learnings-search --cross-project    # across all projects
-```
-
-Query the Auto-Decision Framework's audit trail in `~/.babysit/analytics/decisions.jsonl`. `investigate` can use this for prior-learnings context.
-
-### Weekly review cadence
-
-Telemetry is only load-bearing if something reads it. `bbs analytics-cron` is the cadence: once a week it headlessly dispatches `/bbs:analytics-review` and writes the ticket-ready report to `~/.babysit/analytics/reviews/<date>.md`. The run is read-only (the skill never edits the pack), scoped to read-only tools, with `AGENT_ROLE` cleared so it renders a plain report instead of an orchestrator relay block.
-
-```bash
-bbs analytics-cron --dry-run   # show what it would run
-bbs analytics-cron             # run the review now
-bbs analytics-cron --install   # register weekly (macOS launchd / cron, Mondays 09:00)
-bbs analytics-cron --uninstall
-```
-
-`--install` writes a launchd agent (`~/Library/LaunchAgents/dev.babysit.analytics.plist`) on macOS, or appends a crontab line elsewhere. Both point at the resolved script path, so they survive the `setup-skills` symlink. Reports accumulate under `analytics/reviews/`; file the top finding of a report as a `sweep`/`maintain` ticket.
+The Auto-Decision Framework's audit trail is the companion file, `~/.babysit/analytics/decisions.jsonl` — one line per Taste/Mechanical decision. `investigate` can read it for prior-learnings context; grep or `jq` it directly.
 
 ## Auto-update
 
-`bbs update-check` compares the local `VERSION` against `main` on GitHub, with cache-friendly TTLs (60 min when up-to-date, 12 h when an upgrade is pending). Typical preamble wiring:
+`bbs upgrade check` compares the local `VERSION` against `main` on GitHub, with cache-friendly TTLs (60 min when up-to-date, 12 h when an upgrade is pending). Typical preamble wiring:
 
 ```bash
-UPD="$(bbs update-check 2>/dev/null || true)"
+UPD="$(bbs upgrade check 2>/dev/null || true)"
 case "$UPD" in
   "UPGRADE_AVAILABLE "*) echo "babysit upgrade available — run bbs upgrade";;
   "JUST_UPGRADED "*)     echo "babysit upgraded: $UPD";;

@@ -1,7 +1,7 @@
 # Ticket identity & sessions
 
 Babysit's ticket identity used to live entirely on the git branch:
-`bbs slug env` regex-matched `feat/<ticket>_<slug>` at whatever cwd the
+`bbs ticket env` regex-matched `feat/<ticket>_<slug>` at whatever cwd the
 shell sat in, and "my ticket" was a function of `git rev-parse
 --abbrev-ref HEAD`. That broke anywhere the cwd wasn't a checkout of the
 ticket branch (crashed sessions, per-ticket worktrees, fresh shells).
@@ -19,7 +19,7 @@ is a bug.
 
 | Variable | Set by | Read by | Purpose |
 |----------|--------|---------|---------|
-| `BABYSIT_TICKET` | `bbs autopilot` §0.X, `bbs ticket session attach`, user shell rc, test harnesses | Every skill preamble (via `bbs slug env`'s env-first override) | Names the ticket id. Short-circuits all branch and cwd inference. |
+| `BABYSIT_TICKET` | `bbs autopilot` §0.X, `bbs ticket session attach`, user shell rc, test harnesses | Every skill preamble (via `bbs ticket env`'s env-first override) | Names the ticket id. Short-circuits all branch and cwd inference. |
 | `BABYSIT_SESSION` | `bbs autopilot` §0.X (mints uuid if unset), `bbs ticket session attach` | preamble session-writer, `bbs autopilot checkpoint` | Names a single Claude Code run so concurrent / crashed sessions can rehydrate. |
 
 Both are optional. None are required for the legacy single-repo
@@ -31,7 +31,7 @@ through to branch derivation.
 
 `BBS_TICKET` continues to work as an alias for `BABYSIT_TICKET`
 (read-only, no warning) so existing shell rcs keep functioning. If both
-are set and disagree, `bbs slug env` exits non-zero with an explicit
+are set and disagree, `bbs ticket env` exits non-zero with an explicit
 "unset one of them" message — the calling preamble aborts.
 
 ---
@@ -48,7 +48,7 @@ each short-circuits:
    bootstrap below). Pick the manifest whose any `repos[].worktree` is a
    parent of `$PWD`. Exactly one match → echo its `ticket`. Multiple
    matches → exit 2 listing them.
-3. **Branch regex** (the historical path): run `bbs slug env`'s
+3. **Branch regex** (the historical path): run `bbs ticket env`'s
    `^(feat|fix|chore|bug|refactor|hotfix)/<ticket>_…` regex over the
    current branch.
 
@@ -62,7 +62,7 @@ Exit codes:
 
 ### `BABYSIT_PROJECT_HOME` bootstrap
 
-The manifest walk needs a project home. `bbs slug env` derives the slug
+The manifest walk needs a project home. `bbs ticket env` derives the slug
 from the git remote (falling back to the directory basename), and the
 project home is `~/.babysit/projects/$SLUG/`.
 
@@ -83,7 +83,7 @@ created_at: 2026-05-01T11:48:59Z
 updated_at: 2026-05-01T11:48:59Z
 
 repos:
-  - name: <SLUG>          # what bbs slug derives from the git remote
+  - name: <SLUG>          # what bbs ticket env derives from the git remote
     branch: feat/bs-abc12345_add-healthz
     canonical: .          # repo root
     worktree: .           # repo root, or the absolute .babysit/worktrees/
@@ -230,12 +230,12 @@ The only places that call `bbs ticket resolve` in production:
 
 - **`bbs autopilot` §0.X** — the orchestrator chokepoint. Calls resolve
   once per autopilot run, exports `BABYSIT_TICKET`, and every downstream
-  skill preamble inherits it via `bbs slug env`'s env-first override.
+  skill preamble inherits it via `bbs ticket env`'s env-first override.
 - **Direct CLI** — `bbs ticket resolve` (and `--explain` for debugging),
   user scripts.
 
-The 32 existing skill preambles continue to call `bbs slug env`. They
-do not call `resolve` directly. The env-first override in `bbs slug`
+The 32 existing skill preambles continue to call `bbs ticket env`. They
+do not call `resolve` directly. The env-first override in `bbs ticket env`
 short-circuits to `BABYSIT_TICKET` when set, so resolve's manifest-cwd
 walk runs only at the autopilot §0.X chokepoint, never per-preamble.
 This bounds the `O(N tickets)` walk to one call per autopilot run.

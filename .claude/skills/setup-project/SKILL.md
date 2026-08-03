@@ -7,7 +7,7 @@ Set up only the config the repo needs. Re-running should be safe.
 ## Create Or Update
 - `.babysit/git-flow.yaml`: minimal `base_branch`, `branch_prefix`, `push`, and `mode`.
 - `.babysit/qa.yaml`: minimal local `url`, `start`, `check`, and `flows`.
-- `.babysit/config.yaml`: committed — which workspace this repo belongs to, plus optional `name`, `description`, `repo_type`. Written via `bbs workspace config set`; only when the repo joins a workspace.
+- `.babysit/config.yaml`: committed — which workspace this repo belongs to, plus optional `name`, `description`, `repo_type`. Written via `bbs config repo set`; only when the repo joins a workspace.
 - `.babysit/.env`: gitignored machine-local values (credentials; related repo paths only when there is no workspace entry).
 - `.gitignore`: include `.babysit/.env` if missing.
 - `AGENTS.md` or `CLAUDE.md`: add/update only a tiny Babysit pointer section.
@@ -37,8 +37,8 @@ Set up only the config the repo needs. Re-running should be safe.
   a real diff viewer, a browser split beside the dev server — and that
   `foreman` requires it outright. It is a machine preference, so it goes in
   the message, not in committed config or the landing doc.
-- Related repos (FE/BE counterpart, shared schemas) feed planning and API-contract checks. Their paths belong in the **workspace registry** — `bbs workspace add-repo <ws> --git-url <url> --path <dir> --role <fe|be|shared>` — which is the authority babysit reads. `RELATED_*_REPO` in `.babysit/.env` still resolves for repos that never joined a workspace, but it is a fallback: when both name a role and disagree, babysit blocks instead of picking. Meaning (what each repo is *for*) still goes in `AGENTS.md`.
-- Record the harness version once the config is written: `bbs workspace config stamp`. It is what makes "this repo was set up by an older babysit" visible in `bbs workspace show`. A repo with no `harness_version` is not a problem — that is every repo configured before this existed — so never warn about it.
+- Related repos (FE/BE counterpart, shared schemas) feed planning and API-contract checks. Their paths belong in the **workspace registry** — `bbs config workspace add-repo <ws> --git-url <url> --path <dir> --role <fe|be|shared>` — which is the authority babysit reads. `RELATED_*_REPO` in `.babysit/.env` still resolves for repos that never joined a workspace, but it is a fallback: when both name a role and disagree, babysit blocks instead of picking. Meaning (what each repo is *for*) still goes in `AGENTS.md`.
+- Record the harness version once the config is written: `bbs config repo stamp`. It is what makes "this repo was set up by an older babysit" visible in `bbs config workspace show`. A repo with no `harness_version` is not a problem — that is every repo configured before this existed — so never warn about it.
 ## QA Harness Notes
 Prefer this committed shape:
 ```yaml
@@ -102,7 +102,7 @@ section:
 
 Use these repos for investigation and planning when a task crosses FE/BE,
 API contracts, generated types, or shared schemas. Local paths are machine
-specific: they live in the workspace registry (`bbs workspace show`), which
+specific: they live in the workspace registry (`bbs config workspace show`), which
 is the authority. `$RELATED_*_REPO` in `.babysit/.env` is a fallback for
 repos outside a workspace.
 
@@ -115,9 +115,9 @@ replace only that section. Do not commit absolute local paths to `AGENTS.md` or
 `CLAUDE.md`.
 Register each related repo the human names:
 ```bash
-bbs workspace create <workspace>          # idempotent
-bbs workspace add-repo <workspace> --git-url <origin-url> --path <local-dir> --role be
-bbs workspace config set workspace <workspace>   # writes this repo's .babysit/config.yaml
+bbs config workspace create <workspace>          # idempotent
+bbs config workspace add-repo <workspace> --git-url <origin-url> --path <local-dir> --role be
+bbs config repo set workspace <workspace>   # writes this repo's .babysit/config.yaml
 ```
 The registry lives in `~/.babysit/workspaces/` — machine-local, never
 committed, which is what keeps absolute paths out of git.

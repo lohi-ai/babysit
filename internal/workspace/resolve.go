@@ -46,14 +46,14 @@ func NewResolver(toplevel, gitURL string) *Resolver {
 			return r
 		}
 		r.err = fmt.Errorf("repo declares workspace %q, which is not registered on this machine.\n"+
-			"  Fix: bbs workspace add-repo %s --git-url <url> --path %s",
+			"  Fix: bbs config workspace add-repo %s --git-url <url> --path %s",
 			cfg.Workspace, cfg.Workspace, toplevel)
 		return r
 	}
 	r.ws, r.wsOK = ws, true
 	if !r.member() {
 		r.err = fmt.Errorf("repo declares workspace %q, but that workspace does not list this repo.\n"+
-			"  Fix: bbs workspace add-repo %s --git-url <url> --path %s",
+			"  Fix: bbs config workspace add-repo %s --git-url <url> --path %s",
 			cfg.Workspace, cfg.Workspace, toplevel)
 	}
 	return r

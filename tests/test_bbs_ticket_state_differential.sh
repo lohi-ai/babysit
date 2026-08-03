@@ -99,7 +99,6 @@ SEQ=(
   "get-pointer pr"
   "get-pointer nonexistent"
   "get origin.parent"
-  "env"
   "append-history --event note --actor me --extra-json {\"k\":\"v\"}"
   "append-history --event badextra --extra-json not-json"
   "ensure-size"                      # ticket_size already M → echoes M, no git
@@ -136,6 +135,27 @@ if diff -u <(mask < "$ROOT/bash.steps") <(mask < "$ROOT/go.steps") > "$ROOT/step
   ok "per-command stdout/stderr/exit identical across all $(( ${#SEQ[@]} + ${#ERRSEQ[@]} )) steps"
 else
   fail "per-command output diverged" "$(head -40 "$ROOT/steps.diff")"
+fi
+
+# ── env: deliberately no longer byte-identical ───────────────────────
+# `env` absorbed the retired top-level `slug` command's derivation half, so it
+# now emits SLUG/BRANCH/BABYSIT_PROJECT_HOME ahead of the three keys the bash
+# printed. The oracle is frozen and can never grow them, so this is asserted as
+# a superset instead of a diff: every bash line still present, same values.
+BASHENV="$( BABYSIT_PROJECT_HOME="$ROOT/bash-home/projects/slug" "$ROOT/bash-cmd" env \
+            | sed "s|$ROOT/bash-home|X|" )"
+GOENV="$( BABYSIT_PROJECT_HOME="$ROOT/go-home/projects/slug" "$ROOT/go-cmd" env \
+          | sed "s|$ROOT/go-home|X|" )"
+missing=""
+while IFS= read -r ln; do
+  [ -n "$ln" ] || continue
+  case "$GOENV" in *"$ln"*) ;; *) missing="$missing $ln" ;; esac
+done <<< "$BASHENV"
+case "$GOENV" in SLUG=*) ;; *) missing="$missing SLUG=<absent>" ;; esac
+if [ -z "$missing" ]; then
+  ok "env is a superset of the bash keys (SLUG/BRANCH/PROJECT_HOME added)"
+else
+  fail "env diverged beyond the added keys" "missing:$missing"
 fi
 
 # ── assert resulting index.json JSON-equivalent ──────────────────────

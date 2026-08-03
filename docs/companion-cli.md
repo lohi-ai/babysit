@@ -24,17 +24,9 @@ production; a frozen byte-identical copy of the old script lives at
 | Command | Purpose |
 |---------|---------|
 | `bbs autopilot` | State helpers the `/bbs:autopilot` skill uses, also runnable by hand for debugging: `probe` (dump probed state), `explain` (show recommended workflow; add `--details` for the per-workflow PASS/FAIL table), `base-branch` (resolve with per-project override), `lint-workflow <path>` (authoring-time `needs-state:` lint), plus the checkpoint surface `read` / `checkpoint` / `timeline` / `recover` / `clear` / `current` |
-| `bbs ticket` | Ticket-layout broker and state-probe surface. `path <kind>` resolves Layout C file paths; `verdict-status --skill <n>` reads the latest verdict for a sub-skill (used by autopilot's Probe and Verify-post) |
-| `bbs learnings-log` | `decision --type mechanical\|taste …` appends routing/taste decisions to `~/.babysit/analytics/decisions.jsonl` — autopilot's Dispatch phase logs every route here |
-| `bbs slug` | Derives `<slug>` / `<ticket>` / `<branch>` from git remote + current branch — the branch-as-anchor mechanism `/bbs:autopilot` relies on for resume |
-| `bbs env` | `resolve` / `is-set` / `list-prefix` / `prompt` — env resolution with `.env.base` auto-load |
+| `bbs ticket` | Ticket-layout broker and state-probe surface. `env` derives `SLUG`/`BRANCH`/`TICKET`/`BABYSIT_PROJECT_HOME` from git remote + current branch — the branch-as-anchor mechanism `/bbs:autopilot` relies on for resume, and what every skill preamble evals; `path <kind>` resolves Layout C file paths; `verdict-status --skill <n>` reads the latest verdict for a sub-skill (used by autopilot's Probe and Verify-post) |
 | `bbs config` | `get` / `set` / `list` in `~/.babysit/config.yaml` |
-| `bbs update-check` | Prints `UPGRADE_AVAILABLE <old> <new>` when a new release exists (cached) |
-| `bbs upgrade` | `git pull` + `setup-skills`; writes a `JUST_UPGRADED` marker |
-| `bbs qa-config` | Reads `.babysit/qa.yaml` fields (`url`, `start`, `check`, `flows`, `prepare`/`revert`) for the qa skill |
-| `bbs telemetry-log` | Appends skill-usage rows to `~/.babysit/analytics/skill-usage.jsonl` |
-| `bbs codex-competitive` | Competitive-analysis helper the analytics skills call |
-| `bbs analytics-cron` | `--install` / `--uninstall` / `--dry-run` the weekly `/bbs:analytics-review` schedule (launchd on macOS, cron on Linux) |
-| `bbs secrets` | `load` (emit `export KEY='…'` for `.babysit/.env` keys not already in shell env) / `seed` / `ensure-gitignore` — project-local credential auto-loader for the qa skill |
+| `bbs upgrade` | `git pull` + `setup-skills`; writes a `JUST_UPGRADED` marker. `bbs upgrade check` is the cached probe — prints `UPGRADE_AVAILABLE <old> <new>` when a new release exists |
+| `bbs secrets` | Everything a skill reads to reach a running app. `load` (emit `export KEY='…'` for `.babysit/.env` keys not already in shell env) / `seed` / `ensure-gitignore` — project-local credential auto-loader; `resolve` / `is-set` / `list-prefix` / `prompt` — env resolution with `.env.base` auto-load; `qa <probe\|list\|default-env\|check\|leak-check>` — named-environment fields (`url`, `start`, `check`, `flows`, `prepare`/`revert`) from `.babysit/qa.yaml` |
 | `bbs design` | `tokens` (DESIGN.md frontmatter → JSON, `--field` for a leaf) / `suggest --product <type>` / `components` / `ux-check` — design-intelligence broker for the design-ui skill |
 | `bbs dashboard` | Snapshots babysit state into `web/dist/data.js` and opens the dashboard; `build` rebuilds `web/`, `--no-open` for CI, `--dev` for vite + HMR |

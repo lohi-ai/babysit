@@ -50,7 +50,7 @@ func runResolve(args []string) {
 	}
 
 	env := identity.Resolve()
-	explain("bootstrap bbs-slug SLUG=%s → %s", env.Slug, env.ProjectHome)
+	explain("bootstrap slug SLUG=%s → %s", env.Slug, env.ProjectHome)
 
 	// ─── Step 2: manifest.yaml cwd match ─────────────────────────────
 	if matches := manifestCwdMatches(env.ProjectHome); len(matches) == 1 {

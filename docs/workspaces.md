@@ -5,11 +5,11 @@ the question a foreman has to answer before it can hand out work: *which repos
 am I responsible for, and where are they on this machine?*
 
 ```bash
-bbs workspace create acme
-bbs workspace add-repo acme --git-url git@github.com:acme/web.git --path ~/src/web --role fe
-bbs workspace add-repo acme --git-url git@github.com:acme/api.git --path ~/src/api --role be
-bbs workspace list
-bbs workspace show                 # membership of the repo you are standing in
+bbs config workspace create acme
+bbs config workspace add-repo acme --git-url git@github.com:acme/web.git --path ~/src/web --role fe
+bbs config workspace add-repo acme --git-url git@github.com:acme/api.git --path ~/src/api --role be
+bbs config workspace list
+bbs config workspace show                 # membership of the repo you are standing in
 ```
 
 ## Three things are called "workspace"
@@ -37,8 +37,8 @@ are meaning 1 — the cmux workspace the worker runs in.)
 
 | File | Committed? | Read by |
 |---|---|---|
-| `~/.babysit/workspaces/<name>.yaml` | no — machine-local | `bbs workspace list/show/add-repo` |
-| `<repo>/.babysit/config.yaml` | **yes** | `bbs workspace config` |
+| `~/.babysit/workspaces/<name>.yaml` | no — machine-local | `bbs config workspace list/show/add-repo` |
+| `<repo>/.babysit/config.yaml` | **yes** | `bbs config repo` |
 | `~/.babysit/config.yaml` | no | `bbs config` — a *different* file that happens to share the basename |
 
 The split is machine-locality. Local paths differ per developer, so they live
@@ -50,7 +50,7 @@ to a committed file.
 
 ```yaml
 workspace: acme          # required — the back-pointer
-harness_version: 1.55.9  # nullable; written by `bbs workspace config stamp`
+harness_version: 1.55.9  # nullable; written by `bbs config repo stamp`
 name: Web App            # optional
 description: customer-facing storefront   # optional
 repo_type: polyrepo      # optional: monorepo | polyrepo
@@ -58,7 +58,7 @@ repo_type: polyrepo      # optional: monorepo | polyrepo
 
 `harness_version` is **null-by-default and null is fine**: it is the correct
 reading for every repo configured before this existed, so it never warns and
-never blocks. It exists so `bbs workspace show` can say "set up by an older
+never blocks. It exists so `bbs config workspace show` can say "set up by an older
 babysit" when it *does* know.
 
 `repo_type` is not decoration — `monorepo` makes `bbs ticket serve` skip the

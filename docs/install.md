@@ -19,17 +19,9 @@ core bins are now Go and ship inside this one binary, reachable as `bbs <sub>`:
 | You run | Runs | What it does |
 |---------|------|--------------|
 | `bbs config …` (alias `bbs-config`) | `config` | read/write `~/.babysit/config.yaml` |
-| `bbs env …` (alias `bbs-env`) | `env` | env resolution for babysit skills (`.env.base` auto-load) |
-| `bbs slug …` | `slug` | derive `<slug>` / `<ticket>` / `<branch>` from git remote + branch |
-| `bbs ticket …` | `ticket` | ticket identity core (`resolve`, `set-verdict`, `verdict-status`, `session`, `board`) — see the strangler note below |
-| `bbs update-check` | `update-check` | print `UPGRADE_AVAILABLE` when a newer release exists |
-| `bbs upgrade` | `upgrade` | `git pull` + `setup-skills`, writes a `JUST_UPGRADED` marker |
-| `bbs learnings-log …` / `learnings-search …` | `learnings-log` / `learnings-search` | append/query the decisions log |
-| `bbs qa-config …` | `qa-config` | read `.babysit/qa.yaml` fields |
-| `bbs telemetry-log …` | `telemetry-log` | append skill-usage telemetry rows |
-| `bbs codex-competitive …` | `codex-competitive` | competitive-analysis helper |
-| `bbs analytics-cron …` | `analytics-cron` | install/uninstall/run the weekly `/bbs:analytics-review` schedule |
-| `bbs secrets …` | `secrets` | project-local `.babysit/.env` credential loader (`load` / `seed` / `ensure-gitignore`) |
+| `bbs ticket …` | `ticket` | ticket identity core (`env`, `resolve`, `set-verdict`, `verdict-status`, `session`, `board`) — see the strangler note below |
+| `bbs upgrade` | `upgrade` | `git pull` + `setup-skills`, writes a `JUST_UPGRADED` marker; `upgrade check` prints `UPGRADE_AVAILABLE` when a newer release exists |
+| `bbs secrets …` (alias `bbs-env`) | `secrets` | project-local `.babysit/.env` credential loader (`load` / `seed` / `ensure-gitignore`), env resolution with `.env.base` auto-load (`resolve` / `is-set` / `list-prefix` / `prompt`), and `.babysit/qa.yaml` fields (`qa probe` / `qa list` / …) |
 | `bbs design …` | `design` | design-intelligence broker (`tokens` / `suggest` / `components` / `ux-check`) — the CSV/DESIGN.md data files ship with the skill pack |
 
 **Strangler note on `ticket`:** the Go `ticket` command owns the identity core
@@ -122,10 +114,15 @@ artifact is published.**
 ## How the aliases work
 
 `bbs` inspects `argv[0]`: the alias `bbs-config` runs the `config` subcommand,
-and the alias `bbs-env` runs `env`. The Homebrew formula installs the real
-binary once and adds `bbs-config` / `bbs-env` as symlinks to it — so the
-`bbs-*` names work exactly like the in-repo dev symlinks, without a separate
-build per bin.
+and the alias `bbs-env` runs the env resolver that now also answers to
+`bbs secrets resolve`. The Homebrew formula installs the real binary once and
+adds `bbs-config` / `bbs-env` as symlinks to it — so the `bbs-*` names work
+exactly like the in-repo dev symlinks, without a separate build per bin.
+
+`env` and `qa-config` are still reachable as top-level commands, but hidden
+from `bbs --help`: they moved under `secrets`, and the old spellings stay only
+so a brew-updated binary keeps working for a skill pack that hasn't upgraded
+yet. New callers should use `bbs secrets …`.
 
 ## For maintainers: cutting a release
 

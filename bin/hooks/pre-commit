@@ -2,21 +2,41 @@
 # Pre-commit hook: lint workflow files before they land.
 #
 # Finds staged .md files under .claude/skills/autopilot/workflows/ and
-# .claude/workflows/, then runs `bbs-autopilot lint-workflow` on each
+# .claude/workflows/, then runs `bbs autopilot lint-workflow` on each
 # using the staged content (from the index), not the working tree.
 # Exits non-zero if any file fails, blocking the commit.
 set -uo pipefail
 
-# Resolve bbs-autopilot (same logic as preamble).
-_bbs_resolve() {
-  local shim="$HOME/.claude/$1" plug="${CLAUDE_PLUGIN_ROOT:-/nonexistent}/bin/$1" \
-        repo="$HOME/.claude/skills/babysit/bin/$1"
-  if [ -x "$shim" ]; then echo "$shim"
-  elif [ -x "$plug" ]; then echo "$plug"
-  elif [ -x "$repo" ]; then echo "$repo"
-  else echo "$1"; fi
+# Resolve the linter into an argv array — the multicall fallback is two words,
+# so a bare string won't do. The hyphenated alias comes first for a checkout
+# that has it, then the `bbs` multicall: a brew + marketplace-plugin install
+# ships `bbs` and no bbs-autopilot at all, and this hook used to fall back to
+# the bare name and fail every commit that touched a workflow.
+_bbs_resolve() { # $1=bbs-<sub>
+  local name="$1" sub="${1#bbs-}" c
+  BBS_ARGV=()
+  for c in "$HOME/.claude/$name" "${CLAUDE_PLUGIN_ROOT:-/nonexistent}/bin/$name" "$HOME/.claude/skills/babysit/bin/$name"; do
+    if [ -x "$c" ]; then BBS_ARGV=("$c"); return 0; fi
+  done
+  if command -v "$name" >/dev/null 2>&1; then BBS_ARGV=("$name"); return 0; fi
+  # Probe capability, don't assume it: `bbs <sub>` on a binary built before the
+  # subcommand existed exits 1 silently (internal/cmd/root.go sets
+  # SilenceErrors). `bbs help <sub>` is not a usable probe — cobra exits 0 for
+  # unknown help topics.
+  for c in "$HOME/.local/bin/bbs" "$HOME/.claude/bbs" "${CLAUDE_PLUGIN_ROOT:-/nonexistent}/bin/bbs" "$HOME/.claude/skills/babysit/bin/bbs" bbs; do
+    if command -v "$c" >/dev/null 2>&1 && "$c" "$sub" --help >/dev/null 2>&1; then
+      BBS_ARGV=("$c" "$sub"); return 0
+    fi
+  done
+  return 1
 }
-BBS_AUTOPILOT_BIN=$(_bbs_resolve bbs-autopilot)
+if _bbs_resolve bbs-autopilot; then
+  AUTOPILOT=("${BBS_ARGV[@]}")
+else
+  echo "pre-commit: no working bbs autopilot — cannot lint workflows." >&2
+  echo "  Fix: bin/setup-skills from a checkout, or brew install lohi-ai/babysit/bbs." >&2
+  exit 1
+fi
 # Collect staged workflow .md files.
 STAGED=$(git diff --cached --name-only --diff-filter=ACM -- \
   '.claude/skills/autopilot/workflows/*.md' \
@@ -29,7 +49,7 @@ if [ -n "$STAGED" ]; then
     # Lint the staged version from the index, not the working tree.
     TMP=$(mktemp /tmp/bbs-lint-XXXXXXXX.md)
     git show ":$WF" > "$TMP" 2>/dev/null || { rm -f "$TMP"; ERRORS=$((ERRORS + 1)); continue; }
-    "$BBS_AUTOPILOT_BIN" lint-workflow "$TMP" || ERRORS=$((ERRORS + 1))
+    "${AUTOPILOT[@]}" lint-workflow "$TMP" || ERRORS=$((ERRORS + 1))
     rm -f "$TMP"
   done <<< "$STAGED"
 fi

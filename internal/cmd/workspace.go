@@ -15,24 +15,29 @@ import (
 // workspace" for its own, and the per-ticket pool is only ever called a
 // worktree.
 const workspaceUsage = `Usage:
-  bbs workspace list
-  bbs workspace show [<name>]
-  bbs workspace create <name>
-  bbs workspace add-repo <name> --git-url <url> [--path <dir>] [--role <fe|be|shared>]
-  bbs workspace config show
-  bbs workspace config get <key>
-  bbs workspace config set <key> <value>
-  bbs workspace config stamp                 record the running babysit version
+  bbs config workspace list
+  bbs config workspace show [<name>]
+  bbs config workspace create <name>
+  bbs config workspace add-repo <name> --git-url <url> [--path <dir>] [--role <fe|be|shared>]
 
-'config' reads and writes <repo>/.babysit/config.yaml for the current repo.
-The global ~/.babysit/config.yaml is a different file with a different
-command: bbs config.
+  bbs config repo show
+  bbs config repo get <key>
+  bbs config repo set <key> <value>
+  bbs config repo stamp                 record the running babysit version
+
+Three files, three surfaces: 'workspace' is the machine-local registry under
+~/.babysit/workspaces/, 'repo' is the committed <repo>/.babysit/config.yaml,
+and the global ~/.babysit/config.yaml is bbs config get/set/list.
 `
 
+// Hidden: the documented spelling is `bbs config workspace …`. This stays
+// reachable because bbs and the skill pack ship separately — a brew-updated
+// binary still gets `bbs workspace show` from a plugin that hasn't upgraded.
 func newWorkspaceCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:                "workspace",
 		Short:              "multi-repo registry: which repos belong to one product",
+		Hidden:             true,
 		DisableFlagParsing: true,
 		RunE: func(_ *cobra.Command, args []string) error {
 			return runWorkspace(args)
@@ -149,7 +154,7 @@ func harnessDisplay(cfg workspace.RepoConfig) string {
 
 func workspaceCreate(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: bbs workspace create <name>")
+		return fmt.Errorf("usage: bbs config workspace create <name>")
 	}
 	if err := workspace.Create(args[0]); err != nil {
 		return err
@@ -160,7 +165,7 @@ func workspaceCreate(args []string) error {
 
 func workspaceAddRepo(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: bbs workspace add-repo <name> --git-url <url> [--path <dir>] [--role <role>]")
+		return fmt.Errorf("usage: bbs config workspace add-repo <name> --git-url <url> [--path <dir>] [--role <role>]")
 	}
 	name, rest := args[0], args[1:]
 	var r workspace.Repo
@@ -184,10 +189,10 @@ func workspaceAddRepo(args []string) error {
 	return nil
 }
 
-// workspaceConfig is the repo-scoped counterpart of `bbs config`. They are
-// separate commands rather than one scope-aware command because `bbs config`
-// is a byte-pinned port of bin/bbs-config and its contract is not ours to
-// widen.
+// workspaceConfig is the repo-scoped counterpart of `bbs config`, reached as
+// `bbs config repo`. It stays a sibling verb rather than a --scope flag on
+// get/set/list because those three are a byte-pinned port of bin/bbs-config
+// and their contract is not ours to widen.
 func workspaceConfig(args []string) error {
 	top := qaconfig.RepoToplevel()
 	if top == "" {
@@ -211,7 +216,7 @@ func workspaceConfig(args []string) error {
 		return nil
 	case "get":
 		if len(args) < 2 {
-			return fmt.Errorf("usage: bbs workspace config get <key>")
+			return fmt.Errorf("usage: bbs config repo get <key>")
 		}
 		if v, ok := repoConfigField(cfg, args[1]); ok {
 			fmt.Println(v)
@@ -235,7 +240,7 @@ func workspaceConfig(args []string) error {
 		return nil
 	case "set":
 		if len(args) < 3 {
-			return fmt.Errorf("usage: bbs workspace config set <key> <value>")
+			return fmt.Errorf("usage: bbs config repo set <key> <value>")
 		}
 		if err := setRepoConfigField(&cfg, args[1], args[2]); err != nil {
 			return err

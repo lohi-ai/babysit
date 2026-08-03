@@ -22,10 +22,15 @@ const qaConfigUsage = `Usage:
 // output bytes and exit codes exactly. Flag parsing is disabled: the bash's
 // arg loop (including its silent exit-1 on a dangling --env/--repo under
 // set -e) is part of the contract.
+//
+// Hidden: the documented spelling is `bbs secrets qa <sub>`. This stays
+// reachable for skill packs already installed at an older plugin version,
+// whose qa and browse skills call `bbs qa-config` against a newer binary.
 func newQAConfigCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:                "qa-config",
 		Short:              "read named-environment QA config from project files",
+		Hidden:             true,
 		DisableFlagParsing: true,
 		RunE: func(_ *cobra.Command, args []string) error {
 			return runQAConfig(args)

@@ -102,7 +102,7 @@ cross-repo ticket acquires one lease per repo, releases them all. Solo runs
 2. `bbs ticket serve` — take the surface for human review: long qa-lease
    (240 min) + `switch`, here **and** in each linked sibling repo
    (`siblings` × the workspace registry, `RELATED_*_REPO` as fallback —
-   see `bbs workspace show`). Bare = all finished tickets (qa +
+   see `bbs config workspace show`). Bare = all finished tickets (qa +
    review-pr DONE) composed; `serve <t…>` = exactly those; `--release` = done.
 3. Review-fix loop: human reviews in browser → agent fixes **in the
    worktree**, commits → re-run `serve <ticket>` (reentrant) → refresh

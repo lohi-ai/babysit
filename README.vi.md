@@ -162,13 +162,11 @@ Khuyến nghị, chưa cần ngay lúc đầu: **[cmux](https://cmux.com)**, m�
 
 #### `bbs` CLI là cái gì
 
-Một binary Go duy nhất, mọi subcommand gọi dạng `bbs <sub>` — `config`, `env`,
-`slug`, `ticket`, `update-check`, `upgrade`, `learnings-log`,
-`learnings-search`, `qa-config`, `telemetry-log`, `codex-competitive`,
-`analytics-cron`, `secrets`, `design`, `dashboard`, `autopilot`, `foreman`,
-`workspace`. Không còn dòng bash production nào. Formula còn thả thêm hai alias
-argv0 là `bbs-config` và `bbs-env` — đúng hai cái đó thôi, nên skill luôn gọi
-dạng có dấu cách.
+Một binary Go duy nhất, mọi subcommand gọi dạng `bbs <sub>` — `ticket`,
+`config`, `secrets`, `upgrade`, `design`, `dashboard`, `autopilot`, `foreman`.
+Không còn dòng bash production nào.
+Formula còn thả thêm hai alias argv0 là `bbs-config` và `bbs-env` — đúng hai
+cái đó thôi, nên skill luôn gọi dạng có dấu cách.
 
 Nó là nửa phần mà các skill gọi thay bạn: danh tính ticket, verdict, các nước cờ
 git-flow, telemetry. Nó **không** chứa bộ skill — skill, workflow, và dữ liệu
@@ -344,11 +342,11 @@ Bảng skill đầy đủ (kèm phân loại autonomous-ready / interactive-only
 
 ## CLI đi kèm
 
-Tất cả là một binary duy nhất, gọi dạng `bbs <sub>` — `bbs autopilot` (bộ chạy), `bbs slug` (resolver lấy branch làm mỏ neo), cộng các trợ giúp cho env, config, snapshot db, và kiểm tra upgrade. `brew install lohi-ai/babysit/bbs` đặt nó lên `PATH`; nếu cài từ checkout thì `setup-skills` build nó rồi symlink `~/.local/bin/bbs`, kèm các alias argv0 `bbs-*` vào `~/.claude/` cho các caller cũ. Bảng đầy đủ và mục đích ở [`docs/companion-cli.md`](docs/companion-cli.md). Chạy `bbs <sub> --help` để xem cách dùng bất kỳ cái nào.
+Tất cả là một binary duy nhất, gọi dạng `bbs <sub>` — `bbs autopilot` (bộ chạy), `bbs ticket env` (resolver lấy branch làm mỏ neo), cộng các trợ giúp cho env, config, snapshot db, và kiểm tra upgrade. `brew install lohi-ai/babysit/bbs` đặt nó lên `PATH`; nếu cài từ checkout thì `setup-skills` build nó rồi symlink `~/.local/bin/bbs`, kèm các alias argv0 `bbs-*` vào `~/.claude/` cho các caller cũ. Bảng đầy đủ và mục đích ở [`docs/companion-cli.md`](docs/companion-cli.md). Chạy `bbs <sub> --help` để xem cách dùng bất kỳ cái nào.
 
 ## Vận hành
 
-Config ngày-2 (`bbs config`), telemetry (JSONL đổ vào `~/.babysit/analytics/`, mặc định chỉ ở local), và xử lý upgrade (`bbs update-check` + `bbs upgrade`) nằm trong [`docs/operations.md`](docs/operations.md).
+Config ngày-2 (`bbs config`), telemetry (JSONL đổ vào `~/.babysit/analytics/`, mặc định chỉ ở local), và xử lý upgrade (`bbs upgrade check` + `bbs upgrade`) nằm trong [`docs/operations.md`](docs/operations.md).
 
 **Upgrade.** Một lệnh, rồi khởi động lại Claude Code — thay đổi plugin chỉ có hiệu lực sau khi khởi động lại:
 

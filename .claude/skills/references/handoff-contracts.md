@@ -34,7 +34,7 @@ New skills pick a one-line verdict and document it in their own SKILL.md.
 One per finished skill, appended via `bbs ticket` (never write the file
 directly — the helper claims the sequence number and logs the event):
 ```bash
-eval "$(bbs slug env)"
+eval "$(bbs ticket env)"
 cat > /tmp/<skill>-brief.md <<EOF
 SUMMARY: <1–3 sentences: what changed and why>
 FILES: <comma-separated changed files>

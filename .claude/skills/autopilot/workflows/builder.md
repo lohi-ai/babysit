@@ -105,13 +105,13 @@ CHILD_BRANCH="feat/${PARENT_ID}/${POS}_${TICKET}_${SLUG}"
 ```
 ### Cross-repo tasks (related repos)
 `setup-project` records siblings: meaning in `AGENTS.md` § Related Repos,
-machine-local paths in the workspace registry (`bbs workspace show`), which
+machine-local paths in the workspace registry (`bbs config workspace show`), which
 is the authority; `RELATED_*_REPO` in `.babysit/.env` is the fallback for
 repos outside a workspace. **Prefer the
 current repo** — cross into a sibling only for the slice that genuinely
 cannot be done here, and do the minimum there. Steps 5–6 are repo-relative:
 land and QA each repo's change against *its own* base, once per repo touched.
-1. Resolve the path (`bbs workspace show`, else `grep '^RELATED_'
+1. Resolve the path (`bbs config workspace show`, else `grep '^RELATED_'
    .babysit/.env`). Unset path, or
    sibling has no `.babysit/git-flow.yaml` → don't guess: `NEEDS_CONTEXT`
    naming the repo and its slice of the requirement.

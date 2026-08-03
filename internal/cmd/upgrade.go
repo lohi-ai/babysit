@@ -24,10 +24,16 @@ import (
 // usage dump and unknown flags into errors, neither of which the bash does.
 func newUpgradeCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:                "upgrade",
+		Use:                "upgrade [check|--snooze]",
 		Short:              "pull latest babysit, re-run setup, write just-upgraded marker",
 		DisableFlagParsing: true,
 		RunE: func(_ *cobra.Command, args []string) error {
+			// `upgrade check` is the version probe — the surface that used to be
+			// its own top-level `update-check`. Checking whether to upgrade and
+			// upgrading are one concern; they now share one command.
+			if len(args) > 0 && args[0] == "check" {
+				return runUpdateCheckCmd(args[1:])
+			}
 			return runUpgrade(args)
 		},
 	}

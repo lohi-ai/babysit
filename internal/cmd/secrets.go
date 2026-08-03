@@ -52,6 +52,17 @@ Subcommands:
   ensure-gitignore --repo-root <path>
       Idempotently append ` + "`.babysit/.env`" + ` to <path>/.gitignore. Prints
       ` + "`added` or `present`" + `.
+
+  [--env-file <path>] [--app <app>] resolve [--prefix] <var>...
+  [--env-file <path>] [--app <app>] is-set [--prefix] <var>
+  list-prefix <prefix>
+  prompt <var>...
+      Env resolution across the shell, .env.base files, and prefixed variants.
+      Run ` + "`bbs secrets resolve`" + ` with no argument for the full contract.
+
+  qa <probe|list|default-env|check|leak-check>
+      Named-environment QA config read from .babysit/qa.yaml.
+      Run ` + "`bbs secrets qa`" + ` for its usage.
 `
 
 func runSecrets(args []string) error {
@@ -71,6 +82,16 @@ func runSecrets(args []string) error {
 		return secretsSeed(rest)
 	case "ensure-gitignore":
 		return secretsEnsureGitignore(rest)
+	// The env resolver, folded in from the retired top-level `env` command.
+	// `args` goes through whole, not `rest`: its global flags (--env-file,
+	// --app) legally precede the subcommand, so runEnv wants both halves.
+	case "resolve", "is-set", "list-prefix", "prompt", "--env-file", "--app":
+		return runEnv(args)
+	// qa.yaml's named-environment config, folded in from `qa-config`. Grouped
+	// rather than flattened because `list` and `check` mean something different
+	// here than they would for the dotenv surface.
+	case "qa":
+		return runQAConfig(rest)
 	case "help", "-h", "--help", "":
 		fmt.Print(secretsHelp)
 		return nil

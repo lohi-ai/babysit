@@ -18,7 +18,7 @@ const (
 	// is which — otherwise the basename is the only clue.
 	configUsage = "Usage: bbs-config {get|set|list} [key] [value]\n" +
 		"  Reads ~/.babysit/config.yaml (global). For a repo's own\n" +
-		"  .babysit/config.yaml, use: bbs workspace config"
+		"  .babysit/config.yaml, use: bbs config repo"
 	badKeyMsg = "Error: key must contain only alphanumeric characters and underscores"
 )
 
@@ -27,7 +27,7 @@ const (
 func newConfigCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "config",
-		Short: "read/write ~/.babysit/config.yaml",
+		Short: "read/write babysit config: global, workspace registry, per-repo",
 		// Bare `config` or an unknown subcommand mirrors bin/bbs-config's
 		// default case: print usage to stdout, exit 1.
 		RunE: func(_ *cobra.Command, _ []string) error {
@@ -35,8 +35,36 @@ func newConfigCmd() *cobra.Command {
 			return errSilent
 		},
 	}
-	cmd.AddCommand(newConfigGetCmd(), newConfigSetCmd(), newConfigListCmd())
+	cmd.AddCommand(newConfigGetCmd(), newConfigSetCmd(), newConfigListCmd(),
+		newConfigWorkspaceCmd(), newConfigRepoCmd())
 	return cmd
+}
+
+// Three files answer to the name "config", so all three hang off `bbs config`:
+// the global ~/.babysit/config.yaml (get/set/list), the machine-local registry
+// under ~/.babysit/workspaces/ (workspace), and the committed
+// <repo>/.babysit/config.yaml (repo). DisableFlagParsing on both because
+// add-repo's --git-url/--path/--role are parsed by hand downstream.
+func newConfigWorkspaceCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:                "workspace",
+		Short:              "multi-repo registry: which repos belong to one product",
+		DisableFlagParsing: true,
+		RunE: func(_ *cobra.Command, args []string) error {
+			return runWorkspace(args)
+		},
+	}
+}
+
+func newConfigRepoCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:                "repo",
+		Short:              "read/write this repo's .babysit/config.yaml",
+		DisableFlagParsing: true,
+		RunE: func(_ *cobra.Command, args []string) error {
+			return runWorkspace(append([]string{"config"}, args...))
+		},
+	}
 }
 
 func newConfigGetCmd() *cobra.Command {

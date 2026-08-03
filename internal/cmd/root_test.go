@@ -56,7 +56,7 @@ func TestResolveVersion(t *testing.T) {
 }
 
 // The guard exists to stop -h/--help from reaching actions with side effects
-// (upgrade pulls, analytics-cron dispatches, telemetry-log/update-check write).
+// (upgrade pulls and relinks, update-check writes state).
 func TestGuardHelp(t *testing.T) {
 	newCmd := func(ran *bool) *cobra.Command {
 		// DisableFlagParsing mirrors every command the guard wraps — and is what
@@ -112,10 +112,7 @@ func TestGuardHelp(t *testing.T) {
 // Every command the guard wraps must actually be wrapped — a new side-effecting
 // port added to the tree without guardHelp would regress silently.
 func TestGuardedCommandsHandleHelp(t *testing.T) {
-	guarded := []string{
-		"upgrade", "update-check", "learnings-log", "learnings-search",
-		"telemetry-log", "analytics-cron", "autopilot",
-	}
+	guarded := []string{"upgrade", "update-check", "autopilot"}
 	for _, name := range guarded {
 		t.Run(name, func(t *testing.T) {
 			root := NewRootCmd()

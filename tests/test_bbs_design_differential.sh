@@ -25,19 +25,16 @@ mkdir -p "$BIN"
 ln -sf bbs "$BIN/bbs-design"
 GO="$BIN/bbs-design"
 
-# Stub bbs-ticket: echoes $OVERRIDE_DESIGN for `get pointers.design`, nothing
-# else. On PATH for BOTH impls, so the ticket-override path is symmetric.
-cat > "$BIN/bbs-ticket" <<'STUB'
-#!/bin/sh
-if [ "$1" = get ] && [ "$2" = pointers.design ]; then
-  printf '%s' "${OVERRIDE_DESIGN:-}"
-fi
-exit 0
-STUB
-chmod +x "$BIN/bbs-ticket"
+# The real ticket command on both sides. It used to be a stub that echoed
+# $OVERRIDE_DESIGN, but the Go `design` no longer spawns a `bbs-ticket` off PATH
+# — it reaches the ticket subcommand through its own binary — so a PATH stub can
+# only intercept the bash oracle. Real ticket state under an isolated
+# BABYSIT_HOME is what both impls now read, which is also the truer test.
+ln -sf bbs "$BIN/bbs-ticket"
 
-# Pinned PATH: toolchain + our bindir (with the stub), nothing from ~/.claude.
+# Pinned PATH: toolchain + our bindir, nothing from ~/.claude.
 export PATH="$BIN:/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin"
+export BABYSIT_HOME="$WORK/home"
 
 FAILS=0
 pass() { printf 'ok   %s\n' "$1"; }
@@ -120,8 +117,8 @@ tokens:
 ---
 YAML
 
-# ── tokens: master only (OVERRIDE_DESIGN empty) ─────────────────
-export OVERRIDE_DESIGN=""
+# ── tokens: master only (no ticket → no override) ───────────────
+unset BABYSIT_TICKET
 cmp_object "tokens full (master only)"      tokens --design "$WORK/DESIGN.md"
 cmp_bytes  "tokens --field colors.primary"  tokens --design "$WORK/DESIGN.md" --field tokens.colors.primary
 cmp_bytes  "tokens --field radius (int)"     tokens --design "$WORK/DESIGN.md" --field tokens.radius
@@ -130,10 +127,11 @@ cmp_bytes  "tokens --field dark_mode (bool)" tokens --design "$WORK/DESIGN.md" -
 cmp_bytes  "tokens --field missing (null)"   tokens --design "$WORK/DESIGN.md" --field tokens.nope
 
 # ── tokens: merged (ticket override wins per leaf) ──────────────
-export OVERRIDE_DESIGN="$WORK/override.md"
+export BABYSIT_TICKET=bs-design01
+"$BIN/bbs" ticket set-pointer design "$WORK/override.md" >/dev/null
 cmp_object "tokens merged (override wins)"  tokens --design "$WORK/DESIGN.md"
 cmp_bytes  "tokens merged --field primary"  tokens --design "$WORK/DESIGN.md" --field tokens.colors.primary
-export OVERRIDE_DESIGN=""
+unset BABYSIT_TICKET
 
 # ── suggest ──────────────────────────────────────────────────────
 cmp_object "suggest SaaS (General)"    suggest --data "$DATA" --product "SaaS (General)"

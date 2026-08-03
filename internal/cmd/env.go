@@ -40,10 +40,16 @@ Examples:
 // --app only *before* the subcommand and treats --prefix as a positional
 // marker, and its error text and exit codes are part of the contract. Letting
 // cobra/pflag near the arguments would replace all of that with cobra's own.
+//
+// Hidden: the documented spelling is `bbs secrets resolve|is-set|list-prefix|
+// prompt`. This stays reachable because `bbs-env` is one of the two argv0
+// aliases the Homebrew formula installs, and skill packs already installed at
+// an older plugin version still call it.
 func newEnvCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:                "env",
 		Short:              "env resolution for babysit skills",
+		Hidden:             true,
 		DisableFlagParsing: true,
 		RunE: func(_ *cobra.Command, args []string) error {
 			return runEnv(args)
