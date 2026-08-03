@@ -118,3 +118,15 @@ export interface SpawnResult {
 export function spawnForeman(dir: string, id = '', command = '') {
   return post<SpawnResult>('/api/foremen', { id, dir, command });
 }
+
+export interface RetireResult {
+  retired: string;
+  /** The server's own line — says so when the cmux workspace was left open. */
+  detail: string;
+}
+
+export function retireForeman(id: string, keepWorkspace = false) {
+  return post<RetireResult>(`/api/foremen/${encodeURIComponent(id)}/retire`, {
+    keep_workspace: keepWorkspace,
+  });
+}

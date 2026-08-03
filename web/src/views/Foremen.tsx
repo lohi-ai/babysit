@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { HardHat } from 'lucide-react';
 import { foremanLive, type ForemanRow, type Snapshot } from '../lib/data';
-import { spawnForeman } from '../lib/api';
+import { retireForeman, spawnForeman } from '../lib/api';
 import { Button } from '../components/Button';
 import { DenseRow } from '../components/DenseRow';
 import { EmptyState } from '../components/EmptyState';
@@ -13,6 +13,7 @@ import { TopBar } from '../components/TopBar';
 import { formatRelative } from '../lib/format';
 import { gateProps, useControlPlane, useMutation } from '../contexts/ControlContext';
 import { useRegisterFocusScope } from '../lib/keyboard';
+import { useScopedTickets } from '../lib/scope';
 
 const FRAME_STYLE: React.CSSProperties = {
   border: '1px solid var(--border-hairline)',
@@ -20,7 +21,12 @@ const FRAME_STYLE: React.CSSProperties = {
   backgroundColor: 'var(--surface-bg)',
 };
 
-const COLUMNS = '20px 150px 110px 1fr 110px 64px 72px';
+const COLUMNS = '20px 150px 110px 1fr 110px 64px 72px 72px';
+
+// A ticket in one of these is finished with, so a foreman holding only these is
+// safe to retire. Anything else is work that stops moving the moment its foreman
+// is gone, which is what the confirm has to say out loud.
+const SETTLED: ReadonlySet<string> = new Set(['done', 'cancelled', 'duplicate']);
 
 type Liveness = 'live' | 'stale' | 'unreachable' | 'retired';
 
@@ -51,11 +57,32 @@ export function Foremen({ snapshot }: { snapshot: Snapshot }) {
   const foremen = snapshot.foremen ?? [];
   const { reason } = useControlPlane();
   const [spawnOpen, setSpawnOpen] = useState(false);
+  const [retiring, setRetiring] = useState<ForemanRow | null>(null);
 
   const rows = useMemo(
     () => foremen.map(f => ({ f, state: liveness(f) })),
     [foremen],
   );
+
+  // Computed here, not asked of the server: the snapshot already carries every
+  // ticket with its assignee and status, so an extra field would be a second
+  // source for a number already on the page.
+  //
+  // Scope is 'all', not the active project filter, for the same reason the row
+  // below links with project=all — the `assigned` count beside it spans every
+  // project, and a stranded-ticket warning narrower than that number would
+  // reassure the human about tickets it never looked at.
+  const allTickets = useScopedTickets(snapshot, 'all');
+  const openTickets = useMemo(() => {
+    const byForeman = new Map<string, string[]>();
+    for (const t of allTickets) {
+      if (!t.assignee || SETTLED.has(t.status)) continue;
+      const list = byForeman.get(t.assignee) ?? [];
+      list.push(t.id);
+      byForeman.set(t.assignee, list);
+    }
+    return byForeman;
+  }, [allTickets]);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const [rowEls, setRowEls] = useState<HTMLElement[]>([]);
@@ -98,9 +125,16 @@ export function Foremen({ snapshot }: { snapshot: Snapshot }) {
               <HeaderCell>cmux</HeaderCell>
               <HeaderCell align="right">Tickets</HeaderCell>
               <HeaderCell align="right">Heartbeat</HeaderCell>
+              <span />
             </DenseRow>
             {rows.map(({ f, state }) => (
-              <ForemanListRow key={f.id} f={f} state={state} />
+              <ForemanListRow
+                key={f.id}
+                f={f}
+                state={state}
+                gate={reason}
+                onRetire={() => setRetiring(f)}
+              />
             ))}
           </div>
         )}
@@ -109,6 +143,11 @@ export function Foremen({ snapshot }: { snapshot: Snapshot }) {
         open={spawnOpen}
         onClose={() => setSpawnOpen(false)}
         defaultDir={snapshot.meta.current_dir ?? ''}
+      />
+      <RetireModal
+        foreman={retiring}
+        openTickets={retiring ? openTickets.get(retiring.id) ?? [] : []}
+        onClose={() => setRetiring(null)}
       />
     </>
   );
@@ -125,7 +164,17 @@ function HeaderCell({ children, align }: { children: React.ReactNode; align?: 'r
   );
 }
 
-function ForemanListRow({ f, state }: { f: ForemanRow; state: Liveness }) {
+function ForemanListRow({
+  f,
+  state,
+  gate,
+  onRetire,
+}: {
+  f: ForemanRow;
+  state: Liveness;
+  gate: string;
+  onRetire: () => void;
+}) {
   return (
     <DenseRow
       columns={COLUMNS}
@@ -177,7 +226,100 @@ function ForemanListRow({ f, state }: { f: ForemanRow; state: Liveness }) {
           {formatRelative(f.heartbeat)}
         </span>
       </span>
+      {/* stopPropagation because the row itself navigates: without it, retiring
+          would also send the human to the ticket list of what they just removed. */}
+      <span className="px-2 py-1.5 flex justify-end" onClick={e => e.stopPropagation()}>
+        <Button
+          size="sm"
+          onClick={onRetire}
+          aria-label={`Retire ${f.id}`}
+          {...gateProps(gate)}
+        >
+          Retire
+        </Button>
+      </span>
     </DenseRow>
+  );
+}
+
+// Retiring is reversible in the sense that a foreman can be spawned again, but
+// it is not an undo: the record, its id and its cmux workspace all go. So the
+// confirm names the two things the human cannot see from the row — what happens
+// to the workspace, and which tickets stop moving.
+function RetireModal({
+  foreman,
+  openTickets,
+  onClose,
+}: {
+  foreman: ForemanRow | null;
+  openTickets: string[];
+  onClose: () => void;
+}) {
+  const [keepWorkspace, setKeepWorkspace] = useState(false);
+  const { run, pending, error } = useMutation();
+
+  useEffect(() => {
+    if (foreman) setKeepWorkspace(false);
+  }, [foreman]);
+
+  if (!foreman) return null;
+
+  const submit = async () => {
+    const ok = await run(
+      () => retireForeman(foreman.id, keepWorkspace),
+      `Retired ${foreman.id}`,
+    );
+    if (ok) onClose();
+  };
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title={`Retire ${foreman.id}?`}
+      actions={
+        <>
+          <Button size="lg" onClick={onClose}>Cancel</Button>
+          <Button size="lg" variant="primary" onClick={submit} disabled={pending}>
+            {pending ? 'Retiring…' : 'Retire'}
+          </Button>
+        </>
+      }
+    >
+      <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>
+        Drops the foreman record. {foreman.workspace_title
+          ? <>Its cmux workspace <span className="font-mono">{foreman.workspace_title}</span> closes unless you keep it.</>
+          : <>It has no cmux workspace to close — it was registered, not spawned.</>}
+      </p>
+
+      {openTickets.length > 0 ? (
+        <div className="mt-3">
+          <p className="text-sm" style={{ color: 'var(--status-blocked-text)' }}>
+            {openTickets.length === 1 ? 'One unfinished ticket is' : `${openTickets.length} unfinished tickets are`} assigned
+            to it. Retiring leaves {openTickets.length === 1 ? 'it' : 'them'} assigned to a foreman that no longer
+            exists, so nothing will dispatch {openTickets.length === 1 ? 'it' : 'them'} until you reassign:
+          </p>
+          <ul className="mt-1 font-mono text-xs" style={{ color: 'var(--text-secondary)' }}>
+            {openTickets.map(id => <li key={id}>{id}</li>)}
+          </ul>
+        </div>
+      ) : (
+        <p className="mt-3 text-sm" style={{ color: 'var(--text-muted)' }}>
+          No unfinished tickets are assigned to it — nothing is left stranded.
+        </p>
+      )}
+
+      <label className="mt-4 flex items-center gap-2 text-sm" style={{ color: 'var(--text-secondary)' }}>
+        <input
+          type="checkbox"
+          checked={keepWorkspace}
+          onChange={e => setKeepWorkspace(e.target.checked)}
+        />
+        Keep the cmux workspace open
+      </label>
+
+      {error && <ErrorBox title="Retire failed" body={error} />}
+    </Modal>
   );
 }
 

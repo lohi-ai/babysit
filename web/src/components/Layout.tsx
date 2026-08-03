@@ -11,19 +11,21 @@ import { FocusScopeContext, FilterKeyContext, useGlobalKeyboard, type FocusScope
 import { useFilterOptional } from '../contexts/FilterContext';
 import { pendingApprovals } from './WaitingOnYou';
 
-// Two lists, not one: the dashboard is for watching tickets, so those two
-// routes stay in the nav and the six reference views fold behind a disclosure.
-// Nothing is unreachable — `G <key>` still routes to every one of them
+// Two lists, not one: the dashboard is for watching work, so the routes you act
+// on stay in the nav and the five reference views fold behind a disclosure.
+// Foremen is in the first list because it is a control surface, not a report —
+// it is where a foreman gets spawned, and a stale one is only visible from
+// there. Nothing is unreachable — `G <key>` still routes to every one of them
 // (lib/keyboard.ts owns that map independently), and the panel opens itself
 // when the active route lives inside it.
 const PRIMARY_ITEMS = [
   { hash: '#/',              label: 'Home',         kbd: 'H', Icon: HomeIcon },
   { hash: '#/tickets',       label: 'Tickets',      kbd: 'T', Icon: Inbox },
+  { hash: '#/foremen',       label: 'Foremen',      kbd: 'F', Icon: HardHat },
 ] as const;
 
 const MORE_ITEMS = [
   { hash: '#/live',          label: 'Live',         kbd: 'L', Icon: Activity },
-  { hash: '#/foremen',       label: 'Foremen',      kbd: 'F', Icon: HardHat },
   { hash: '#/decisions',     label: 'Decisions',    kbd: 'D', Icon: Workflow },
   { hash: '#/skill-events',  label: 'Skill events', kbd: 'S', Icon: Zap },
   { hash: '#/timeline',      label: 'Timeline',     kbd: 'M', Icon: Calendar },
