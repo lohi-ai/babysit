@@ -16,13 +16,24 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      # bin/bbs-autopilot is a tracked symlink to bin/bbs, which is gitignored
+      # and therefore absent on a fresh checkout — the linter has to be built
+      # before it can run, and is then called in the space form like every
+      # other caller.
+      - name: Build bbs
+        run: go build -o bin/bbs ./cmd/bbs
+
       - name: Lint workflow files
         run: |
           ERRORS=0
           for wf in .claude/skills/autopilot/workflows/*.md .claude/workflows/*.md; do
             [ -f "$wf" ] || continue
             echo "linting $wf"
-            bin/bbs-autopilot lint-workflow "$wf" || ERRORS=$((ERRORS + 1))
+            bin/bbs autopilot lint-workflow "$wf" || ERRORS=$((ERRORS + 1))
           done
           if [ "$ERRORS" -gt 0 ]; then
             echo "::error::$ERRORS workflow file(s) failed lint"
