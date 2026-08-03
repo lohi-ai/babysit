@@ -62,11 +62,7 @@ func runUpgrade(args []string) error {
 		return errSilent
 	}
 	if !isBabysitCheckout(babysit) {
-		fmt.Fprintln(os.Stderr, "babysit was not installed via git clone — nothing here to pull.")
-		for _, ln := range upgradeHints(babysit) {
-			fmt.Fprintln(os.Stderr, ln)
-		}
-		return errSilent
+		return upgradeExternal(babysit)
 	}
 
 	fmt.Println("→ Pulling latest babysit...")
@@ -158,42 +154,128 @@ func isBabysitCheckout(babysit string) bool {
 	return top == babysit
 }
 
-// upgradeHints names the commands that actually upgrade an install with no
-// checkout behind it — a brew binary, or a Claude Code plugin installed from
-// the GitHub marketplace.
+// upgradeExternal upgrades an install with no checkout behind it: the Homebrew
+// CLI and the Claude Code plugin. babysit ships as two halves that separate
+// tools own, so `bbs upgrade` drives each one rather than making the operator
+// remember both.
 //
-// `bbs upgrade` deliberately does not do this work itself. A brew binary has no
-// remote to pull, and a plugin is refreshed by `claude`, not by us: shelling out
-// would couple babysit to a CLI it doesn't own, and the `claude` on PATH is not
-// necessarily the one running this session. So print the exact commands, name
-// the restart, and stop — a wrong guess about the install shape is worse than
-// two commands the operator can read.
-func upgradeHints(babysit string) []string {
-	out := []string{"  CLI:    brew upgrade bbs"}
-	if !strings.Contains(babysit, "/Cellar/") {
-		out[0] += "   (or re-download from https://github.com/lohi-ai/babysit/releases)"
+// Each half is only driven when this machine actually has it — a brew CLI next
+// to a skills-dir plugin upgrades the CLI and prints the other half's
+// instructions, instead of guessing. Whatever we can't drive is named, so the
+// output is always a complete account of what is left to do.
+//
+// One caveat kept from when this only printed: the `claude` on PATH is not
+// necessarily the binary running this session. Plugin changes need a restart
+// regardless, which is why the restart line prints on every path.
+func upgradeExternal(babysit string) error {
+	var done, manual []string
+	failed := false
+
+	// runUpgrade chdir'd into the install dir for the checkout path. Here that
+	// directory is the very thing being replaced — brew unlinks the old Cellar
+	// keg — and a process whose cwd has been deleted breaks the child commands
+	// it spawns. Step out first.
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		_ = os.Chdir(home)
 	}
-	home, _ := os.UserHomeDir()
-	switch {
-	case home == "":
-	case isDir(filepath.Join(home, ".claude", "plugins", "cache", "babysit")):
-		out = append(out, "  Skills: claude plugin marketplace update babysit && claude plugin update bbs@babysit")
-	case isDir(filepath.Join(home, ".claude", "skills", "babysit")):
-		// A skills-dir plugin is loaded in place, so it is often a symlink to the
-		// operator's own checkout. That shape upgrades itself: `bbs upgrade` run
-		// from the target pulls and relinks, and the plugin sees it immediately.
-		// Telling them to "re-sync" would send them looking for a copy step that
-		// does not exist.
-		dir := filepath.Join(home, ".claude", "skills", "babysit")
-		if target, err := filepath.EvalSymlinks(dir); err == nil && target != dir {
-			out = append(out, "  Skills: ~/.claude/skills/babysit links to "+target+" — run `bbs upgrade` from there")
+
+	if strings.Contains(babysit, "/Cellar/") && hasCmd("brew") {
+		fmt.Println("→ Upgrading the bbs CLI (brew)...")
+		if err := runVisible("brew", "upgrade", "bbs"); err != nil {
+			fmt.Fprintln(os.Stderr, "brew upgrade bbs failed — see the output above")
+			failed = true
 		} else {
-			out = append(out, "  Skills: ~/.claude/skills/babysit is a skills-dir install — re-sync it from a checkout")
+			done = append(done, "CLI")
+		}
+	} else {
+		manual = append(manual, hintCLI(babysit))
+	}
+
+	switch {
+	case pluginCached() && hasCmd("claude"):
+		fmt.Println("→ Updating the babysit plugin (claude)...")
+		err := runVisible("claude", "plugin", "marketplace", "update", "babysit")
+		if err == nil {
+			err = runVisible("claude", "plugin", "update", "bbs@babysit")
+		}
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "claude plugin update failed — see the output above")
+			failed = true
+		} else {
+			done = append(done, "skills")
 		}
 	default:
-		out = append(out, "  Skills: claude plugin marketplace update babysit && claude plugin update bbs@babysit")
+		manual = append(manual, hintSkills())
 	}
-	return append(out, "  Then restart Claude Code — plugin changes only apply on restart.")
+
+	if len(done) == 0 && !failed {
+		// Neither half is driveable from here — this is the pre-existing
+		// print-and-exit-nonzero path, header line first.
+		fmt.Fprintln(os.Stderr, "babysit was not installed via git clone — nothing here to pull.")
+	}
+	for _, ln := range manual {
+		fmt.Fprintln(os.Stderr, ln)
+	}
+	if failed || len(done) == 0 {
+		fmt.Fprintln(os.Stderr, "  Then restart Claude Code — plugin changes only apply on restart.")
+		return errSilent
+	}
+	fmt.Printf("✓ babysit upgraded (%s)\n", strings.Join(done, " + "))
+	fmt.Println("  Restart Claude Code — plugin changes only apply on restart.")
+	return nil
+}
+
+// hintCLI names the command that upgrades the binary when we can't run it here.
+func hintCLI(babysit string) string {
+	out := "  CLI:    brew upgrade bbs"
+	if !strings.Contains(babysit, "/Cellar/") {
+		out += "   (or re-download from https://github.com/lohi-ai/babysit/releases)"
+	}
+	return out
+}
+
+// hintSkills names the command that refreshes the skill pack for the plugin
+// shape this machine has.
+func hintSkills() string {
+	const marketplace = "  Skills: claude plugin marketplace update babysit && claude plugin update bbs@babysit"
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return marketplace
+	}
+	dir := filepath.Join(home, ".claude", "skills", "babysit")
+	if !isDir(dir) {
+		return marketplace
+	}
+	// A skills-dir plugin is loaded in place, so it is often a symlink to the
+	// operator's own checkout. That shape upgrades itself: `bbs upgrade` run
+	// from the target pulls and relinks, and the plugin sees it immediately.
+	// Telling them to "re-sync" would send them looking for a copy step that
+	// does not exist.
+	if target, err := filepath.EvalSymlinks(dir); err == nil && target != dir {
+		return "  Skills: ~/.claude/skills/babysit links to " + target + " — run `bbs upgrade` from there"
+	}
+	return "  Skills: ~/.claude/skills/babysit is a skills-dir install — re-sync it from a checkout"
+}
+
+func pluginCached() bool {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return false
+	}
+	return isDir(filepath.Join(home, ".claude", "plugins", "cache", "babysit"))
+}
+
+func hasCmd(name string) bool {
+	_, err := exec.LookPath(name)
+	return err == nil
+}
+
+// runVisible runs a command with the operator watching: its output is the only
+// explanation of a failure, so it is inherited rather than captured.
+func runVisible(name string, args ...string) error {
+	c := exec.Command(name, args...)
+	c.Stdout, c.Stderr = os.Stdout, os.Stderr
+	return c.Run()
 }
 
 // runSnooze silences upgrade prompts for the pending version without upgrading.

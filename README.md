@@ -114,11 +114,11 @@ claude plugin marketplace add lohi-ai/babysit
 claude plugin install bbs@babysit
 ```
 
-Restart Claude Code, and `/bbs:autopilot` is there. Upgrade later with:
+Restart Claude Code, and `/bbs:autopilot` is there. Upgrade later with one
+command — `bbs upgrade` refreshes both halves, then restart Claude Code:
 
 ```bash
-brew upgrade bbs
-claude plugin marketplace update babysit && claude plugin update bbs@babysit
+bbs upgrade
 ```
 
 **`brew install bbs` is not optional.** `bin/bbs` is a build artifact and isn't
@@ -350,14 +350,13 @@ Everything is one binary reached as `bbs <sub>` — `bbs autopilot` (the runner)
 
 Day-2 config (`bbs config`), telemetry (JSONL to `~/.babysit/analytics/`, local-only by default), and upgrade handling (`bbs update-check` + `bbs upgrade`) are covered in [`docs/operations.md`](docs/operations.md).
 
-**Upgrade.** Both halves, then restart Claude Code — plugin changes only apply on restart:
+**Upgrade.** One command, then restart Claude Code — plugin changes only apply on restart:
 
 ```bash
-brew upgrade bbs
-claude plugin marketplace update babysit && claude plugin update bbs@babysit
+bbs upgrade
 ```
 
-From a checkout instead: `git pull && ./bin/setup-skills`, then `/plugin marketplace update babysit` + `/reload-plugins`.
+babysit ships as two halves that different tools own — the brew CLI and the Claude Code plugin — and `bbs upgrade` drives whichever ones this machine has, naming any it can't reach. From a checkout it pulls and re-runs `setup-skills` instead.
 
 ## Uninstall
 
@@ -383,7 +382,7 @@ rm -f ~/.claude/babysit ~/.claude/bbs-*
 | Issue | Fix |
 |-------|-----|
 | Every `git push` denied, "GATE OFFLINE" | No `bbs` on `PATH` — `brew install lohi-ai/babysit/bbs`. The plugin ships no compiled binary, and the gate fails closed by design |
-| Skills missing or stale after upgrade | Restart Claude Code; if still stale, `claude plugin marketplace update babysit && claude plugin update bbs@babysit` |
+| Skills missing or stale after upgrade | Restart Claude Code; if still stale, `bbs upgrade` again and read what it says it couldn't reach |
 | `/bbs:*` not found | `claude plugin install bbs@babysit`, then restart; or `/reload-plugins` |
 | Skills show without `bbs:` prefix | Legacy install — `find ~/.claude/skills -maxdepth 1 -type l -name 'bbs:*' -delete`, then reinstall the plugin |
 | `env resolve` returns empty | Check the right `.env.base` exists under `config/<app>/` |

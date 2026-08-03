@@ -114,11 +114,11 @@ claude plugin marketplace add lohi-ai/babysit
 claude plugin install bbs@babysit
 ```
 
-Khởi động lại Claude Code là có `/bbs:autopilot`. Sau này nâng cấp bằng:
+Khởi động lại Claude Code là có `/bbs:autopilot`. Sau này nâng cấp bằng một
+lệnh duy nhất — `bbs upgrade` làm mới cả hai nửa, rồi khởi động lại Claude Code:
 
 ```bash
-brew upgrade bbs
-claude plugin marketplace update babysit && claude plugin update bbs@babysit
+bbs upgrade
 ```
 
 **`brew install bbs` không phải tùy chọn.** `bin/bbs` là sản phẩm build, không
@@ -350,14 +350,13 @@ Tất cả là một binary duy nhất, gọi dạng `bbs <sub>` — `bbs autopi
 
 Config ngày-2 (`bbs config`), telemetry (JSONL đổ vào `~/.babysit/analytics/`, mặc định chỉ ở local), và xử lý upgrade (`bbs update-check` + `bbs upgrade`) nằm trong [`docs/operations.md`](docs/operations.md).
 
-**Upgrade.** Cả hai nửa, rồi khởi động lại Claude Code — thay đổi plugin chỉ có hiệu lực sau khi khởi động lại:
+**Upgrade.** Một lệnh, rồi khởi động lại Claude Code — thay đổi plugin chỉ có hiệu lực sau khi khởi động lại:
 
 ```bash
-brew upgrade bbs
-claude plugin marketplace update babysit && claude plugin update bbs@babysit
+bbs upgrade
 ```
 
-Nếu cài từ checkout: `git pull && ./bin/setup-skills`, rồi `/plugin marketplace update babysit` + `/reload-plugins`.
+babysit gồm hai nửa do hai công cụ khác nhau quản — CLI qua brew và plugin của Claude Code — và `bbs upgrade` chạy nửa nào máy này có, đồng thời nêu tên nửa nào nó không với tới được. Nếu cài từ checkout thì nó pull rồi chạy lại `setup-skills`.
 
 ## Gỡ cài
 
@@ -383,7 +382,7 @@ rm -f ~/.claude/babysit ~/.claude/bbs-*
 | Vấn đề | Cách sửa |
 |--------|----------|
 | Mọi `git push` đều bị chặn, báo "GATE OFFLINE" | Chưa có `bbs` trên `PATH` — `brew install lohi-ai/babysit/bbs`. Plugin không kèm binary, và cổng gác cố tình fail đóng |
-| Skill biến mất hoặc cũ mèm sau khi upgrade | Khởi động lại Claude Code; vẫn cũ thì `claude plugin marketplace update babysit && claude plugin update bbs@babysit` |
+| Skill biến mất hoặc cũ mèm sau khi upgrade | Khởi động lại Claude Code; vẫn cũ thì chạy lại `bbs upgrade` và đọc xem nó báo không với tới được nửa nào |
 | `/bbs:*` không tìm thấy | `claude plugin install bbs@babysit`, rồi khởi động lại; hoặc `/reload-plugins` |
 | Skill hiện ra mà thiếu tiền tố `bbs:` | Bản cài cũ — `find ~/.claude/skills -maxdepth 1 -type l -name 'bbs:*' -delete`, rồi cài lại plugin |
 | `env resolve` trả về rỗng | Kiểm xem đúng file `.env.base` có nằm dưới `config/<app>/` không |
