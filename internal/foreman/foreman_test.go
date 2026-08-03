@@ -248,24 +248,27 @@ func TestAllows(t *testing.T) {
 	cases := []struct {
 		name   string
 		grant  *Grant
+		hold   *Hold
 		ticket string
 		ok     bool
 		reason string
 	}{
-		{"no grant escalates", nil, "bs-a", false, "no grant"},
-		{"unbounded allows anything", &Grant{}, "bs-a", true, ""},
-		{"unexpired allows", &Grant{ExpiresAt: future}, "bs-a", true, ""},
-		{"expired denies", &Grant{ExpiresAt: past}, "bs-a", false, "grant expired"},
-		{"corrupt expiry denies", &Grant{ExpiresAt: "soon"}, "bs-a", false, "unreadable"},
-		{"budget left allows", &Grant{MaxApprovals: 2, Used: 1}, "bs-a", true, ""},
-		{"budget spent denies", &Grant{MaxApprovals: 2, Used: 2}, "bs-a", false, "budget spent"},
-		{"in scope allows", &Grant{Tickets: []string{"bs-a"}}, "bs-a", true, ""},
-		{"out of scope denies", &Grant{Tickets: []string{"bs-b"}}, "bs-a", false, "outside the grant"},
-		{"scoped but unnamed denies", &Grant{Tickets: []string{"bs-b"}}, "", false, "no ticket was named"},
+		{"no grant is default autonomy", nil, nil, "bs-a", true, ""},
+		{"unbounded allows anything", &Grant{}, nil, "bs-a", true, ""},
+		{"unexpired allows", &Grant{ExpiresAt: future}, nil, "bs-a", true, ""},
+		{"expired denies", &Grant{ExpiresAt: past}, nil, "bs-a", false, "grant expired"},
+		{"corrupt expiry denies", &Grant{ExpiresAt: "soon"}, nil, "bs-a", false, "unreadable"},
+		{"budget left allows", &Grant{MaxApprovals: 2, Used: 1}, nil, "bs-a", true, ""},
+		{"budget spent denies", &Grant{MaxApprovals: 2, Used: 2}, nil, "bs-a", false, "budget spent"},
+		{"in scope allows", &Grant{Tickets: []string{"bs-a"}}, nil, "bs-a", true, ""},
+		{"out of scope denies", &Grant{Tickets: []string{"bs-b"}}, nil, "bs-a", false, "outside the grant"},
+		{"scoped but unnamed denies", &Grant{Tickets: []string{"bs-b"}}, nil, "", false, "no ticket was named"},
+		{"hold escalates", nil, &Hold{HeldBy: "long", At: Now()}, "bs-a", false, "human hold"},
+		{"hold wins over grant", &Grant{}, &Hold{HeldBy: "long", At: Now()}, "bs-a", false, "human hold"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			ok, reason := Record{ID: "fm-a", Grant: c.grant}.Allows(c.ticket, now)
+			ok, reason := Record{ID: "fm-a", Grant: c.grant, Hold: c.hold}.Allows(c.ticket, now)
 			if ok != c.ok {
 				t.Fatalf("Allows = %v (%s), want %v", ok, reason, c.ok)
 			}
@@ -273,6 +276,38 @@ func TestAllows(t *testing.T) {
 				t.Errorf("reason %q does not mention %q", reason, c.reason)
 			}
 		})
+	}
+}
+
+func TestNoHoldSerializesToNothing(t *testing.T) {
+	sandbox(t)
+	if err := Save(Record{ID: "fm-a", Heartbeat: Now()}); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(Path("fm-a"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), "hold") {
+		t.Errorf("a record with no hold mentions hold:\n%s", b)
+	}
+}
+
+func TestHoldRoundTrips(t *testing.T) {
+	sandbox(t)
+	want := Record{ID: "fm-a", Heartbeat: Now(), Hold: &Hold{HeldBy: "long", At: Now()}}
+	if err := Save(want); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Load("fm-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Hold == nil {
+		t.Fatal("hold did not survive the round trip")
+	}
+	if got.Hold.HeldBy != "long" || got.Hold.At == "" {
+		t.Errorf("hold came back changed: %+v", got.Hold)
 	}
 }
 

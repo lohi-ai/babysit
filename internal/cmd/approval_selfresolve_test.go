@@ -5,7 +5,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/reallongnguyen/babysit/internal/foreman"
 	"github.com/reallongnguyen/babysit/internal/identity"
 	"github.com/reallongnguyen/babysit/internal/ticket"
 )
@@ -171,5 +173,48 @@ func TestParseRubricReportsEveryMissingLine(t *testing.T) {
 	_, missing := parseRubric("Coverage: AC1 maps to plan step 2 of the plan")
 	if len(missing) != 4 {
 		t.Fatalf("want 4 unfilled lines, got %v", missing)
+	}
+}
+
+// Gate order is the invariant AC3 rests on: floor before Allows. floorHits is
+// unit-tested alone, and Allows is unit-tested alone — neither would catch a
+// refactor that ran Allows first and let default autonomy approve a Stripe
+// change. This pins the ordered gate under the most permissive posture.
+func TestSelfResolveGateFloorBeatsDefaultAutonomy(t *testing.T) {
+	home := t.TempDir()
+	tickets := filepath.Join(home, "tickets", "bs-stripe")
+	if err := os.MkdirAll(tickets, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Floor keyword lives in design text the gate reads, not only the rubric.
+	if err := os.WriteFile(filepath.Join(tickets, "design.md"),
+		[]byte("Adds a Stripe checkout step to the pricing page.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Complete rubric with real evidence — if the gate fails, it must be the
+	// floor, not an unfilled line.
+	rubric := `
+Coverage: AC1 maps to plan step 2, the checkout CTA on the pricing page
+Host-page consistency: borrows the existing pricing page toolbar layout
+Reuse: uses the shared <Button> and <Panel> from the design kit
+Prototype inspected: read prototype.html; tokens match DESIGN.md spacing scale
+Scope: nothing beyond the pricing-page CTA request wording
+`
+	// Most permissive posture: nil Grant, no Hold — default autonomy.
+	rec := foreman.Record{ID: "fm-auto"}
+	if ok, reason := rec.Allows("bs-stripe", time.Now()); !ok {
+		t.Fatalf("precondition: default autonomy must Allow, got deny (%s)", reason)
+	}
+
+	st := ticket.New(identity.Env{ProjectHome: home, Ticket: "bs-stripe"})
+	env := identity.Env{ProjectHome: home, Ticket: "bs-stripe"}
+	code, filled, reason := selfResolveGate(st, env, rec, rubric)
+	if code != exitFloor {
+		t.Fatalf("selfResolveGate code = %d (%s, filled=%v), want exitFloor=%d — floor must beat default autonomy",
+			code, reason, filled, exitFloor)
+	}
+	if code == 0 {
+		t.Fatal("selfResolveGate returned 0 — a Stripe design would have been auto-approved")
 	}
 }

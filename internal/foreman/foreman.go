@@ -75,6 +75,11 @@ type Record struct {
 	// to nothing at all, because a record written before grants existed and a
 	// record whose grant was revoked have to be the same bytes on disk.
 	Grant *Grant `yaml:"grant,omitempty"`
+	// Hold is the human's opt-in to keep the design checkpoint. When set,
+	// the foreman escalates pending approvals instead of self-resolving.
+	// Pointer + omitempty so pre-hold records and released holds stay the
+	// same bytes on disk.
+	Hold *Hold `yaml:"hold,omitempty"`
 }
 
 // Grant is permission for a foreman to resolve its own design checkpoint —
@@ -99,6 +104,13 @@ type Grant struct {
 	Tickets []string `yaml:"tickets,omitempty"`
 }
 
+// Hold is the durable opt-in to human-held design checkpoints for one
+// foreman. Who and when are recorded for the same audit reason as Grant.
+type Hold struct {
+	HeldBy string `yaml:"held_by"`
+	At     string `yaml:"at"`
+}
+
 // Unbounded reports a grant with no expiry, no budget and no ticket scope.
 func (g *Grant) Unbounded() bool {
 	return g != nil && g.ExpiresAt == "" && g.MaxApprovals == 0 && len(g.Tickets) == 0
@@ -109,13 +121,20 @@ func (g *Grant) Unbounded() bool {
 // what the foreman prints when it escalates instead, so a human reading the
 // pane learns whether to extend the grant or answer the question themselves.
 //
+// Default is autonomous: no hold and no grant means allow. Hold is the only
+// path to human-held. A grant, when present, only narrows autonomy with its
+// bounds; revoking it returns to unbounded default, not to human-held.
+//
 // It does NOT consider the non-delegable floor. That check reads the design
 // artifacts rather than the record and lives with the caller, so that no
 // future grant field can be mistaken for a way to switch the floor off.
 func (r Record) Allows(ticket string, now time.Time) (bool, string) {
+	if r.Hold != nil {
+		return false, "human hold"
+	}
 	g := r.Grant
 	if g == nil {
-		return false, "no grant"
+		return true, ""
 	}
 	if g.ExpiresAt != "" {
 		exp, err := time.Parse(time.RFC3339, g.ExpiresAt)

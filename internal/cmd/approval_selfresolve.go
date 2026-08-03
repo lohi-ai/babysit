@@ -18,26 +18,28 @@ import (
 // This is the second resolver for the approval record bs-bfq34gq0 added: the
 // foreman writing the verdict the dashboard would otherwise wait for a human
 // to write. It is the same record, the same verdict shape and the same
-// approvalResolve call — what is new here is only the question of *whether the
-// foreman may make that call*, which is what a grant answers.
+// approvalResolve call — what varies is only *whether the foreman may make
+// that call*. Default posture is autonomous; a human hold (or a spent /
+// expired / out-of-scope grant bound) is what blocks it.
 //
 // The gate runs in a fixed order and the order is the design:
 //
-//	floor → rubric → grant → resolve
+//	floor → rubric → Allows → resolve
 //
-// Floor first because it is the one check no grant can satisfy, so a
-// money/auth/irreversible-data change gets the same answer whether the grant
-// is absent, narrow or unbounded. Rubric before grant because a grant changes
-// who resolves the checkpoint, never what evidence is required — checking the
-// grant first would let a broad grant hide a rubric that was never filled.
+// Floor first because it is the one check no posture can satisfy, so a
+// money/auth/irreversible-data change gets the same answer under default
+// autonomy, a narrow grant, or an unbounded grant. Rubric before Allows
+// because autonomy changes who resolves the checkpoint, never what evidence
+// is required — checking Allows first would let a broad posture hide a
+// rubric that was never filled.
 //
 // Each refusal has its own exit code because the foreman routes on them:
-// floor and grant refusals escalate to a human, an unfilled rubric is a
+// floor and Allows refusals escalate to a human, an unfilled rubric is a
 // feedback round to the worker (and BLOCKED once the rounds are spent).
 const (
-	exitFloor  = 3 // non-delegable path — escalate regardless of grant
+	exitFloor  = 3 // non-delegable path — escalate regardless of posture
 	exitRubric = 4 // rubric not filled with named evidence — feedback round
-	exitGrant  = 5 // no grant, or the grant does not cover this — escalate
+	exitGrant  = 5 // human hold, or a grant bound does not cover this — escalate
 )
 
 // floorPattern matches the paths a grant may never cover. It is biased to
@@ -235,36 +237,35 @@ func runApprovalSelfResolve(st *ticket.Store, env identity.Env, args []string) {
 		os.Exit(1)
 	}
 
-	// 1. Floor — before the grant, so --unbounded cannot reach it.
-	if hits := floorHits(designText(st, rubric)); len(hits) > 0 {
-		fmt.Fprintf(os.Stderr, "FLOOR: %s touches a non-delegable path (%s)\n", env.Ticket, strings.Join(hits, ", "))
-		fmt.Fprintln(os.Stderr, "money, auth and irreversible-data changes escalate to a human under any grant, including --unbounded.")
+	// Gate order is load-bearing (floor → rubric → Allows). selfResolveGate
+	// owns it so tests can assert the order without going through os.Exit.
+	code, filled, reason := selfResolveGate(st, env, rec, rubric)
+	switch code {
+	case exitFloor:
+		fmt.Fprintf(os.Stderr, "FLOOR: %s touches a non-delegable path (%s)\n", env.Ticket, reason)
+		fmt.Fprintln(os.Stderr, "money, auth and irreversible-data changes escalate to a human under any posture, including default autonomy and --unbounded grants.")
 		fmt.Println("escalate")
 		os.Exit(exitFloor)
-	}
-
-	// 2. Rubric — before the grant, so a broad grant cannot stand in for
-	//    evidence that was never gathered.
-	filled, missing := parseRubric(rubric)
-	if len(missing) > 0 {
+	case exitRubric:
 		fmt.Fprintf(os.Stderr, "RUBRIC: %s is not filled with named evidence — unfilled: %s\n",
-			env.Ticket, strings.Join(missing, ", "))
+			env.Ticket, reason)
 		fmt.Fprintln(os.Stderr, "a line you cannot fill is a feedback round, never a pass.")
 		fmt.Println("incomplete")
 		os.Exit(exitRubric)
-	}
-
-	// 3. Grant.
-	if ok, reason := rec.Allows(env.Ticket, time.Now()); !ok {
-		fmt.Fprintf(os.Stderr, "GRANT: %s may not resolve %s — %s\n", fmID, env.Ticket, reason)
+	case exitGrant:
+		fmt.Fprintf(os.Stderr, "POSTURE: %s may not resolve %s — %s\n", fmID, env.Ticket, reason)
 		fmt.Println("escalate")
 		os.Exit(exitGrant)
 	}
 
-	// 4. Resolve through the one mechanism, naming the grant so history.jsonl
-	//    can tell a foreman approval from a human one.
-	note := fmt.Sprintf("auto-approved by foreman %s under grant from %s (%s)",
-		fmID, rec.Grant.GrantedBy, rec.Grant.At)
+	// Resolve through the one mechanism, naming the foreman (and grant,
+	// when present) so history.jsonl can tell a foreman approval from a
+	// human one.
+	note := fmt.Sprintf("auto-approved by foreman %s (default autonomy)", fmID)
+	if rec.Grant != nil {
+		note = fmt.Sprintf("auto-approved by foreman %s under grant from %s (%s)",
+			fmID, rec.Grant.GrantedBy, rec.Grant.At)
+	}
 	state, missingRec, err := approvalResolve(st, "approve", note, fmID)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "approval self-resolve: %v\n", err)
@@ -274,35 +275,70 @@ func runApprovalSelfResolve(st *ticket.Store, env identity.Env, args []string) {
 		fmt.Fprintf(os.Stderr, "%s: no approval pending\n", env.Ticket)
 		os.Exit(2)
 	}
-	if err := foreman.Consume(fmID); err != nil {
-		// The verdict is already written; refusing to report it because the
-		// counter did not move would be worse than an over-spent budget.
-		fmt.Fprintf(os.Stderr, "approval self-resolve: warning — grant budget not updated (%v)\n", err)
+	if rec.Grant != nil {
+		if err := foreman.Consume(fmID); err != nil {
+			// The verdict is already written; refusing to report it because the
+			// counter did not move would be worse than an over-spent budget.
+			fmt.Fprintf(os.Stderr, "approval self-resolve: warning — grant budget not updated (%v)\n", err)
+		}
 	}
-	logGrantedApproval(env, fmID, rec, filled)
+	logSelfResolvedApproval(env, fmID, rec, filled)
 	fmt.Println(state)
 	os.Exit(0)
 }
 
-// logGrantedApproval writes the filled rubric to the decisions log. This is
-// the audit surface the requirement asks for: under a grant nobody watched the
-// decision happen, so the evidence it rested on has to be recoverable
-// afterwards.
-func logGrantedApproval(env identity.Env, fmID string, rec foreman.Record, filled map[string]string) {
-	state, _ := json.Marshal(map[string]interface{}{
-		"foreman":    fmID,
-		"granted_by": rec.Grant.GrantedBy,
-		"granted_at": rec.Grant.At,
-		"unbounded":  rec.Grant.Unbounded(),
-		"rubric":     filled,
-	})
+// selfResolveGate is the ordered gate for self-resolve:
+//
+//	floor → rubric → Allows
+//
+// Return is (exit code, filled rubric on success, reason string for refusals).
+// code 0 means the caller may resolve. Extracted so a test can pin the order
+// — specifically that default autonomy + a filled rubric still cannot clear
+// a floor hit — without depending on statement order in the CLI wrapper.
+func selfResolveGate(st *ticket.Store, env identity.Env, rec foreman.Record, rubric string) (code int, filled map[string]string, reason string) {
+	// 1. Floor — before Allows, so no posture (default autonomy or
+	//    --unbounded grant) can reach a non-delegable path.
+	if hits := floorHits(designText(st, rubric)); len(hits) > 0 {
+		return exitFloor, nil, strings.Join(hits, ", ")
+	}
+
+	// 2. Rubric — before Allows, so default autonomy cannot stand in for
+	//    evidence that was never gathered.
+	filled, missing := parseRubric(rubric)
+	if len(missing) > 0 {
+		return exitRubric, nil, strings.Join(missing, ", ")
+	}
+
+	// 3. Allows — human hold, or a grant bound that does not cover this.
+	if ok, why := rec.Allows(env.Ticket, time.Now()); !ok {
+		return exitGrant, nil, why
+	}
+	return 0, filled, ""
+}
+
+// logSelfResolvedApproval writes the filled rubric to the decisions log. This
+// is the audit surface for autonomous resolve: nobody watched the decision
+// happen, so the evidence it rested on has to be recoverable afterwards.
+func logSelfResolvedApproval(env identity.Env, fmID string, rec foreman.Record, filled map[string]string) {
+	stateMap := map[string]interface{}{
+		"foreman": fmID,
+		"rubric":  filled,
+	}
+	choice := "auto-approved (default autonomy)"
+	if rec.Grant != nil {
+		stateMap["granted_by"] = rec.Grant.GrantedBy
+		stateMap["granted_at"] = rec.Grant.At
+		stateMap["unbounded"] = rec.Grant.Unbounded()
+		choice = "auto-approved under grant"
+	}
+	state, _ := json.Marshal(stateMap)
 	line, _ := json.Marshal(map[string]string{
 		"ts":        learnings.Timestamp(),
 		"skill":     "foreman",
 		"tier":      "taste",
 		"type":      "design-checkpoint",
 		"ticket":    env.Ticket,
-		"choice":    "auto-approved under grant",
+		"choice":    choice,
 		"rationale": "rubric filled with named evidence; no non-delegable path",
 		"state":     string(state),
 	})
