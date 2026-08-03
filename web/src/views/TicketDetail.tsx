@@ -75,6 +75,13 @@ export function TicketDetail({ snapshot, ticketId }: { snapshot: Snapshot; ticke
 
   const [tab, setTab] = useState<Tab>(tabs[0]?.key ?? 'requirement');
   const activeTab = tabs.some(t => t.key === tab) ? tab : tabs[0]?.key ?? 'requirement';
+  // Write the fallback back, so a selection the page has already stopped
+  // honouring cannot come back to life. The page is not remounted between
+  // tickets and polls every few seconds: without this, following a Parent link
+  // to a ticket that has no Reviews yet leaves `tab` on 'reviews', and the
+  // panel jumps off whatever the human is reading the moment review-pr writes
+  // its file.
+  useEffect(() => { setTab(activeTab); }, [activeTab]);
 
   if (!detail) {
     return <ErrorBox title="Ticket not found" body={`No detail for ${ticketId} in this snapshot.`} />;
@@ -687,8 +694,23 @@ function StatusStrip({
 }) {
   const qa = detail.verdict_statuses['qa'] ?? 'none';
   const review = detail.verdict_statuses['review-pr'] ?? 'none';
-  const step = detail.checkpoint
-    ? `${detail.checkpoint.workflow} / ${detail.checkpoint.step}`
+  // The checkpoint's own status and note ride along with the step: `blocked`
+  // is the word that explains a ticket sitting still, and the note is where
+  // autopilot writes what it is blocked on. Neither is shown anywhere else on
+  // the page, so the cell carries both rather than dropping them.
+  const cp = detail.checkpoint;
+  const step = cp
+    ? (
+      <span title={cp.note || undefined}>
+        {cp.workflow} / {cp.step}
+        {cp.status && (
+          <>
+            {' · '}
+            <span style={{ color: 'var(--text-muted)' }}>{cp.status}</span>
+          </>
+        )}
+      </span>
+    )
     : detail.phase ?? '—';
 
   const cells: { label: string; value: ReactNode }[] = [
@@ -804,8 +826,10 @@ function OverflowTabs({
         }}
       >
         More
-        {/* A pending checkpoint hides in here; the dot is what says so. */}
-        {pending && !activeHere && (
+        {/* A pending checkpoint hides in here; the dot is what says so. It
+            goes out only once the decision itself is on screen — reading
+            Activity, which also lives in this menu, answers nothing. */}
+        {pending && active !== 'approval' && (
           <span
             aria-label="a decision is waiting"
             className="rounded-full"

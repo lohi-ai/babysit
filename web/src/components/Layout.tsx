@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Home as HomeIcon, Activity, HardHat, Inbox, Workflow, Zap, Calendar, BarChart3, ChevronDown, ChevronRight, MoreHorizontal } from 'lucide-react';
 import type { Meta, Snapshot } from '../lib/data';
 import { formatDate } from '../lib/format';
@@ -67,11 +67,16 @@ export function Layout({
       ? (activeRoute === '#/' || activeRoute === '' || activeRoute === '#')
       : activeRoute.startsWith(hash);
 
-  // Opened by hand, or forced open because the route the human is on lives in
-  // there — landing on Analytics with an empty nav would read as "you are
-  // nowhere".
-  const [moreOpen, setMoreOpen] = useState(false);
-  const moreShown = moreOpen || MORE_ITEMS.some(i => isActive(i.hash));
+  // Opened by hand, or opened for you on arrival because the route the human is
+  // on lives in there — landing on Analytics with an empty nav would read as
+  // "you are nowhere". Arrival *opens* it rather than pinning it open: a button
+  // that cannot close what it opened is a button that does nothing on six of
+  // the eight routes.
+  const insideMore = MORE_ITEMS.some(i => isActive(i.hash));
+  const [moreShown, setMoreShown] = useState(insideMore);
+  useEffect(() => {
+    if (insideMore) setMoreShown(true);
+  }, [insideMore]);
 
   const filter = useFilterOptional();
   const projectParam =
@@ -130,7 +135,7 @@ export function Layout({
 
             <button
               type="button"
-              onClick={() => setMoreOpen(o => !o)}
+              onClick={() => setMoreShown(o => !o)}
               aria-expanded={moreShown}
               aria-controls="nav-more"
               className="group flex items-center justify-between w-full px-3 py-1.5 mt-0.5 text-sm"
