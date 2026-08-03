@@ -237,36 +237,30 @@ func runApprovalSelfResolve(st *ticket.Store, env identity.Env, args []string) {
 		os.Exit(1)
 	}
 
-	// 1. Floor — before Allows, so no posture (default autonomy or
-	//    --unbounded grant) can reach a non-delegable path.
-	if hits := floorHits(designText(st, rubric)); len(hits) > 0 {
-		fmt.Fprintf(os.Stderr, "FLOOR: %s touches a non-delegable path (%s)\n", env.Ticket, strings.Join(hits, ", "))
+	// Gate order is load-bearing (floor → rubric → Allows). selfResolveGate
+	// owns it so tests can assert the order without going through os.Exit.
+	code, filled, reason := selfResolveGate(st, env, rec, rubric)
+	switch code {
+	case exitFloor:
+		fmt.Fprintf(os.Stderr, "FLOOR: %s touches a non-delegable path (%s)\n", env.Ticket, reason)
 		fmt.Fprintln(os.Stderr, "money, auth and irreversible-data changes escalate to a human under any posture, including default autonomy and --unbounded grants.")
 		fmt.Println("escalate")
 		os.Exit(exitFloor)
-	}
-
-	// 2. Rubric — before Allows, so default autonomy cannot stand in for
-	//    evidence that was never gathered.
-	filled, missing := parseRubric(rubric)
-	if len(missing) > 0 {
+	case exitRubric:
 		fmt.Fprintf(os.Stderr, "RUBRIC: %s is not filled with named evidence — unfilled: %s\n",
-			env.Ticket, strings.Join(missing, ", "))
+			env.Ticket, reason)
 		fmt.Fprintln(os.Stderr, "a line you cannot fill is a feedback round, never a pass.")
 		fmt.Println("incomplete")
 		os.Exit(exitRubric)
-	}
-
-	// 3. Allows — human hold, or a grant bound that does not cover this.
-	if ok, reason := rec.Allows(env.Ticket, time.Now()); !ok {
+	case exitGrant:
 		fmt.Fprintf(os.Stderr, "POSTURE: %s may not resolve %s — %s\n", fmID, env.Ticket, reason)
 		fmt.Println("escalate")
 		os.Exit(exitGrant)
 	}
 
-	// 4. Resolve through the one mechanism, naming the foreman (and grant,
-	//    when present) so history.jsonl can tell a foreman approval from a
-	//    human one.
+	// Resolve through the one mechanism, naming the foreman (and grant,
+	// when present) so history.jsonl can tell a foreman approval from a
+	// human one.
 	note := fmt.Sprintf("auto-approved by foreman %s (default autonomy)", fmID)
 	if rec.Grant != nil {
 		note = fmt.Sprintf("auto-approved by foreman %s under grant from %s (%s)",
@@ -291,6 +285,35 @@ func runApprovalSelfResolve(st *ticket.Store, env identity.Env, args []string) {
 	logSelfResolvedApproval(env, fmID, rec, filled)
 	fmt.Println(state)
 	os.Exit(0)
+}
+
+// selfResolveGate is the ordered gate for self-resolve:
+//
+//	floor → rubric → Allows
+//
+// Return is (exit code, filled rubric on success, reason string for refusals).
+// code 0 means the caller may resolve. Extracted so a test can pin the order
+// — specifically that default autonomy + a filled rubric still cannot clear
+// a floor hit — without depending on statement order in the CLI wrapper.
+func selfResolveGate(st *ticket.Store, env identity.Env, rec foreman.Record, rubric string) (code int, filled map[string]string, reason string) {
+	// 1. Floor — before Allows, so no posture (default autonomy or
+	//    --unbounded grant) can reach a non-delegable path.
+	if hits := floorHits(designText(st, rubric)); len(hits) > 0 {
+		return exitFloor, nil, strings.Join(hits, ", ")
+	}
+
+	// 2. Rubric — before Allows, so default autonomy cannot stand in for
+	//    evidence that was never gathered.
+	filled, missing := parseRubric(rubric)
+	if len(missing) > 0 {
+		return exitRubric, nil, strings.Join(missing, ", ")
+	}
+
+	// 3. Allows — human hold, or a grant bound that does not cover this.
+	if ok, why := rec.Allows(env.Ticket, time.Now()); !ok {
+		return exitGrant, nil, why
+	}
+	return 0, filled, ""
 }
 
 // logSelfResolvedApproval writes the filled rubric to the decisions log. This
