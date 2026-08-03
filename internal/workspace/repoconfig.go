@@ -38,7 +38,7 @@ type RepoConfig struct {
 //
 // Note the basename collides with the global ~/.babysit/config.yaml that
 // `bbs config` reads. The two are kept apart at the CLI, not here: `bbs config`
-// stays global-only and this file is reached through `bbs workspace config`.
+// stays global-only and this file is reached through `bbs config repo`.
 func RepoConfigPath(toplevel string) string {
 	return filepath.Join(toplevel, ".babysit", "config.yaml")
 }
@@ -92,7 +92,7 @@ func (c RepoConfig) Stale(current string) bool {
 
 // SaveRepoConfig writes a repo's config, creating .babysit/ if needed. The
 // write is whole-file: this file is small, committed, and hand-editable, and
-// the writer (setup-project, or `bbs workspace config set`) owns it.
+// the writer (setup-project, or `bbs config repo set`) owns it.
 func SaveRepoConfig(toplevel string, c RepoConfig) error {
 	if err := c.Validate(); err != nil {
 		return err

@@ -15,10 +15,18 @@ const slugUsage = "usage: bbs-slug [env|home|ticket-home|slug|branch|ticket]"
 // newSlugCmd ports bin/bbs-slug as `bbs slug`, matching its subcommands,
 // output, and exit codes exactly. Flag parsing is disabled so an unknown
 // argument routes to the bash default case (exit 2) instead of cobra's help.
+//
+// Hidden: the documented spelling is `bbs ticket env`, which emits these same
+// KEY=VALUE lines. This stays reachable for two callers that cannot be updated
+// in lockstep — the frozen bash oracle in tests/fixtures/bbs-ticket.reference,
+// which bootstraps identity by shelling out to `bbs-slug`, and skill packs
+// already installed at an older plugin version, whose preamble evals
+// `bbs slug env` against a brew-updated binary.
 func newSlugCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:                "slug [env|home|ticket-home|slug|branch|ticket]",
 		Short:              "derive slug / branch / ticket from git remote + branch",
+		Hidden:             true,
 		DisableFlagParsing: true,
 		RunE: func(_ *cobra.Command, args []string) error {
 			// Bash reads only $1, defaulting to "env"; extra args are ignored.

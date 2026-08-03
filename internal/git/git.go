@@ -9,23 +9,36 @@ import (
 	"strings"
 )
 
+// runIn is `git <args>` executed in dir, or in the process cwd when dir is "".
+// Every helper funnels through it so the dir-scoped and cwd-scoped forms cannot
+// drift apart.
+func runIn(dir string, args ...string) (string, bool) {
+	c := exec.Command("git", args...)
+	c.Dir = dir
+	out, err := c.Output()
+	if err != nil {
+		return "", false
+	}
+	return strings.TrimRight(string(out), "\n"), true
+}
+
 // RemoteURL returns `git remote get-url <name>`, or "" if git fails (no repo,
 // no such remote). Trailing newline is stripped to match `$(...)` capture.
-func RemoteURL(name string) string {
-	out, err := exec.Command("git", "remote", "get-url", name).Output()
-	if err != nil {
-		return ""
-	}
-	return strings.TrimRight(string(out), "\n")
+func RemoteURL(name string) string { return RemoteURLIn("", name) }
+
+// RemoteURLIn is RemoteURL scoped to dir.
+func RemoteURLIn(dir, name string) string {
+	out, _ := runIn(dir, "remote", "get-url", name)
+	return out
 }
 
 // CurrentBranch returns `git rev-parse --abbrev-ref HEAD`, or "" outside a repo.
-func CurrentBranch() string {
-	out, err := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD").Output()
-	if err != nil {
-		return ""
-	}
-	return strings.TrimRight(string(out), "\n")
+func CurrentBranch() string { return CurrentBranchIn("") }
+
+// CurrentBranchIn is CurrentBranch scoped to dir.
+func CurrentBranchIn(dir string) string {
+	out, _ := runIn(dir, "rev-parse", "--abbrev-ref", "HEAD")
+	return out
 }
 
 // PrimaryWorktree returns the first entry of `git worktree list --porcelain`,
@@ -34,12 +47,15 @@ func CurrentBranch() string {
 // primary checkout. The bool is false when git itself failed (not a repo) —
 // bin/bbs-slug crashes here under `set -euo pipefail`, so callers replicate
 // that hard exit rather than falling back.
-func PrimaryWorktree() (string, bool) {
-	out, err := exec.Command("git", "worktree", "list", "--porcelain").Output()
-	if err != nil {
+func PrimaryWorktree() (string, bool) { return PrimaryWorktreeIn("") }
+
+// PrimaryWorktreeIn is PrimaryWorktree scoped to dir.
+func PrimaryWorktreeIn(dir string) (string, bool) {
+	out, ok := runIn(dir, "worktree", "list", "--porcelain")
+	if !ok {
 		return "", false
 	}
-	for _, ln := range strings.Split(string(out), "\n") {
+	for _, ln := range strings.Split(out, "\n") {
 		if v, ok := strings.CutPrefix(ln, "worktree "); ok {
 			return v, true
 		}

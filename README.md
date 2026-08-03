@@ -162,13 +162,11 @@ Recommended, not required to start: **[cmux](https://cmux.com)**, a terminal bui
 
 #### What the `bbs` CLI is
 
-One Go binary, every subcommand reached as `bbs <sub>` — `config`, `env`,
-`slug`, `ticket`, `update-check`, `upgrade`, `learnings-log`,
-`learnings-search`, `qa-config`, `telemetry-log`, `codex-competitive`,
-`analytics-cron`, `secrets`, `design`, `dashboard`, `autopilot`, `foreman`,
-`workspace`. No production bash remains. The formula also drops two argv0
-aliases, `bbs-config` and `bbs-env` — only those two, which is why skills always
-call the space form.
+One Go binary, every subcommand reached as `bbs <sub>` — `ticket`, `config`,
+`secrets`, `upgrade`, `design`, `dashboard`, `autopilot`, `foreman`. No
+production bash remains.
+The formula also drops two argv0 aliases, `bbs-config` and `bbs-env` — only
+those two, which is why skills always call the space form.
 
 It is the half of babysit that the skills call on your behalf: ticket identity,
 verdicts, git-flow moves, telemetry. It does **not** contain the skill pack —
@@ -344,11 +342,11 @@ Full skill table (with autonomous-ready / interactive-only classification) in [`
 
 ## Companion CLI
 
-Everything is one binary reached as `bbs <sub>` — `bbs autopilot` (the runner), `bbs slug` (branch-as-anchor resolver), plus helpers for env, config, db snapshots, and upgrade checks. `brew install lohi-ai/babysit/bbs` puts it on your `PATH`; from a checkout, `setup-skills` builds it and symlinks `~/.local/bin/bbs` instead, plus the `bbs-*` argv0 aliases into `~/.claude/` for legacy callers. Full table and purposes in [`docs/companion-cli.md`](docs/companion-cli.md). Run `bbs <sub> --help` for usage on any of them.
+Everything is one binary reached as `bbs <sub>` — `bbs autopilot` (the runner), `bbs ticket env` (branch-as-anchor resolver), plus helpers for env, config, db snapshots, and upgrade checks. `brew install lohi-ai/babysit/bbs` puts it on your `PATH`; from a checkout, `setup-skills` builds it and symlinks `~/.local/bin/bbs` instead, plus the `bbs-*` argv0 aliases into `~/.claude/` for legacy callers. Full table and purposes in [`docs/companion-cli.md`](docs/companion-cli.md). Run `bbs <sub> --help` for usage on any of them.
 
 ## Operations
 
-Day-2 config (`bbs config`), telemetry (JSONL to `~/.babysit/analytics/`, local-only by default), and upgrade handling (`bbs update-check` + `bbs upgrade`) are covered in [`docs/operations.md`](docs/operations.md).
+Day-2 config (`bbs config`), telemetry (JSONL to `~/.babysit/analytics/`, local-only by default), and upgrade handling (`bbs upgrade check` + `bbs upgrade`) are covered in [`docs/operations.md`](docs/operations.md).
 
 **Upgrade.** One command, then restart Claude Code — plugin changes only apply on restart:
 

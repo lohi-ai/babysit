@@ -41,10 +41,10 @@ func resolveVersion() string {
 // the bash parsed itself, which also means cobra's own --help handling never
 // runs: a leading -h/--help falls through to the action as junk. For the
 // commands wrapped here that is not merely unhelpful but destructive — upgrade
-// pulls and relinks, analytics-cron dispatches a review, telemetry-log and
-// update-check write state. Intercepting the one flag whose entire purpose is
-// "tell me what this does without doing it" is a deliberate divergence from the
-// bash originals; the rest of the argument contract is untouched.
+// pulls and relinks, update-check writes state. Intercepting the one flag whose
+// entire purpose is "tell me what this does without doing it" is a deliberate
+// divergence from the bash originals; the rest of the argument contract is
+// untouched.
 //
 // Commands that already print their own usage for an unrecognized flag (config,
 // env, slug, ticket, design, …) are left alone.
@@ -71,11 +71,9 @@ func NewRootCmd() *cobra.Command {
 	root.SetVersionTemplate("bbs {{.Version}}\n")
 	root.AddCommand(
 		newConfigCmd(), newEnvCmd(), newSlugCmd(), newTicketCmd(), newQAConfigCmd(),
-		newCodexCompetitiveCmd(), newSecretsCmd(), newDesignCmd(), newDashboardCmd(),
+		newSecretsCmd(), newDesignCmd(), newDashboardCmd(),
 		newForemanCmd(), newWorkspaceCmd(),
 		guardHelp(newUpdateCheckCmd()), guardHelp(newUpgradeCmd()),
-		guardHelp(newLearningsLogCmd()), guardHelp(newLearningsSearchCmd()),
-		guardHelp(newTelemetryLogCmd()), guardHelp(newAnalyticsCronCmd()),
 		guardHelp(newAutopilotCmd()),
 	)
 	return root

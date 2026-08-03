@@ -12,6 +12,7 @@ import (
 
 	gogit "github.com/go-git/go-git/v5"
 	"github.com/reallongnguyen/babysit/internal/identity"
+	"github.com/reallongnguyen/babysit/internal/slug"
 	"github.com/reallongnguyen/babysit/internal/ticket"
 	"github.com/reallongnguyen/babysit/internal/workspace"
 )
@@ -320,20 +321,13 @@ func relatedRepoPathVia(r *workspace.Resolver, role, toplevel string) (string, b
 	return "", false, nil
 }
 
-// slugIn runs bbs-slug in dir and returns its SLUG.
+// slugIn derives the project slug of the repo at dir.
 func slugIn(dir string) string {
-	c := exec.Command(identity.SlugBin(), "env")
-	c.Dir = dir
-	out, err := c.Output()
+	info, err := slug.ResolveIn(dir)
 	if err != nil {
 		return ""
 	}
-	for _, ln := range strings.Split(string(out), "\n") {
-		if v, ok := strings.CutPrefix(ln, "SLUG="); ok {
-			return v
-		}
-	}
-	return ""
+	return info.Slug
 }
 
 func leaseField(dir, key string) string {

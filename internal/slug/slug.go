@@ -47,7 +47,12 @@ var (
 // cases: ErrNoRepo (git cannot resolve a worktree) and the env-conflict abort
 // (BABYSIT_TICKET vs BBS_TICKET disagree). Every other path — no remote, no
 // branch, no ticket — yields a populated Info, matching the bash script.
-func Resolve() (*Info, error) {
+func Resolve() (*Info, error) { return ResolveIn("") }
+
+// ResolveIn is Resolve scoped to dir — the derivation for a repo other than the
+// one the process is standing in. dir == "" means the process cwd, which is what
+// Resolve passes.
+func ResolveIn(dir string) (*Info, error) {
 	home := os.Getenv("HOME")
 	cacheDir := filepath.Join(home, ".babysit", "slug-cache")
 
@@ -55,12 +60,12 @@ func Resolve() (*Info, error) {
 	// distinguishes two outcomes here and so must we: git failing means we are
 	// outside a repo and its `set -e` aborts the whole script (ErrNoRepo);
 	// git succeeding with no worktree line falls back to the cwd.
-	projectDir, ok := git.PrimaryWorktree()
+	projectDir, ok := git.PrimaryWorktreeIn(dir)
 	if !ok {
 		return nil, ErrNoRepo
 	}
 	if projectDir == "" {
-		projectDir, _ = os.Getwd()
+		projectDir = cwdOr(dir)
 	}
 	cacheKey := strings.ReplaceAll(projectDir, "/", "_")
 	cacheFile := filepath.Join(cacheDir, cacheKey)
@@ -73,7 +78,7 @@ func Resolve() (*Info, error) {
 
 	// 2. Compute from the git remote.
 	if slug == "" {
-		if remote := git.RemoteURL("origin"); remote != "" {
+		if remote := git.RemoteURLIn(dir, "origin"); remote != "" {
 			raw := reGit.ReplaceAllString(remote, "$1")
 			raw = reNoGit.ReplaceAllString(raw, "$1")
 			raw = strings.ReplaceAll(raw, "/", "-")
@@ -83,8 +88,7 @@ func Resolve() (*Info, error) {
 
 	// 3. Fallback to the cwd basename when there is no remote.
 	if slug == "" {
-		wd, _ := os.Getwd()
-		slug = keep(filepath.Base(wd), isSlugChar)
+		slug = keep(filepath.Base(cwdOr(dir)), isSlugChar)
 	}
 
 	// 4. Cache the slug atomically, failing silently.
@@ -92,7 +96,7 @@ func Resolve() (*Info, error) {
 		writeCache(cacheDir, cacheFile, slug)
 	}
 
-	rawBranch := git.CurrentBranch()
+	rawBranch := git.CurrentBranchIn(dir)
 	branch := keep(rawBranch, isBranchChar)
 	if branch == "" {
 		branch = "unknown"
@@ -120,6 +124,15 @@ func Resolve() (*Info, error) {
 	}
 
 	return &Info{Slug: slug, Branch: branch, Ticket: ticket, ProjectHome: projectHome}, nil
+}
+
+// cwdOr is dir, or the process working directory when dir is "".
+func cwdOr(dir string) string {
+	if dir != "" {
+		return dir
+	}
+	wd, _ := os.Getwd()
+	return wd
 }
 
 // writeCache mirrors the bash atomic write: mkdir -p, mktemp in the cache dir,

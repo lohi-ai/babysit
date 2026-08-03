@@ -100,7 +100,7 @@ bbs ticket --help >/dev/null 2>&1 || echo \
 
 # Auto-update check — cache-friendly, silent when up-to-date.
 # Prints UPGRADE_AVAILABLE <old> <new> or JUST_UPGRADED <old> <new> to stderr.
-_UPD=$(bbs update-check 2>/dev/null || true)
+_UPD=$(bbs upgrade check 2>/dev/null || true)
 [ -n "$_UPD" ] && echo "$_UPD" >&2 || true
 
 # Session tracking — count concurrent babysit sessions, prune stale (>120 min).
@@ -154,7 +154,7 @@ _INVOKER="${AGENT_ROLE:-${GT_ROLE:-developer}}"
 # Project scope — slug + ticket re-derived from git remote + branch on every
 # preamble, never from conversation memory. Empty TICKET = branch encodes
 # none (e.g. main) — the skill decides whether that's OK.
-eval "$(bbs slug env 2>/dev/null || true)"
+eval "$(bbs ticket env 2>/dev/null || true)"
 SLUG="${SLUG:-unknown}"
 TICKET="${TICKET:-}"
 BABYSIT_PROJECT_HOME="${BABYSIT_PROJECT_HOME:-$HOME/.babysit/projects/$SLUG}"

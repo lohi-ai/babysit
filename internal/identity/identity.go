@@ -1,15 +1,20 @@
 // Package identity resolves babysit ticket identity the way bin/bbs-ticket.bash
-// does: by shelling out to bbs-slug — the canonical resolver bin, deliberately
-// not reimplemented here — and applying the env-first ladder on top of its
-// output. Keeping bbs-slug as the single source means the Go and bash bins
-// cannot disagree about a slug (they share its ~/.babysit/slug-cache).
+// did: derive the project slug, then apply the env-first ladder on top of it.
+//
+// The bash shelled out to bbs-slug to keep one resolver; this calls
+// internal/slug in-process for the same reason. The distinction matters: as a
+// subprocess it depended on a bbs-slug argv0 alias existing on PATH, and a brew
+// install ships only bbs-config and bbs-env. A missing alias is not an error
+// here — Resolve() swallows it — so the whole ladder silently degraded to
+// SLUG=unknown, pointing every ticket path at ~/.babysit/projects/unknown.
+// In-process, the resolver is always reachable.
 package identity
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strings"
+
+	"github.com/reallongnguyen/babysit/internal/slug"
 )
 
 // Env is the identity context every ticket subcommand runs against.
@@ -17,58 +22,32 @@ type Env struct {
 	Slug          string
 	Branch        string
 	Ticket        string // BABYSIT_TICKET > BBS_TICKET > DerivedTicket
-	DerivedTicket string // bbs-slug's branch-regex derivation
+	DerivedTicket string // slug's branch-regex derivation
 	ProjectHome   string
 }
 
-// SlugBin mirrors bin/bbs-ticket.bash:243-248 — prefer the bbs-slug sitting next
-// to this binary, then PATH, then the installed copy under ~/.claude.
-func SlugBin() string {
-	if exe, err := os.Executable(); err == nil {
-		if real, err := filepath.EvalSymlinks(exe); err == nil {
-			exe = real
-		}
-		if cand := filepath.Join(filepath.Dir(exe), "bbs-slug"); isExec(cand) {
-			return cand
-		}
-	}
-	if p, err := exec.LookPath("bbs-slug"); err == nil {
-		return p
-	}
-	return filepath.Join(os.Getenv("HOME"), ".claude", "bbs-slug")
-}
-
-func isExec(p string) bool {
-	fi, err := os.Stat(p)
-	return err == nil && !fi.IsDir() && fi.Mode()&0o111 != 0
-}
-
-// Resolve runs `bbs-slug env` and applies the ladder. Like the bash
-// `eval "$(bbs-slug env 2>/dev/null || true)"`, a failing bbs-slug (its own
-// env-conflict exit, or a missing bin) is not fatal — the fields stay unset and
-// the documented "unknown" defaults take over.
+// Resolve derives the slug and applies the ladder. Like the bash
+// `eval "$(bbs-slug env 2>/dev/null || true)"`, a failed derivation (the
+// env-conflict exit, or running outside a git repo) is not fatal — the fields
+// stay unset and the documented "unknown" defaults take over.
 func Resolve() Env {
-	kv := map[string]string{}
-	if out, err := exec.Command(SlugBin(), "env").Output(); err == nil {
-		for _, ln := range strings.Split(string(out), "\n") {
-			if k, v, ok := strings.Cut(ln, "="); ok {
-				kv[k] = v
-			}
-		}
+	info, err := slug.Resolve()
+	if err != nil {
+		info = &slug.Info{}
 	}
 
 	e := Env{
-		Slug:          orElse(kv["SLUG"], "unknown"),
-		Branch:        orElse(kv["BRANCH"], "unknown"),
-		DerivedTicket: kv["TICKET"],
+		Slug:          orElse(info.Slug, "unknown"),
+		Branch:        orElse(info.Branch, "unknown"),
+		DerivedTicket: info.Ticket,
 	}
 	e.Ticket = firstNonEmpty(os.Getenv("BABYSIT_TICKET"), os.Getenv("BBS_TICKET"), e.DerivedTicket)
 
-	// bbs-slug always echoes BABYSIT_PROJECT_HOME, and the bash `eval` imports it
-	// into the shell before the fallback expansion runs — so its value wins
-	// whenever bbs-slug ran at all. The BABYSIT_HOME fallback only applies when
-	// it didn't.
-	e.ProjectHome = kv["BABYSIT_PROJECT_HOME"]
+	// slug.Resolve always computes a project home, and the bash `eval` imported
+	// it into the shell before the fallback expansion ran — so its value wins
+	// whenever the derivation succeeded. The BABYSIT_HOME fallback only applies
+	// when it didn't.
+	e.ProjectHome = info.ProjectHome
 	if e.ProjectHome == "" {
 		e.ProjectHome = filepath.Join(BabysitHome(), "projects", e.Slug)
 	}

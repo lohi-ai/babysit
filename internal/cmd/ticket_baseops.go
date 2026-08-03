@@ -51,42 +51,6 @@ func gitPrimary() string {
 	return ""
 }
 
-// autopilotBin resolves the sibling bbs-autopilot the bash base-ops shell out to
-// for base-branch (SCRIPT_DIR/bbs-autopilot → PATH → ~/.claude/bbs-autopilot).
-func autopilotBin() string {
-	if exe, err := os.Executable(); err == nil {
-		if real, e := filepath.EvalSymlinks(exe); e == nil {
-			exe = real
-		}
-		cand := filepath.Join(filepath.Dir(exe), "bbs-autopilot")
-		if isExecutable(cand) {
-			return cand
-		}
-	}
-	if p, err := exec.LookPath("bbs-autopilot"); err == nil {
-		return p
-	}
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".claude", "bbs-autopilot")
-}
-
-// baseBranchIn resolves the base branch by shelling out to bbs-autopilot from
-// dir (empty = cwd), falling back to "main" — exactly as the bash does.
-func baseBranchIn(dir string) string {
-	cmd := exec.Command(autopilotBin(), "base-branch")
-	if dir != "" {
-		cmd.Dir = dir
-	}
-	out, err := cmd.Output()
-	if err != nil {
-		return "main"
-	}
-	if b := strings.TrimRight(string(out), "\n"); b != "" {
-		return b
-	}
-	return "main"
-}
-
 // lockAcquire / lockRelease mirror bin/lib/lock.sh: a spin-mkdir mutex at 100ms
 // intervals. maxTries=300 ≈ 30s, matching bbs_lock_acquire "$LOCK" 300.
 func lockAcquire(lockdir string, maxTries int) bool {
@@ -833,7 +797,7 @@ func runServe(args []string) {
 			if !ok {
 				fmt.Fprintln(os.Stderr, "STATUS: NEEDS_CONTEXT")
 				fmt.Fprintf(os.Stderr, "REASON: sibling %s/%s (role '%s') has no resolvable local path — no entry with that role in %s, and RELATED_*_REPO unset in %s/.babysit/.env.\n", s.Repo, s.Ticket, s.Role, siblingSourceName(wsr), primary)
-				fmt.Fprintf(os.Stderr, "RECOMMENDATION: bbs workspace add-repo --role %s (preferred), or set RELATED_*_REPO (see setup-project § Related Repos), then re-run serve; this repo is already serving %s.\n", s.Role, list)
+				fmt.Fprintf(os.Stderr, "RECOMMENDATION: bbs config workspace add-repo --role %s (preferred), or set RELATED_*_REPO (see setup-project § Related Repos), then re-run serve; this repo is already serving %s.\n", s.Role, list)
 				svRC = 2
 				continue
 			}

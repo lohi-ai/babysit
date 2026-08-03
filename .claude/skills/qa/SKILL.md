@@ -21,8 +21,8 @@ Exercise the application like a user and leave reproducible evidence.
    from `.babysit/qa.yaml`:
    ```bash
    eval "$(bbs secrets load)"                         # exports .babysit/.env values
-   ENV=$(bbs qa-config default-env); ENV=${ENV:-local}
-   eval "$(bbs qa-config probe --env "$ENV" 2>/dev/null)"  # QA_ENV_URL, QA_ENV_{USERNAME,PASSWORD}_ENV, …
+   ENV=$(bbs secrets qa default-env); ENV=${ENV:-local}
+   eval "$(bbs secrets qa probe --env "$ENV" 2>/dev/null)"  # QA_ENV_URL, QA_ENV_{USERNAME,PASSWORD}_ENV, …
    QA_USER=$(printenv "${QA_ENV_USERNAME_ENV:-QA_USER}" 2>/dev/null || true)  # standard: QA_USER / QA_PASS
    QA_PASS=$(printenv "${QA_ENV_PASSWORD_ENV:-QA_PASS}" 2>/dev/null || true)
    ```

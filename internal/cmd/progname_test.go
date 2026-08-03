@@ -22,7 +22,7 @@ func TestRetarget(t *testing.T) {
 		os.Args[0] = "/usr/local/bin/bbs"
 		cases := []struct{ in, want string }{
 			{"usage: bbs-ticket path <kind>", "usage: bbs ticket path <kind>"},
-			{"bbs-env resolve: requires a varname", "bbs env resolve: requires a varname"},
+			{"bbs-env resolve: requires a varname", "bbs secrets resolve: requires a varname"},
 			// Adjacent matches share a boundary char — the fixed-point loop
 			// exists so the second one is not skipped.
 			{"run bbs-ticket reset-base; bbs-ticket set-status done", "run bbs ticket reset-base; bbs ticket set-status done"},
@@ -31,10 +31,10 @@ func TestRetarget(t *testing.T) {
 			{"session bbs-serving is live", "session bbs-serving is live"},
 			{"lock bbs-merge-base", "lock bbs-merge-base"},
 			// A filesystem path is not an invocation.
-			{"run bin/bbs-codex-competitive", "run bin/bbs-codex-competitive"},
-			// Longest-alternative-first: qa-config must not degrade to config.
-			{"bbs-qa-config probe", "bbs qa-config probe"},
-			{"bbs-learnings-search --limit 5", "bbs learnings-search --limit 5"},
+			{"run bin/bbs-dashboard", "run bin/bbs-dashboard"},
+			// Moved surfaces name where they live now, not just the space form.
+			{"bbs-qa-config probe", "bbs secrets qa probe"},
+			{"bbs-env resolve --prefix QA_URL", "bbs secrets resolve --prefix QA_URL"},
 			// Format verbs must survive untouched.
 			{"bbs-ticket path: %s: unknown kind\n", "bbs ticket path: %s: unknown kind\n"},
 		}

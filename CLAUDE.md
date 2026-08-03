@@ -226,14 +226,14 @@ Rules of thumb when wiring a workflow:
 babysit/
 ├── bin/
 │   ├── bbs            # the multicall binary (gitignored; built by setup-skills from cmd/bbs)
-│   │                  #   bbs env       env resolve / is-set / list-prefix / prompt (auto-loads .env.base)
-│   │                  #   bbs config    read/write ~/.babysit/config.yaml
-│   │                  #   bbs slug      derive slug / ticket / branch from git remote + branch
+│   │                  #   bbs secrets   .babysit/.env loader + env resolve/is-set/prompt + qa.yaml
+│   │                  #   bbs config    ~/.babysit/config.yaml, + workspace (multi-repo registry)
+│   │                  #                 and repo (<repo>/.babysit/config.yaml)
 │   │                  #   bbs autopilot checkpoint + timeline runner behind the autopilot skill
-│   │                  #   bbs ticket    ticket identity (the big subcommand)
-│   │                  #   bbs workspace multi-repo registry + <repo>/.babysit/config.yaml
+│   │                  #   bbs ticket    ticket identity (the big subcommand); `ticket env` derives
+│   │                  #                 slug / branch / ticket from git remote + branch
 │   │                  #   bbs design    query DESIGN.md tokens / suggest products / list components / ux-check
-│   │                  #   bbs update-check, upgrade, telemetry-log, codex-competitive, …
+│   │                  #   bbs upgrade (+ upgrade check), dashboard, foreman, …
 │   ├── bbs-*          # argv0 symlinks to bbs, kept for legacy callers — skills call `bbs <sub>`
 │   ├── hooks/         # plugin hook executables (pre-tool-gate, verify-skill-output, clean-handoff-check)
 │   └── setup-skills   # Builds bbs, links it into ~/.local/bin/ and the bbs-* aliases into ~/.claude/
@@ -251,7 +251,7 @@ Skills are namespaced with the `bbs:` prefix when installed globally (e.g. `bbs:
 
 "Workspace" names three different things here: a **cmux workspace** (a visible
 worker's panes), the **worktree pool** (`.babysit/worktrees/<ticket>_<slug>`),
-and the **registry workspace** (`bbs workspace` — a named list of repos that
+and the **registry workspace** (`bbs config workspace` — a named list of repos that
 form one product). When you write output or docs, meaning 3 always carries its
 name ("workspace acme"), meaning 1 always carries the `cmux` prefix, and
 meaning 2 is called a worktree. See [docs/workspaces.md](docs/workspaces.md)

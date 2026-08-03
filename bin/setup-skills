@@ -234,7 +234,7 @@ link_bin() {
   if [ "$track" = 1 ]; then INSTALLED_BINS+=("$name"); fi
 }
 
-for BIN in bbs bbs-config bbs-dashboard bbs-design bbs-env bbs-learnings-log bbs-learnings-search bbs-autopilot bbs-slug bbs-telemetry-log bbs-ticket bbs-qa-config bbs-secrets bbs-update-check bbs-upgrade bbs-codex-competitive bbs-analytics-cron; do
+for BIN in bbs bbs-config bbs-dashboard bbs-design bbs-env bbs-autopilot bbs-slug bbs-ticket bbs-qa-config bbs-secrets bbs-update-check bbs-upgrade; do
   link_bin "$BIN"
 done
 

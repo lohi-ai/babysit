@@ -121,7 +121,7 @@ done
 #    Excluded outright: CHANGELOG.md and blogs/ (dated records — rewriting them
 #    would falsify history) and docs/bin-decomposition-spike.md (a bash-era
 #    spike whose subject *is* the standalone scripts).
-ALIAS_RE='(^|[^/[:alnum:]_-])bbs-(ticket|design|secrets|qa-config|autopilot|config|slug|env|upgrade|update-check|telemetry-log|learnings-log|learnings-search|dashboard|analytics-cron|codex-competitive)([^[:alnum:]_-]|$)'
+ALIAS_RE='(^|[^/[:alnum:]_-])bbs-(ticket|design|secrets|qa-config|autopilot|config|slug|env|upgrade|update-check|dashboard)([^[:alnum:]_-]|$)'
 STRAY="$(grep -rnoE "$ALIAS_RE" \
     "$REPO/.claude/skills" "$REPO/docs" "$REPO/README.md" "$REPO/README.vi.md" "$REPO/CLAUDE.md" \
     --include='*.md' 2>/dev/null \

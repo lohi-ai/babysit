@@ -390,8 +390,7 @@ def run_single_case(
     _claude_dir = Path.home() / ".claude"
     _bbs_bins = {
         name: str(_claude_dir / name)
-        for name in ("bbs-ticket", "bbs-slug", "bbs-autopilot",
-                     "bbs-learnings-log", "bbs-telemetry-log")
+        for name in ("bbs-ticket", "bbs-slug", "bbs-autopilot")
         if (_claude_dir / name).exists()
     }
 
@@ -402,8 +401,6 @@ def run_single_case(
         "BBS_TICKET_BIN": _bbs_bins.get("bbs-ticket", "bbs-ticket"),
         "BBS_SLUG_BIN": _bbs_bins.get("bbs-slug", "bbs-slug"),
         "BBS_AUTOPILOT_BIN": _bbs_bins.get("bbs-autopilot", "bbs-autopilot"),
-        "BBS_LEARNINGS_LOG_BIN": _bbs_bins.get("bbs-learnings-log", "bbs-learnings-log"),
-        "BBS_TELEMETRY_LOG_BIN": _bbs_bins.get("bbs-telemetry-log", "bbs-telemetry-log"),
     }
 
     bbs_ticket = find_bbs_ticket()

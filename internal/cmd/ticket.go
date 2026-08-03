@@ -218,7 +218,8 @@ Subcommands:
   reconcile [--ticket <id> | --all] [--dry-run] [--quiet]
                     advance index.json.status from observable filesystem state
   session <list|attach|end>      inspect/rehydrate ~/.babysit/sessions/
-  env               print TICKET / TICKET_HOME / INDEX for eval
+  env               print SLUG / BRANCH / TICKET / BABYSIT_PROJECT_HOME
+                    (+ TICKET_HOME / INDEX when a ticket is in scope) for eval
 `
 
 // ─── shared helpers ──────────────────────────────────────────────────────

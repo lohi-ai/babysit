@@ -28,6 +28,11 @@ var versionRe = regexp.MustCompile(`^[0-9]+\.[0-9.]+$`)
 // its stdout and exit codes exactly. Every path exits 0 except an fs write
 // failure, which the bash's `set -e` turns into an exit 1 (see runUpdateCheck).
 //
+// Hidden: the documented spelling is `bbs upgrade check`. This stays reachable
+// because bbs and the skill pack ship separately — brew updates the binary
+// while an older plugin's preamble still calls `bbs update-check`, and removing
+// it would break the version probe on every not-yet-upgraded install.
+//
 // DisableFlagParsing: the bash inspects only "$1" and ignores every other
 // argument. Cobra's parser would reject unknown flags and would honor --force
 // in any position, so it is switched off (same rationale as `bbs env`).
@@ -35,19 +40,26 @@ func newUpdateCheckCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:                "update-check",
 		Short:              "periodic version check",
+		Hidden:             true,
 		DisableFlagParsing: true,
 		RunE: func(_ *cobra.Command, args []string) error {
-			if err := runUpdateCheck(args); err != nil {
-				// The bash has no error path of its own here: set -e aborts on
-				// the failing mkdir/rm/redirect and the message on stderr is
-				// whatever mkdir/rm/bash emitted. Only the exit code and the
-				// (absence of) stdout are contractual, so the wording differs.
-				fmt.Fprintln(os.Stderr, "bbs update-check: "+err.Error())
-				return errSilent
-			}
-			return nil
+			return runUpdateCheckCmd(args)
 		},
 	}
+}
+
+// runUpdateCheckCmd is the command body, shared by `bbs upgrade check` (the
+// spelling skills use) and the hidden top-level `update-check`.
+func runUpdateCheckCmd(args []string) error {
+	if err := runUpdateCheck(args); err != nil {
+		// The bash has no error path of its own here: set -e aborts on the
+		// failing mkdir/rm/redirect and the message on stderr is whatever
+		// mkdir/rm/bash emitted. Only the exit code and the (absence of)
+		// stdout are contractual, so the wording differs.
+		fmt.Fprintln(os.Stderr, "bbs update-check: "+err.Error())
+		return errSilent
+	}
+	return nil
 }
 
 // runUpdateCheck returns a non-nil error only where the bash would have died on

@@ -52,7 +52,7 @@ Unlike ClaudeKit's scheme — which mandates 5 *new* JSON artifacts
 | `reviews/<skill>.md` | `set-review` | full review body (findings, fixes, score) |
 | `review-log.jsonl` | review-pr | per-commit status, critical count, quality score |
 | `handoffs/<NNN>-<skill>.md` | `add-handoff` | change brief (SUMMARY/FILES/BLAST_RADIUS) |
-| `~/.babysit/analytics/decisions.jsonl` | `bbs learnings-log decision` | every Taste/Mechanical auto-decision |
+| `~/.babysit/analytics/decisions.jsonl` | appended inline by the skill | every Taste/Mechanical auto-decision |
 
 So babysit doesn't need new artifacts — it needs a **hook that checks the
 artifacts it already produces** before an irreversible action. That keeps the

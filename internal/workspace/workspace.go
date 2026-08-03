@@ -274,7 +274,7 @@ func acquireLock(name string) (func(), error) {
 		}
 		if tries >= 50 {
 			return nil, fmt.Errorf("workspace %s: failed to acquire lock after 5s (%s)\n"+
-				"  If no other bbs workspace command is running, that directory is a leftover from a killed process — remove it.", name, lockPath)
+				"  If no other bbs config workspace command is running, that directory is a leftover from a killed process — remove it.", name, lockPath)
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
