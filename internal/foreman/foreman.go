@@ -58,13 +58,10 @@ type Record struct {
 	// Status would erase the foreman's own report to record someone else's
 	// failure to reach it.
 	Unreachable string `yaml:"unreachable,omitempty"`
-	// Grant is an optional bound on the foreman's default autonomy at the
-	// design checkpoint (hours / max approvals / ticket scope). A pointer,
-	// not a value: nil is "no bound" and must serialize to nothing at all,
-	// because a record written before grants existed and a record whose
-	// grant was revoked have to be the same bytes on disk.
-	//
-	// Autonomy itself is the default — see Allows. Grant only narrows it.
+	// Grant is the human's delegation of the design checkpoint to this
+	// foreman. A pointer, not a value: nil is "no grant" and must serialize
+	// to nothing at all, because a record written before grants existed and a
+	// record whose grant was revoked have to be the same bytes on disk.
 	Grant *Grant `yaml:"grant,omitempty"`
 	// Hold is the human's opt-in to keep the design checkpoint. When set,
 	// the foreman escalates pending approvals instead of self-resolving.
@@ -73,18 +70,15 @@ type Record struct {
 	Hold *Hold `yaml:"hold,omitempty"`
 }
 
-// Grant optionally bounds a foreman's design-checkpoint autonomy — who set
-// the bound and until when / how many / which tickets. It is deliberately a
-// record of *who said so and until when* rather than a boolean: an
-// unattended approval nobody can attribute after the fact is
-// indistinguishable from a bug.
+// Grant is permission for a foreman to resolve its own design checkpoint —
+// to write the approval verdict a human would otherwise write in the
+// dashboard. It is deliberately a record of *who said so and until when*
+// rather than a boolean: an unattended approval nobody can attribute after
+// the fact is indistinguishable from a bug.
 //
 // Every bound is "unset means unbounded", so the zero Grant is the most
 // permissive one. That is the wrong default to reach by accident, which is
 // why the CLI refuses to mint it without an explicit --unbounded.
-//
-// Grant is not required for self-resolve. Default posture is autonomous;
-// bbs foreman hold is the only path back to human-held.
 type Grant struct {
 	GrantedBy string `yaml:"granted_by"`
 	At        string `yaml:"at"`
@@ -110,11 +104,10 @@ func (g *Grant) Unbounded() bool {
 	return g != nil && g.ExpiresAt == "" && g.MaxApprovals == 0 && len(g.Tickets) == 0
 }
 
-// Allows reports whether this foreman may self-resolve the design checkpoint
-// for `ticket` at `now`, and when it may not, the reason — the reason is
-// the point: it is what the foreman prints when it escalates instead, so a
-// human reading the pane learns whether to release a hold, extend a bound,
-// or answer the question themselves.
+// Allows reports whether this record's grant covers approving `ticket` at
+// `now`, and when it does not, the reason — the reason is the point: it is
+// what the foreman prints when it escalates instead, so a human reading the
+// pane learns whether to extend the grant or answer the question themselves.
 //
 // Default is autonomous: no hold and no grant means allow. Hold is the only
 // path to human-held. A grant, when present, only narrows autonomy with its
@@ -122,7 +115,7 @@ func (g *Grant) Unbounded() bool {
 //
 // It does NOT consider the non-delegable floor. That check reads the design
 // artifacts rather than the record and lives with the caller, so that no
-// future field can be mistaken for a way to switch the floor off.
+// future grant field can be mistaken for a way to switch the floor off.
 func (r Record) Allows(ticket string, now time.Time) (bool, string) {
 	if r.Hold != nil {
 		return false, "human hold"
