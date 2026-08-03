@@ -35,12 +35,18 @@ type dashServer struct {
 	// it, else the copy embedded in the binary (internal/webui). distDir is the
 	// disk path, kept only for the message that names what is being served —
 	// it is empty when the embedded copy won.
-	distFS    fs.FS
-	distDir   string
-	version   string
-	slug      string // deprecated --slug filter, honored here so both modes agree
-	reconcile bool
-	origin    string // "http://127.0.0.1:<port>", filled in once listening
+	distFS  fs.FS
+	distDir string
+	version string
+	slug    string // deprecated --slug filter, honored here so both modes agree
+	// currentSlug is the project of the launch cwd — meta.active_project, so
+	// the SPA opens on the repo the human started the server from.
+	currentSlug string
+	// currentDir is the launch cwd's repo root — meta.current_dir, which the
+	// spawn form prefills as the foreman's workspace folder.
+	currentDir string
+	reconcile  bool
+	origin     string // "http://127.0.0.1:<port>", filled in once listening
 }
 
 // idRe is the shape of a slug or ticket id on the way to a file path. The CLI
@@ -99,6 +105,8 @@ func (s *dashServer) handleSnapshot(w http.ResponseWriter, _ *http.Request) {
 		Version:        s.version,
 		SnapshotAt:     time.Now().UTC().Format("2006-01-02T15:04:05Z"),
 		SlugOverride:   s.slug,
+		CurrentSlug:    s.currentSlug,
+		CurrentDir:     s.currentDir,
 		DecisionsCap:   2000,
 		SkillEventsCap: 2000,
 		Warn:           dashErr,

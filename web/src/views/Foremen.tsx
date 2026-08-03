@@ -105,7 +105,11 @@ export function Foremen({ snapshot }: { snapshot: Snapshot }) {
           </div>
         )}
       </div>
-      <SpawnModal open={spawnOpen} onClose={() => setSpawnOpen(false)} />
+      <SpawnModal
+        open={spawnOpen}
+        onClose={() => setSpawnOpen(false)}
+        defaultDir={snapshot.meta.current_dir ?? ''}
+      />
     </>
   );
 }
@@ -186,14 +190,38 @@ function dotVar(state: Liveness): string {
   }
 }
 
+// nanoid's alphabet, inlined rather than depended on: this is the only random
+// id the SPA mints. 64 chars divides 256 evenly, so the byte fold is unbiased.
+const ID_ALPHABET = 'useandom-26T198340PX75pxJACKVERYMINDBUSHWOLF_GQZbfghjklqvwyzrict';
+
+// Every foreman gets its own name, so the default cannot be derived from the
+// folder the way the CLI's `fm-<basename>` is: a second foreman in the same
+// repo would collide with the first and the spawn would be refused.
+function newForemanId(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(8));
+  let s = '';
+  for (const b of bytes) s += ID_ALPHABET[b % ID_ALPHABET.length];
+  return `foremen-${s}`;
+}
+
 // The spawn form asks for the workspace folder, not a project: a foreman is
 // bound to a folder, and the snapshot carries project *slugs* with no path to
 // prefill from. A project select here would be a control that cannot fill in
-// the field next to it.
-function SpawnModal({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const [dir, setDir] = useState('');
-  const [id, setId] = useState('');
+// the field next to it. The one path the snapshot does carry is the server's
+// own launch repo (meta.current_dir), which is the folder the human means in
+// the common case — prefilled, and editable for the rest.
+function SpawnModal({ open, onClose, defaultDir }: { open: boolean; onClose: () => void; defaultDir: string }) {
+  const [dir, setDir] = useState(defaultDir);
+  const [id, setId] = useState(newForemanId);
   const { run, pending, error } = useMutation();
+
+  // Re-seeded per opening, not per mount: the modal outlives one spawn, and a
+  // second foreman must not inherit the id the first one just took.
+  useEffect(() => {
+    if (!open) return;
+    setDir(defaultDir);
+    setId(newForemanId());
+  }, [open, defaultDir]);
 
   const submit = async () => {
     const ok = await run(() => spawnForeman(dir.trim(), id.trim()), `Foreman spawned in ${dir.trim()}`);
@@ -229,13 +257,14 @@ function SpawnModal({ open, onClose }: { open: boolean; onClose: () => void }) {
           />
         )}
       </Field>
-      <Field label="Foreman id" hint="Optional — derived from the folder name when blank.">
+      <Field label="Foreman id" hint="Prefilled with a fresh name — rename it if you want one you'll recognize.">
         {fid => (
           <input
             id={fid}
             style={inputStyle}
             className="font-mono"
             value={id}
+            placeholder="derived from the folder name when blank"
             onChange={e => setId(e.target.value)}
           />
         )}

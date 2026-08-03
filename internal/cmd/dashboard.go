@@ -3,6 +3,7 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/reallongnguyen/babysit/internal/dashboard"
+	"github.com/reallongnguyen/babysit/internal/git"
 	"github.com/reallongnguyen/babysit/internal/identity"
 	"github.com/reallongnguyen/babysit/internal/webui"
 	"github.com/spf13/cobra"
@@ -206,14 +208,32 @@ func runDashboard(args []string) error {
 		distFS, distDir = resolveDist(distDir, stateDir, mode != "server")
 	}
 
+	// Resolved once, from the launch cwd — the server keeps serving after the
+	// human has moved on, and re-deriving per request would make the opening
+	// filter depend on where the process happens to be.
+	// "unknown" is identity.Resolve's sentinel for a failed derivation (not a
+	// git repo, no remote); a project dir of that name is debris, not the
+	// human's project, so it must not win the opening filter.
+	currentSlug := identity.Resolve().Slug
+	if currentSlug == "unknown" {
+		currentSlug = ""
+	}
+	// The repo's primary worktree, not the cwd: a dashboard launched from
+	// .babysit/worktrees/<ticket> would otherwise prefill the spawn form with a
+	// throwaway checkout, and a foreman bound there dies with the worktree.
+	// Empty outside a git repo — the form then asks for the folder as before.
+	currentDir, _ := git.PrimaryWorktreeIn("")
+
 	if mode == "server" {
 		return serveDashboard(&dashServer{
-			stateDir:  stateDir,
-			distFS:    distFS,
-			distDir:   distDir,
-			version:   version,
-			slug:      slugOverride,
-			reconcile: os.Getenv("BBS_DASHBOARD_NO_RECONCILE") == "",
+			stateDir:    stateDir,
+			distFS:      distFS,
+			distDir:     distDir,
+			version:     version,
+			slug:        slugOverride,
+			currentSlug: currentSlug,
+			currentDir:  currentDir,
+			reconcile:   os.Getenv("BBS_DASHBOARD_NO_RECONCILE") == "",
 		}, port, open)
 	}
 
@@ -230,6 +250,8 @@ func runDashboard(args []string) error {
 			Version:        version,
 			SnapshotAt:     snapshotAt,
 			SlugOverride:   slugOverride,
+			CurrentSlug:    currentSlug,
+			CurrentDir:     currentDir,
 			DecisionsCap:   decisionsCap,
 			SkillEventsCap: skillEventsCap,
 			Warn:           dashErr,
@@ -365,7 +387,12 @@ func badDashSlug(s string) bool {
 // snapshot, so the dashboard never shows a rung the filesystem has already left
 // behind. It calls reconcileOne directly — both live in package cmd, so the old
 // fork/exec of a sibling `bbs-ticket` bought nothing but a missing-binary failure
-// mode and one process per project. Logs go to stderr; stdout is the report.
+// mode and one process per project.
+//
+// The per-ticket log is discarded, the way `foreman inbox` discards its own:
+// this reconcile is a side effect of rendering, not a report the human asked
+// for, and it runs across every project on disk — in server mode on every
+// snapshot poll. Failures still reach stderr from inside reconcileOne.
 func reconcileProjects(stateDir string) {
 	projects := filepath.Join(stateDir, "projects")
 	entries, err := os.ReadDir(projects)
@@ -385,7 +412,7 @@ func reconcileProjects(stateDir string) {
 		env := identity.Env{ProjectHome: projDir}
 		for _, t := range tickets {
 			if t.IsDir() {
-				_ = reconcileOne(os.Stderr, env, t.Name(), false, true)
+				_ = reconcileOne(io.Discard, env, t.Name(), false, true)
 			}
 		}
 	}
