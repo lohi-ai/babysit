@@ -2,22 +2,24 @@
 
 English | [Tiếng Việt](README.vi.md)
 
-**Hand it your feature requests. Workers build them in parallel while you watch. Review one combined result.**
-
-```
-/bbs:foreman product-wide search on the home page
-/bbs:foreman rebuild the novel request flow
-```
-
-**`foreman` is the primary flow**: one visible worker per request, each in its own cmux workspace in the sidebar (each running autopilot end-to-end — plan, code, review, QA, push), a design review before any code is written, and every finished ticket merged onto your local base so you review the whole batch running in one browser — then you create the PRs.
-
-For a **single ticket**, drive autopilot directly (this is also exactly what each worker runs):
+**Hand it one line. It plans, builds, reviews, and QAs while you're away. You review a branch.**
 
 ```
 /bbs:autopilot add a settings page with dark mode toggle
 ```
 
 ~40 minutes of autonomous work per ticket that finishes even though no single Claude session could hold it all at once. You review the branch, then open the PR when you're happy.
+
+**Start with `autopilot`.** It's the whole product in one command, it works in any terminal and any repo layout, and it's exactly what every parallel worker runs — so nothing you learn here is throwaway.
+
+**Then, when one at a time stops being enough — `foreman`:**
+
+```
+/bbs:foreman product-wide search on the home page
+/bbs:foreman rebuild the novel request flow
+```
+
+One visible worker per request, each in its own cmux workspace in the sidebar (each running autopilot end-to-end — plan, code, review, QA, push), a design review before any code is written, and every finished ticket merged onto your local base so you review the whole batch running in one browser — then you create the PRs. It's the advanced flow: it needs [cmux](https://cmux.com) and a repo in `worktree` mode, and it earns its keep only when you have several independent tickets to hand off at once.
 
 *babysit is what you do when you don't need a babysitter.* It prefers decisions Claude can make and verify alone over decisions that need a human in the loop — built for scheduled runs, orchestrated pipelines, and anything you want to walk away from.
 
@@ -48,7 +50,7 @@ Step by step:
 **Add as you need it:**
 
 - **`/bbs:review-pr`** (a.k.a. `/code-review`) — a gate before merge, since there's no second reviewer on a small team. Your safety net.
-- **`/bbs:foreman`** — the parallel-batch flow this README leads with: one visible worker per ticket (a cmux workspace), several independent tickets at once. Reach for it when you want that; overkill for solo, serial work.
+- **`/bbs:foreman`** — the advanced flow: one visible worker per ticket (a cmux workspace), several independent tickets at once. Reach for it once the loop above feels familiar and you have a batch to hand off; overkill for solo, serial work.
 
 ## Why it works
 
@@ -103,77 +105,77 @@ Three steps. Install once globally, configure each repo once, then run.
 
 ### 1. Install the plugin
 
-**Fastest — let Claude Code do it.** Paste this into Claude Code and it clones the repo, runs the installer, and then tells you the remaining steps one by one:
-
-```
-Install the babysit plugin for me: clone https://github.com/lohi-ai/babysit.git
-into ~/.claude/skills/babysit, run ./bin/setup-skills --full, then list the exact next
-steps I still need to run myself (the /plugin commands, configuring a repo, first run).
-```
-
-Claude handles the clone + `setup-skills`; the `/plugin` commands below are slash commands you run yourself, so it will hand those back to you as step-by-step instructions.
-
-**Or do it by hand:**
+**Straight from GitHub — nothing lands in your workspace.** Claude Code clones
+the marketplace itself:
 
 ```bash
-git clone --single-branch --depth 1 https://github.com/lohi-ai/babysit.git ~/.claude/skills/babysit
-cd ~/.claude/skills/babysit
+brew install lohi-ai/babysit/bbs        # the CLI — required, see below
+claude plugin marketplace add lohi-ai/babysit
+claude plugin install bbs@babysit
+```
+
+Restart Claude Code, and `/bbs:autopilot` is there. Upgrade later with:
+
+```bash
+brew upgrade bbs
+claude plugin marketplace update babysit && claude plugin update bbs@babysit
+```
+
+**`brew install bbs` is not optional.** `bin/bbs` is a build artifact and isn't
+committed, so a plugin installed from GitHub ships no compiled binary. Without
+`bbs` on your `PATH` the push/PR gate can't read a ticket's verdicts, and it
+fails closed — every `git push` gets denied. Linux users take the tarball
+instead: [docs/install.md](docs/install.md).
+
+<details>
+<summary><b>Or from a checkout</b> — if you want to read or modify babysit itself</summary>
+
+A checkout is the only shape where your edits to skills take effect without
+publishing them. `setup-skills` builds the binary and wires everything up:
+
+```bash
+git clone https://github.com/lohi-ai/babysit.git ~/src/babysit
+cd ~/src/babysit
 ./bin/setup-skills --full
 ```
 
 Then inside Claude Code:
 
 ```
-/plugin marketplace add ~/.claude/skills/babysit
+/plugin marketplace add ~/src/babysit
 /plugin install bbs@babysit
 ```
 
-**Or straight from GitHub — no checkout at all.** Claude Code clones the
-marketplace itself, so nothing lands in your workspace:
+This puts `bbs` on your `PATH` at `~/.local/bin/bbs` → your checkout, so you
+don't need the Homebrew install as well. Upgrade with `git pull && ./bin/setup-skills`.
 
-```bash
-brew install lohi-ai/babysit/bbs      # required, see below
-claude plugin marketplace add lohi-ai/babysit
-claude plugin install bbs@babysit
-```
+Note that a marketplace plugin is *copied* into `~/.claude/plugins/cache/`,
+while a directory under `~/.claude/skills/<name>/` is loaded **in place** — the
+second is what makes working-tree edits live. Don't run both shapes at once:
+an installed marketplace plugin wins the name collision.
 
-Update it with `claude plugin marketplace update babysit && claude plugin update
-bbs@babysit`, then restart Claude Code.
-
-The `brew install` is **not optional in this shape**: `bin/bbs` is a build
-artifact and is not committed, so a plugin installed from GitHub ships no
-compiled binary. Without `bbs` on `PATH` the push/PR gate can't read a ticket's
-verdicts and denies every `git push` (it fails closed by design). The two
-checkout-based installs above build the binary for you.
+</details>
 
 Requirements: Claude Code with plugin support, Git.
 
-Recommended: **[cmux](https://cmux.com)**, a terminal built for agentic development — and **required by `foreman`** (and by the dashboard's spawn action), which has no other backend: it gives each parallel worker its own sidebar workspace with a live status pill and notification badge, diffs open in a real viewer instead of scrolling past in a pane, and the running app sits in a browser split next to them. Everything else in babysit runs in any terminal; `foreman` fails fast with an install message when cmux is missing.
+Recommended, not required to start: **[cmux](https://cmux.com)**, a terminal built for agentic development. `/bbs:autopilot` and everything else run in any terminal — cmux is a **hard dependency only for `foreman`** (and the dashboard's spawn action), which has no other backend: it gives each parallel worker its own sidebar workspace with a live status pill and notification badge, diffs open in a real viewer instead of scrolling past in a pane, and the running app sits in a browser split next to them. `foreman` fails fast with an install message when cmux is missing.
 
-#### Optional: the standalone `bbs` CLI via Homebrew
+#### What the `bbs` CLI is
 
-The steps above already put `bbs` on your `PATH`: `bin/setup-skills` builds the
-binary and symlinks `~/.local/bin/bbs` → your checkout (add `~/.local/bin` to
-`PATH` if it isn't there — the installer warns when it isn't). If you *also*
-want `bbs` independent of any repo checkout, mac users get it from Homebrew:
+One Go binary, every subcommand reached as `bbs <sub>` — `config`, `env`,
+`slug`, `ticket`, `update-check`, `upgrade`, `learnings-log`,
+`learnings-search`, `qa-config`, `telemetry-log`, `codex-competitive`,
+`analytics-cron`, `secrets`, `design`, `dashboard`, `autopilot`, `foreman`,
+`workspace`. No production bash remains. The formula also drops two argv0
+aliases, `bbs-config` and `bbs-env` — only those two, which is why skills always
+call the space form.
 
-```bash
-brew tap lohi-ai/babysit https://github.com/lohi-ai/babysit
-brew install bbs
-```
+It is the half of babysit that the skills call on your behalf: ticket identity,
+verdicts, git-flow moves, telemetry. It does **not** contain the skill pack —
+skills, workflows, and DESIGN.md/CSV data come from the plugin. That's why the
+install is two commands, and why neither half works alone.
 
-**What `brew install bbs` gives you today:** the compiled `bbs` binary. Most of
-babysit's core bins are now Go — reachable as `bbs <sub>` (e.g. `bbs config`,
-`bbs ticket resolve`): `config`, `env`, `slug`, `ticket`, `update-check`,
-`upgrade`, `learnings-log`, `learnings-search`, `qa-config`, `telemetry-log`,
-`codex-competitive`, `analytics-cron`, `secrets`, `design`, `dashboard`, `autopilot`.
-The formula also drops two argv0 aliases, `bbs-config` and `bbs-env` — only
-those two, which is why skills always call the space form.
-It does **not** install the skill pack — the skills,
-workflows, and DESIGN.md/CSV data come only from the clone + `bin/setup-skills`
-above. Every bin, `ticket` included, is now Go: no production bash remains.
-Linux users use the tarball instead. Full platform
-matrix and the linux path: [docs/install.md](docs/install.md).
+Full platform matrix and the Linux tarball: [docs/install.md](docs/install.md).
 
 ### 2. Configure your project
 
@@ -210,16 +212,7 @@ That second case is exactly what **`/bbs:foreman`** turns on. Hand it a few requ
 
 ### 3. Run it
 
-**Primary — `foreman`, the attended parallel flow:**
-
-```
-/bbs:foreman <one-line requirement>     # one worker per request; repeat for more
-/bbs:foreman                                   # attach/resume: reconcile live workers + board
-```
-
-Foreman spawns a visible worker per ticket — a cmux workspace you click in the sidebar to watch or take over — monitors the panes, and owns the checkpoint between design and build: when a worker stops at its plan/prototype handoff, foreman reviews the design, gives feedback, and either greenlights the build or escalates to you when your voice could change the outcome. It answers workers' mechanical questions itself, relays the ones that need you, verifies every QA/review verdict on disk, and — with `land: local` (the default in worktree mode) — merges all finished tickets onto your local base so you review the combined product on the dev server before deciding: per-ticket PRs or one compose PR.
-
-**Secondary — `autopilot`, the single-ticket flow** (also what every foreman worker runs):
+**Start here — `autopilot`, the single-ticket flow:**
 
 ```
 /bbs:autopilot "add a settings page with dark mode toggle"
@@ -250,6 +243,19 @@ Autopilot inits the ticket — requirement, plan, branch — then stops and prin
 The escape clause means the loop terminates on escalation instead of grinding against a missing input. To bail mid-run: `/goal clear`, `Ctrl-C`, or touch `~/.babysit/projects/<slug>/tickets/<ticket>/STOP`.
 
 Without `/goal`, re-invoking `/bbs:autopilot bs-ab123` still resumes from the checkpoint — you just nudge it past session boundaries by hand.
+
+#### Advanced — `foreman`, the attended parallel flow
+
+Once the single-ticket loop is familiar, `foreman` runs a batch of them. Same work per ticket — each worker just runs the autopilot you already know:
+
+```
+/bbs:foreman <one-line requirement>     # one worker per request; repeat for more
+/bbs:foreman                            # attach/resume: reconcile live workers + board
+```
+
+Foreman spawns a visible worker per ticket — a cmux workspace you click in the sidebar to watch or take over — monitors the panes, and owns the checkpoint between design and build: when a worker stops at its plan/prototype handoff, foreman reviews the design, gives feedback, and either greenlights the build or escalates to you when your voice could change the outcome. It answers workers' mechanical questions itself, relays the ones that need you, verifies every QA/review verdict on disk, and — with `land: local` (the default in worktree mode) — merges all finished tickets onto your local base so you review the combined product on the dev server before deciding: per-ticket PRs or one compose PR.
+
+**Two prerequisites, which is why it's the second thing to learn:** [cmux](https://cmux.com) (a hard dependency — foreman fails fast without it) and a repo in `worktree` mode, so parallel tickets don't fight over one checkout. On a single serial ticket it buys you nothing over `/bbs:autopilot`.
 
 ## How to use it
 
@@ -318,10 +324,10 @@ bbs ticket serve            # bare: compose every finished ticket (qa + review D
 
 | I want to… | Skill |
 |------------|-------|
+| Ship a feature end-to-end from a one-line idea | `/bbs:autopilot "<idea>"` |
 | Run several feature requests in parallel while staying able to watch | `/bbs:foreman "<idea>"` |
 | Stress-test an idea before I commit to building it | `/bbs:office-hours` |
 | Design a feature inside the existing UI system | `/bbs:design-ui` |
-| Ship a feature end-to-end from a one-line idea | `/bbs:autopilot "<idea>"` |
 | Turn a requirement into `plan.md` (without coding it) | `/bbs:plan-draft` |
 | Build from an already-accepted plan | `/bbs:implement` |
 | Improve marketing copy or conversion | `/bbs:copy-rewrite`, `/bbs:conversion-fix` |
@@ -338,13 +344,20 @@ Full skill table (with autonomous-ready / interactive-only classification) in [`
 
 ## Companion CLI
 
-`setup-skills` builds the `bbs` binary, symlinks it onto your `PATH` at `~/.local/bin/bbs`, and drops the `bbs-*` argv0 aliases into `~/.claude/` for legacy callers. Everything is one binary reached as `bbs <sub>` — `bbs autopilot` (the runner), `bbs slug` (branch-as-anchor resolver), plus helpers for env, config, db snapshots, and upgrade checks. Full table and purposes in [`docs/companion-cli.md`](docs/companion-cli.md). Run `bbs <sub> --help` for usage on any of them.
+Everything is one binary reached as `bbs <sub>` — `bbs autopilot` (the runner), `bbs slug` (branch-as-anchor resolver), plus helpers for env, config, db snapshots, and upgrade checks. `brew install lohi-ai/babysit/bbs` puts it on your `PATH`; from a checkout, `setup-skills` builds it and symlinks `~/.local/bin/bbs` instead, plus the `bbs-*` argv0 aliases into `~/.claude/` for legacy callers. Full table and purposes in [`docs/companion-cli.md`](docs/companion-cli.md). Run `bbs <sub> --help` for usage on any of them.
 
 ## Operations
 
 Day-2 config (`bbs config`), telemetry (JSONL to `~/.babysit/analytics/`, local-only by default), and upgrade handling (`bbs update-check` + `bbs upgrade`) are covered in [`docs/operations.md`](docs/operations.md).
 
-**Upgrade.** `cd ~/.claude/skills/babysit && git pull && ./bin/setup-skills`, then `/plugin marketplace update babysit` + `/reload-plugins` in Claude Code.
+**Upgrade.** Both halves, then restart Claude Code — plugin changes only apply on restart:
+
+```bash
+brew upgrade bbs
+claude plugin marketplace update babysit && claude plugin update bbs@babysit
+```
+
+From a checkout instead: `git pull && ./bin/setup-skills`, then `/plugin marketplace update babysit` + `/reload-plugins`.
 
 ## Uninstall
 
@@ -354,11 +367,11 @@ Day-2 config (`bbs config`), telemetry (JSONL to `~/.babysit/analytics/`, local-
 ```
 
 ```bash
-./bin/setup-skills --uninstall
-rm -rf ~/.claude/skills/babysit ~/.babysit
+brew uninstall bbs
+rm -rf ~/.babysit          # your tickets and analytics — skip to keep them
 ```
 
-Manual cleanup if legacy symlinks remain from a pre-plugin install:
+From a checkout, also `./bin/setup-skills --uninstall` before deleting it. Manual cleanup if legacy symlinks remain from a pre-plugin install:
 
 ```bash
 find ~/.claude/skills -maxdepth 1 -type l -name 'bbs:*' -delete
@@ -369,9 +382,10 @@ rm -f ~/.claude/babysit ~/.claude/bbs-*
 
 | Issue | Fix |
 |-------|-----|
-| Skills missing after upgrade | `cd ~/.claude/skills/babysit && git pull`, then `/reload-plugins` |
-| `/bbs:*` not found | `/plugin marketplace add ~/.claude/skills/babysit` + `/plugin install bbs@babysit`; or `/reload-plugins` |
-| Skills show without `bbs:` prefix | Legacy install — run `./bin/setup-skills`, then `/plugin install ~/.claude/skills/babysit` |
+| Every `git push` denied, "GATE OFFLINE" | No `bbs` on `PATH` — `brew install lohi-ai/babysit/bbs`. The plugin ships no compiled binary, and the gate fails closed by design |
+| Skills missing or stale after upgrade | Restart Claude Code; if still stale, `claude plugin marketplace update babysit && claude plugin update bbs@babysit` |
+| `/bbs:*` not found | `claude plugin install bbs@babysit`, then restart; or `/reload-plugins` |
+| Skills show without `bbs:` prefix | Legacy install — `find ~/.claude/skills -maxdepth 1 -type l -name 'bbs:*' -delete`, then reinstall the plugin |
 | `env resolve` returns empty | Check the right `.env.base` exists under `config/<app>/` |
 
 ## License

@@ -2,22 +2,24 @@
 
 [English](README.md) | Tiếng Việt
 
-**Giao một loạt yêu cầu. Worker xây song song ngay trước mắt bạn. Review một bản gộp duy nhất.**
-
-```
-/bbs:foreman product-wide search on the home page
-/bbs:foreman rebuild the novel request flow
-```
-
-**`foreman` là luồng chính**: mỗi yêu cầu một worker nhìn thấy được, nằm trong workspace cmux riêng ở sidebar (mỗi worker chạy autopilot trọn gói — plan, code, review, QA, push), design được duyệt trước khi viết dòng code nào, và mọi ticket xong đều được merge lên base local để bạn review cả lô đang chạy trong một trình duyệt — rồi mới tạo PR.
-
-Với **một ticket lẻ**, gọi thẳng autopilot (cũng chính là thứ mỗi worker chạy):
+**Giao một dòng. Nó plan, code, review, QA trong lúc bạn đi vắng. Bạn chỉ review một branch.**
 
 ```
 /bbs:autopilot add a settings page with dark mode toggle
 ```
 
 ~40 phút tự chạy mỗi ticket — mà vẫn xong xuôi, dù chẳng session Claude nào ôm nổi ngần ấy việc trong một hơi. Bạn ngó lại branch, ưng thì tự bấm mở PR.
+
+**Bắt đầu bằng `autopilot`.** Nó là cả sản phẩm gói trong một lệnh, chạy được trên terminal bất kỳ và repo kiểu gì cũng được, và cũng chính là thứ mà mỗi worker song song chạy — nên chẳng có gì bạn học ở đây là học phí bỏ đi.
+
+**Rồi khi làm từng ticket một không còn đủ — `foreman`:**
+
+```
+/bbs:foreman product-wide search on the home page
+/bbs:foreman rebuild the novel request flow
+```
+
+Mỗi yêu cầu một worker nhìn thấy được, nằm trong workspace cmux riêng ở sidebar (mỗi worker chạy autopilot trọn gói — plan, code, review, QA, push), design được duyệt trước khi viết dòng code nào, và mọi ticket xong đều được merge lên base local để bạn review cả lô đang chạy trong một trình duyệt — rồi mới tạo PR. Đây là luồng nâng cao: nó cần [cmux](https://cmux.com) và một repo ở mode `worktree`, và chỉ đáng công khi bạn có vài ticket độc lập để giao cùng lúc.
 
 *babysit là việc bạn làm khi khỏi cần ai trông.* Nó chuộng mấy quyết định Claude tự làm tự kiểm được, hơn là mấy quyết định phải có người ngồi kè kè — đẻ ra cho các lần chạy theo lịch, pipeline được điều phối, và bất cứ thứ gì bạn muốn giao rồi đi chơi.
 
@@ -48,7 +50,7 @@ Từng bước:
 **Thêm khi cần:**
 
 - **`/bbs:review-pr`** (tức `/code-review`) — một chốt trước khi merge, vì team nhỏ không có người review thứ hai. Đây là lưới an toàn của bạn.
-- **`/bbs:foreman`** — luồng chạy-nhiều-song-song mà đầu README này dẫn dắt: một worker hiện hình cho mỗi ticket (workspace cmux), nhiều ticket độc lập cùng lúc. Dùng khi bạn muốn thế; thừa thãi với việc solo, tuần tự.
+- **`/bbs:foreman`** — luồng nâng cao: một worker hiện hình cho mỗi ticket (workspace cmux), nhiều ticket độc lập cùng lúc. Đụng tới khi vòng lặp trên đã quen tay và bạn có nguyên một mẻ để giao; thừa thãi với việc solo, tuần tự.
 
 ## Vì sao nó chạy được
 
@@ -103,34 +105,77 @@ Ba bước. Cài một lần cho toàn máy, cấu hình mỗi repo một lần,
 
 ### 1. Cài plugin
 
-**Nhanh nhất — để Claude Code làm hộ.** Dán đoạn này vào Claude Code, nó sẽ clone repo, chạy trình cài đặt, rồi chỉ cho bạn từng bước còn lại:
-
-```
-Cài plugin babysit giúp mình: clone https://github.com/lohi-ai/babysit.git
-vào ~/.claude/skills/babysit, chạy ./bin/setup-skills --full, rồi liệt kê chính xác các
-bước tiếp theo mình cần tự chạy (các lệnh /plugin, cấu hình repo, chạy lần đầu).
-```
-
-Claude lo phần clone + `setup-skills`; các lệnh `/plugin` bên dưới là slash command bạn tự chạy, nên nó sẽ trả lại cho bạn dưới dạng hướng dẫn từng bước.
-
-**Hoặc làm thủ công:**
+**Thẳng từ GitHub — không có gì rơi vào workspace của bạn.** Claude Code tự
+clone cái marketplace:
 
 ```bash
-git clone --single-branch --depth 1 https://github.com/lohi-ai/babysit.git ~/.claude/skills/babysit
-cd ~/.claude/skills/babysit
+brew install lohi-ai/babysit/bbs        # phần CLI — bắt buộc, xem bên dưới
+claude plugin marketplace add lohi-ai/babysit
+claude plugin install bbs@babysit
+```
+
+Khởi động lại Claude Code là có `/bbs:autopilot`. Sau này nâng cấp bằng:
+
+```bash
+brew upgrade bbs
+claude plugin marketplace update babysit && claude plugin update bbs@babysit
+```
+
+**`brew install bbs` không phải tùy chọn.** `bin/bbs` là sản phẩm build, không
+được commit, nên plugin cài từ GitHub không kèm binary nào cả. Thiếu `bbs` trên
+`PATH` thì cổng gác push/PR không đọc được verdict của ticket, và nó fail đóng —
+mọi `git push` đều bị chặn. Người dùng Linux lấy bản tarball:
+[docs/install.md](docs/install.md).
+
+<details>
+<summary><b>Hoặc cài từ một checkout</b> — nếu bạn muốn đọc hoặc sửa chính babysit</summary>
+
+Checkout là hình dạng duy nhất mà bạn sửa skill xong là có hiệu lực ngay, khỏi
+cần publish. `setup-skills` build binary và nối dây mọi thứ:
+
+```bash
+git clone https://github.com/lohi-ai/babysit.git ~/src/babysit
+cd ~/src/babysit
 ./bin/setup-skills --full
 ```
 
 Rồi trong Claude Code:
 
 ```
-/plugin marketplace add ~/.claude/skills/babysit
+/plugin marketplace add ~/src/babysit
 /plugin install bbs@babysit
 ```
 
+Cách này đã đặt `bbs` lên `PATH` tại `~/.local/bin/bbs` → checkout của bạn, nên
+khỏi cần cài thêm bản Homebrew. Nâng cấp bằng `git pull && ./bin/setup-skills`.
+
+Lưu ý: plugin từ marketplace được *copy* vào `~/.claude/plugins/cache/`, còn một
+thư mục nằm dưới `~/.claude/skills/<tên>/` thì được nạp **tại chỗ** — chính cái
+thứ hai mới làm cho sửa-là-thấy. Đừng chạy cả hai hình dạng cùng lúc: plugin
+marketplace đã cài sẽ thắng khi trùng tên.
+
+</details>
+
 Yêu cầu: Claude Code có hỗ trợ plugin, Git.
 
-Khuyến nghị: **[cmux](https://cmux.com)**, một terminal sinh ra cho lối phát triển bằng agent — và là **bắt buộc với `foreman`** (cũng như nút spawn trên dashboard), vì nó không còn backend nào khác: cmux cho mỗi worker song song một workspace riêng trên sidebar kèm status pill và badge thông báo, diff mở trong trình xem thật thay vì trôi qua trong pane, và app đang chạy nằm ngay ở split browser bên cạnh. Phần còn lại của babysit chạy trên terminal bất kỳ; thiếu cmux thì `foreman` dừng ngay với thông báo cách cài.
+Khuyến nghị, chưa cần ngay lúc đầu: **[cmux](https://cmux.com)**, một terminal sinh ra cho lối phát triển bằng agent. `/bbs:autopilot` và mọi thứ khác chạy trên terminal bất kỳ — cmux là **phụ thuộc cứng chỉ với `foreman`** (cũng như nút spawn trên dashboard), vì nó không còn backend nào khác: cmux cho mỗi worker song song một workspace riêng trên sidebar kèm status pill và badge thông báo, diff mở trong trình xem thật thay vì trôi qua trong pane, và app đang chạy nằm ngay ở split browser bên cạnh. Thiếu cmux thì `foreman` dừng ngay với thông báo cách cài.
+
+#### `bbs` CLI là cái gì
+
+Một binary Go duy nhất, mọi subcommand gọi dạng `bbs <sub>` — `config`, `env`,
+`slug`, `ticket`, `update-check`, `upgrade`, `learnings-log`,
+`learnings-search`, `qa-config`, `telemetry-log`, `codex-competitive`,
+`analytics-cron`, `secrets`, `design`, `dashboard`, `autopilot`, `foreman`,
+`workspace`. Không còn dòng bash production nào. Formula còn thả thêm hai alias
+argv0 là `bbs-config` và `bbs-env` — đúng hai cái đó thôi, nên skill luôn gọi
+dạng có dấu cách.
+
+Nó là nửa phần mà các skill gọi thay bạn: danh tính ticket, verdict, các nước cờ
+git-flow, telemetry. Nó **không** chứa bộ skill — skill, workflow, và dữ liệu
+DESIGN.md/CSV đến từ plugin. Vì vậy bản cài mới gồm hai lệnh, và thiếu nửa nào
+cũng không chạy.
+
+Ma trận nền tảng đầy đủ và đường tarball cho Linux: [docs/install.md](docs/install.md).
 
 ### 2. Cấu hình project của bạn
 
@@ -167,16 +212,7 @@ Trường hợp thứ hai chính là thứ **`/bbs:foreman`** bật lên. Đưa 
 
 ### 3. Chạy
 
-**Luồng chính — `foreman`, chạy song song có người trông:**
-
-```
-/bbs:foreman <yêu cầu một dòng>     # mỗi yêu cầu một worker; lặp lại để giao thêm
-/bbs:foreman                               # attach/resume: điểm danh worker đang sống + board
-```
-
-Foreman mở một worker cho mỗi ticket — một workspace cmux bạn bấm ở sidebar để xem hoặc tự lái — theo dõi các pane, và giữ chốt chặn giữa design và build: khi một worker dừng ở bản bàn giao plan/prototype, foreman review design, góp ý, rồi hoặc bật đèn xanh cho build hoặc hỏi bạn khi tiếng nói của bạn có thể đổi hướng kết quả. Nó tự trả lời các câu hỏi máy móc của worker, chuyển cho bạn những câu cần bạn, kiểm chứng mọi verdict QA/review trên đĩa, và — với `land: local` (mặc định ở mode worktree) — merge hết các ticket xong lên base local để bạn review sản phẩm gộp trên dev server trước khi quyết: PR từng ticket hay một compose PR.
-
-**Luồng phụ — `autopilot`, cho một ticket lẻ** (cũng là thứ mỗi worker của foreman chạy):
+**Bắt đầu ở đây — `autopilot`, luồng một ticket lẻ:**
 
 ```
 /bbs:autopilot "add a settings page with dark mode toggle"
@@ -207,6 +243,19 @@ Autopilot init ticket — requirement, plan, branch — rồi dừng lại và i
 Điều khoản thoát là chỗ chịu lực: vòng lặp kết thúc khi cần leo thang, thay vì nghiến răng cày mãi vào một input còn thiếu. Muốn thoát giữa chừng: `/goal clear`, `Ctrl-C`, hoặc touch `~/.babysit/projects/<slug>/tickets/<ticket>/STOP`.
 
 Không có `/goal`, gọi lại `/bbs:autopilot bs-ab123` vẫn nối tiếp từ checkpoint — chỉ là bạn phải tự tay đẩy nó qua ranh giới giữa các session.
+
+#### Nâng cao — `foreman`, chạy song song có người trông
+
+Khi vòng lặp một-ticket đã quen tay, `foreman` chạy cả một mẻ. Từng ticket vẫn y hệt — mỗi worker chỉ là con autopilot bạn đã biết:
+
+```
+/bbs:foreman <yêu cầu một dòng>     # mỗi yêu cầu một worker; lặp lại để giao thêm
+/bbs:foreman                        # attach/resume: điểm danh worker đang sống + board
+```
+
+Foreman mở một worker cho mỗi ticket — một workspace cmux bạn bấm ở sidebar để xem hoặc tự lái — theo dõi các pane, và giữ chốt chặn giữa design và build: khi một worker dừng ở bản bàn giao plan/prototype, foreman review design, góp ý, rồi hoặc bật đèn xanh cho build hoặc hỏi bạn khi tiếng nói của bạn có thể đổi hướng kết quả. Nó tự trả lời các câu hỏi máy móc của worker, chuyển cho bạn những câu cần bạn, kiểm chứng mọi verdict QA/review trên đĩa, và — với `land: local` (mặc định ở mode worktree) — merge hết các ticket xong lên base local để bạn review sản phẩm gộp trên dev server trước khi quyết: PR từng ticket hay một compose PR.
+
+**Hai thứ phải có trước, nên nó mới là bài học thứ hai:** [cmux](https://cmux.com) (phụ thuộc cứng — thiếu là foreman dừng ngay) và một repo ở mode `worktree`, để các ticket song song không giành nhau một checkout. Với một ticket lẻ chạy tuần tự, nó chẳng hơn `/bbs:autopilot` chỗ nào.
 
 ## Cách dùng
 
@@ -275,10 +324,10 @@ bbs ticket serve            # để trống: gộp mọi ticket đã xong (qa + 
 
 | Tôi muốn… | Skill |
 |-----------|-------|
+| Ship một feature đầu-tới-cuối từ một ý tưởng một dòng | `/bbs:autopilot "<idea>"` |
 | Giao nhiều yêu cầu chạy song song mà vẫn nhìn thấy được | `/bbs:foreman "<ý tưởng>"` |
 | Vặn thử một ý tưởng trước khi quyết định làm | `/bbs:office-hours` |
 | Thiết kế một feature trong hệ UI có sẵn | `/bbs:design-ui` |
-| Ship một feature đầu-tới-cuối từ một ý tưởng một dòng | `/bbs:autopilot "<idea>"` |
 | Biến một requirement thành `plan.md` (chưa code) | `/bbs:plan-draft` |
 | Dựng từ một plan đã được duyệt | `/bbs:implement` |
 | Cải thiện copy marketing hoặc conversion | `/bbs:copy-rewrite`, `/bbs:conversion-fix` |
@@ -295,13 +344,20 @@ Bảng skill đầy đủ (kèm phân loại autonomous-ready / interactive-only
 
 ## CLI đi kèm
 
-`setup-skills` build binary `bbs`, symlink nó lên `PATH` tại `~/.local/bin/bbs`, và đặt các alias argv0 `bbs-*` vào `~/.claude/` cho các caller cũ. Tất cả là một binary duy nhất, gọi dạng `bbs <sub>` — `bbs autopilot` (bộ chạy), `bbs slug` (resolver lấy branch làm mỏ neo), cộng các trợ giúp cho env, config, snapshot db, và kiểm tra upgrade. Bảng đầy đủ và mục đích ở [`docs/companion-cli.md`](docs/companion-cli.md). Chạy `bbs <sub> --help` để xem cách dùng bất kỳ cái nào.
+Tất cả là một binary duy nhất, gọi dạng `bbs <sub>` — `bbs autopilot` (bộ chạy), `bbs slug` (resolver lấy branch làm mỏ neo), cộng các trợ giúp cho env, config, snapshot db, và kiểm tra upgrade. `brew install lohi-ai/babysit/bbs` đặt nó lên `PATH`; nếu cài từ checkout thì `setup-skills` build nó rồi symlink `~/.local/bin/bbs`, kèm các alias argv0 `bbs-*` vào `~/.claude/` cho các caller cũ. Bảng đầy đủ và mục đích ở [`docs/companion-cli.md`](docs/companion-cli.md). Chạy `bbs <sub> --help` để xem cách dùng bất kỳ cái nào.
 
 ## Vận hành
 
 Config ngày-2 (`bbs config`), telemetry (JSONL đổ vào `~/.babysit/analytics/`, mặc định chỉ ở local), và xử lý upgrade (`bbs update-check` + `bbs upgrade`) nằm trong [`docs/operations.md`](docs/operations.md).
 
-**Upgrade.** `cd ~/.claude/skills/babysit && git pull && ./bin/setup-skills`, rồi `/plugin marketplace update babysit` + `/reload-plugins` trong Claude Code.
+**Upgrade.** Cả hai nửa, rồi khởi động lại Claude Code — thay đổi plugin chỉ có hiệu lực sau khi khởi động lại:
+
+```bash
+brew upgrade bbs
+claude plugin marketplace update babysit && claude plugin update bbs@babysit
+```
+
+Nếu cài từ checkout: `git pull && ./bin/setup-skills`, rồi `/plugin marketplace update babysit` + `/reload-plugins`.
 
 ## Gỡ cài
 
@@ -311,11 +367,11 @@ Config ngày-2 (`bbs config`), telemetry (JSONL đổ vào `~/.babysit/analytics
 ```
 
 ```bash
-./bin/setup-skills --uninstall
-rm -rf ~/.claude/skills/babysit ~/.babysit
+brew uninstall bbs
+rm -rf ~/.babysit          # ticket và analytics của bạn — bỏ qua nếu muốn giữ
 ```
 
-Dọn tay nếu còn sót symlink cũ từ bản cài tiền-plugin:
+Nếu cài từ checkout, chạy thêm `./bin/setup-skills --uninstall` trước khi xóa nó. Dọn tay nếu còn sót symlink cũ từ bản cài tiền-plugin:
 
 ```bash
 find ~/.claude/skills -maxdepth 1 -type l -name 'bbs:*' -delete
@@ -326,9 +382,10 @@ rm -f ~/.claude/babysit ~/.claude/bbs-*
 
 | Vấn đề | Cách sửa |
 |--------|----------|
-| Skill biến mất sau khi upgrade | `cd ~/.claude/skills/babysit && git pull`, rồi `/reload-plugins` |
-| `/bbs:*` không tìm thấy | `/plugin marketplace add ~/.claude/skills/babysit` + `/plugin install bbs@babysit`; hoặc `/reload-plugins` |
-| Skill hiện ra mà thiếu tiền tố `bbs:` | Bản cài cũ — chạy `./bin/setup-skills`, rồi `/plugin install ~/.claude/skills/babysit` |
+| Mọi `git push` đều bị chặn, báo "GATE OFFLINE" | Chưa có `bbs` trên `PATH` — `brew install lohi-ai/babysit/bbs`. Plugin không kèm binary, và cổng gác cố tình fail đóng |
+| Skill biến mất hoặc cũ mèm sau khi upgrade | Khởi động lại Claude Code; vẫn cũ thì `claude plugin marketplace update babysit && claude plugin update bbs@babysit` |
+| `/bbs:*` không tìm thấy | `claude plugin install bbs@babysit`, rồi khởi động lại; hoặc `/reload-plugins` |
+| Skill hiện ra mà thiếu tiền tố `bbs:` | Bản cài cũ — `find ~/.claude/skills -maxdepth 1 -type l -name 'bbs:*' -delete`, rồi cài lại plugin |
 | `env resolve` trả về rỗng | Kiểm xem đúng file `.env.base` có nằm dưới `config/<app>/` không |
 
 ## Giấy phép
