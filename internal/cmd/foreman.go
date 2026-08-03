@@ -25,6 +25,9 @@ const foremanUsage = `Usage:
   bbs foreman heartbeat <id> [--status <status>] [--session <path>]
   bbs foreman spawn [<id>] [--dir <path>] [--command <text>]
   bbs foreman retire <id> [--keep-workspace]
+  bbs foreman hold <id>
+  bbs foreman hold show <id>
+  bbs foreman hold release <id>
   bbs foreman grant <id> [--hours <n>] [--max <n>] [--tickets <a,b>] [--unbounded]
   bbs foreman grant show <id>
   bbs foreman grant revoke <id>
@@ -72,6 +75,8 @@ func dispatchForeman(args []string) error {
 		return err
 	case "retire":
 		return foremanRetire(rest)
+	case "hold":
+		return foremanHold(rest)
 	case "grant":
 		return foremanGrant(rest)
 	case "help", "--help", "-h":
@@ -157,10 +162,10 @@ func foremanInbox(args []string) error {
 	}
 	sort.Strings(names)
 
-	// Loaded once, outside the loop: the grant is a property of the foreman
-	// reading its inbox, not of the tickets in it. A missing record is not an
-	// error here — inbox is a read, and a foreman with no record simply has no
-	// grant.
+	// Loaded once, outside the loop: posture (hold / grant bounds) is a
+	// property of the foreman reading its inbox, not of the tickets in it.
+	// A missing record is not an error here — inbox is a read, and a
+	// foreman with no record is treated as default autonomy.
 	rec, _ := foreman.Load(id)
 	now := time.Now()
 
@@ -177,13 +182,13 @@ func foremanInbox(args []string) error {
 		}
 		rows++
 		approval := orDefault(doc.Get("approval.state"), "-")
-		// A pending row normally means "wait for the human". Under a grant
-		// covering this ticket it means the opposite — the foreman is the one
-		// being waited on — and a foreman that read `pending` and waited would
-		// stall the batch the grant exists to keep moving.
+		// A pending row under human hold means "wait for the human". Under
+		// default autonomy (or a covering grant bound) it means the opposite
+		// — the foreman is the one being waited on — and a foreman that read
+		// plain `pending` and waited would stall the batch.
 		if approval == "pending" {
 			if ok, _ := rec.Allows(tid, now); ok {
-				approval = "pending(grantable)"
+				approval = "pending(auto)"
 			}
 		}
 		fmt.Printf("%-16s %-14s %-12s %s\n", tid,
@@ -366,9 +371,80 @@ func foremanRetire(args []string) error {
 	return nil
 }
 
-// foremanGrant delegates the design checkpoint to a foreman — the human
-// saying "you may approve plans and prototypes yourself" in a form that
-// survives the session that said it.
+// foremanHold opts a foreman into human-held design checkpoints — the only
+// path away from the autonomous default. Survives the session that said it.
+func foremanHold(args []string) error {
+	if len(args) > 0 && (args[0] == "release" || args[0] == "show") {
+		verb := args[0]
+		id, _, err := foremanFlags(args[1:])
+		if err != nil {
+			return err
+		}
+		if id == "" {
+			return fmt.Errorf("foreman hold %s: needs an id\n%s", verb, foremanUsage)
+		}
+		if verb == "show" {
+			return foremanHoldShow(id)
+		}
+		return foremanHoldRelease(id)
+	}
+
+	id, _, err := foremanFlags(args)
+	if err != nil {
+		return err
+	}
+	if id == "" {
+		return fmt.Errorf("foreman hold: needs an id\n%s", foremanUsage)
+	}
+	r, err := foreman.Load(id)
+	if err != nil {
+		return err
+	}
+	r.Hold = &foreman.Hold{HeldBy: currentUser(), At: foreman.Now()}
+	if err := foreman.Save(r); err != nil {
+		return err
+	}
+	fmt.Printf("hold set on %s — design checkpoints escalate to a human\n", id)
+	fmt.Println("release with: bbs foreman hold release " + id)
+	return nil
+}
+
+func foremanHoldRelease(id string) error {
+	r, err := foreman.Load(id)
+	if err != nil {
+		return err
+	}
+	if r.Hold == nil {
+		fmt.Printf("%s has no hold — already on default autonomy\n", id)
+		return nil
+	}
+	r.Hold = nil
+	if err := foreman.Save(r); err != nil {
+		return err
+	}
+	fmt.Printf("released hold on %s — design checkpoints self-resolve by default again\n", id)
+	fmt.Println("work already escalated under the hold stands; in-flight workers keep going.")
+	return nil
+}
+
+func foremanHoldShow(id string) error {
+	r, err := foreman.Load(id)
+	if err != nil {
+		return err
+	}
+	if r.Hold == nil {
+		fmt.Println("none — default autonomy")
+		return nil
+	}
+	fmt.Printf("human hold — held by %s at %s\n", r.Hold.HeldBy, r.Hold.At)
+	return nil
+}
+
+// foremanGrant optionally bounds a foreman's design-checkpoint autonomy —
+// hours, max approvals, or ticket scope — in a form that survives the
+// session that said it. Autonomy itself is the default; grant is not
+// required for self-resolve. Use bbs foreman hold to put checkpoints back
+// with a human.
 //
 // Bounds are opt-out rather than opt-in, and an unbounded grant has to be
 // typed: `grant fm-a` with no bounds is refused, because the difference
@@ -430,11 +506,17 @@ func foremanGrant(args []string) error {
 	}
 
 	r.Grant = g
+	// A grant is a bound on autonomy, not a way around a hold. Setting a
+	// grant while held would look active and still escalate — clear the
+	// hold so the operator's intent (self-resolve under these bounds) wins.
+	if r.Hold != nil {
+		r.Hold = nil
+	}
 	if err := foreman.Save(r); err != nil {
 		return err
 	}
-	fmt.Printf("granted %s design-checkpoint approval — %s\n", id, describeGrant(g))
-	fmt.Println("the non-delegable floor still holds: money, auth and irreversible-data changes escalate.")
+	fmt.Printf("bounded %s design-checkpoint autonomy — %s\n", id, describeGrant(g))
+	fmt.Println("autonomy is already the default; this only narrows it. the non-delegable floor still holds: money, auth and irreversible-data changes escalate.")
 	return nil
 }
 
@@ -444,16 +526,16 @@ func foremanGrantRevoke(id string) error {
 		return err
 	}
 	if r.Grant == nil {
-		fmt.Printf("%s has no grant\n", id)
+		fmt.Printf("%s has no grant bound — already on default autonomy\n", id)
 		return nil
 	}
 	r.Grant = nil
 	if err := foreman.Save(r); err != nil {
 		return err
 	}
-	// Said plainly because it is the question a human asks next: revoking is
-	// not a rollback, and it does not reach into a worker already building.
-	fmt.Printf("revoked %s — it escalates by default again\n", id)
+	// Revoke removes bounds only. It does not force human-held; that is
+	// bbs foreman hold. Already-approved work is not rolled back.
+	fmt.Printf("revoked grant bound on %s — back to unbounded default autonomy\n", id)
 	fmt.Println("work already approved under the grant stands; in-flight workers keep going.")
 	return nil
 }
@@ -464,13 +546,17 @@ func foremanGrantShow(id string) error {
 		return err
 	}
 	if r.Grant == nil {
-		fmt.Println("none")
+		if r.Hold != nil {
+			fmt.Println("none — human hold (bbs foreman hold show " + id + ")")
+			return nil
+		}
+		fmt.Println("none — default autonomy")
 		return nil
 	}
 	fmt.Printf("%s — granted by %s at %s\n", describeGrant(r.Grant), r.Grant.GrantedBy, r.Grant.At)
 	// Probe with a ticket the grant is meant to cover, so "inactive" reports a
 	// real bound — expiry or budget — rather than the scope check tripping on
-	// the empty string we passed it.
+	// the empty string we passed it. Hold still wins if set.
 	probe := ""
 	if len(r.Grant.Tickets) > 0 {
 		probe = r.Grant.Tickets[0]
