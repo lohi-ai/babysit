@@ -497,31 +497,46 @@ func foremanRetire(args []string) error {
 	if id == "" {
 		return fmt.Errorf("foreman retire: needs an id\n%s", foremanUsage)
 	}
-	r, err := foreman.Load(id)
+	msg, err := retireForeman(id, kv["keep-workspace"] != "")
 	if err != nil {
 		return err
 	}
+	fmt.Println(msg)
+	return nil
+}
 
-	if kv["keep-workspace"] == "" && r.WorkspaceTitle != "" {
+// retireForeman drops a foreman record and, unless asked to keep it, closes the
+// cmux workspace it was running in. Shared with the dashboard's retire endpoint:
+// the two entry points must not drift, because a record dropped without its
+// workspace closed leaves a pane that looks like a working foreman and can never
+// be reached again from the list it was just removed from.
+//
+// Returns the line to report, which is not always "retired": a workspace left
+// open is the one outcome the caller must be told about.
+func retireForeman(id string, keepWorkspace bool) (string, error) {
+	r, err := foreman.Load(id)
+	if err != nil {
+		return "", err
+	}
+
+	if !keepWorkspace && r.WorkspaceTitle != "" {
 		client, err := cmux.Preflight()
 		if err != nil {
 			// The record is still worth dropping — but say what was left
 			// behind, so nobody hunts for a workspace that is still open.
 			if rmErr := foreman.Remove(id); rmErr != nil {
-				return rmErr
+				return "", rmErr
 			}
-			fmt.Printf("retired %s; workspace %q left open (%v)\n", id, r.WorkspaceTitle, err)
-			return nil
+			return fmt.Sprintf("retired %s; workspace %q left open (%v)", id, r.WorkspaceTitle, err), nil
 		}
 		if err := client.Close(r.WorkspaceTitle); err != nil {
-			return err
+			return "", err
 		}
 	}
 	if err := foreman.Remove(id); err != nil {
-		return err
+		return "", err
 	}
-	fmt.Printf("retired %s\n", id)
-	return nil
+	return fmt.Sprintf("retired %s", id), nil
 }
 
 // foremanHold opts a foreman into human-held design checkpoints — the only

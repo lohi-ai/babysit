@@ -65,6 +65,7 @@ func (s *dashServer) mux() *http.ServeMux {
 	m.HandleFunc("POST /api/tickets/{project}/{ticket}/approval/comment", s.handleApprovalComment)
 	m.HandleFunc("GET /api/tickets/{project}/{ticket}/prototype", s.handlePrototype)
 	m.HandleFunc("POST /api/foremen", s.handleSpawnForeman)
+	m.HandleFunc("POST /api/foremen/{id}/retire", s.handleRetireForeman)
 
 	// index.html loads ./data.js unconditionally, and web/dist/data.js is
 	// whatever the last snapshot run left there. Serving it here would boot the
@@ -443,6 +444,46 @@ func (s *dashServer) handleSpawnForeman(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"spawned": id, "dir": req.Dir})
+}
+
+type retireReq struct {
+	// KeepWorkspace leaves the cmux pane open. Default false matches the CLI:
+	// retiring is normally how you clear a foreman that is already gone, and
+	// leaving its pane behind is the thing that made it confusing.
+	KeepWorkspace bool `json:"keep_workspace"`
+}
+
+// handleRetireForeman is the counterpart to spawn, and the only way to clear a
+// foreman record from the dashboard. Records are never garbage-collected — a
+// foreman that died hours ago stays in the list forever, still holding whatever
+// was assigned to it — so without this the list only ever grows and the human
+// has to drop to the CLI to tidy it.
+//
+// It does NOT check whether the foreman still holds open tickets. That check
+// belongs to the UI, which can name them in the confirm; enforcing it here would
+// block the one case this exists for — a dead foreman whose tickets are stuck
+// precisely because it is dead.
+func (s *dashServer) handleRetireForeman(w http.ResponseWriter, r *http.Request) {
+	if !s.guard(w, r) {
+		return
+	}
+	// No id validation here on purpose: foreman.Load validates before it builds a
+	// path, so every route into the store already refuses an illegal id with the
+	// message that names the rule. A second check here would be a copy that can
+	// only ever drift from the one doing the work.
+	id := r.PathValue("id")
+	var req retireReq
+	if !decode(w, r, &req) {
+		return
+	}
+	msg, err := retireForeman(id, req.KeepWorkspace)
+	if err != nil {
+		// Same 400-class reasoning as spawn: an unknown id or a cmux close that
+		// was refused is the request's problem, not the server's.
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"retired": id, "detail": msg})
 }
 
 // wakeResult is what the UI shows next to an assignment: whether the poke
