@@ -31,3 +31,9 @@ export function formatDuration(seconds: number | null | undefined): string {
   return mm ? `${h}h${mm}m` : `${h}h`;
 }
 
+/** Collapse a picked node's text into something quotable. */
+export function snippet(text: string): string {
+  const flat = text.replace(/\s+/g, ' ').trim();
+  return flat.length > 180 ? `${flat.slice(0, 180)}…` : flat;
+}
+

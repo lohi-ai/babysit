@@ -14,13 +14,11 @@
 // plan as a whole — and a redirect may now travel on comments alone.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ExternalLink, MessageSquarePlus } from 'lucide-react';
+import { MessageSquarePlus } from 'lucide-react';
 import {
   commentOnApproval,
   resolveApproval,
-  prototypeUrl,
   type ApprovalAction,
-  type CommentDraft,
 } from '../lib/api';
 import type { ApprovalComment, TicketApproval, TicketPrototype } from '../lib/data';
 import { Button } from '../components/Button';
@@ -29,8 +27,9 @@ import { ErrorBox } from '../components/ErrorBox';
 import { Field, inputStyle } from '../components/Field';
 import { Markdown } from '../components/Markdown';
 import { Modal } from '../components/Modal';
+import { PrototypeFrame, type Anchor } from '../components/PrototypeFrame';
 import { SectionHeader } from '../components/SectionHeader';
-import { formatDate, formatRelative } from '../lib/format';
+import { formatDate, formatRelative, snippet } from '../lib/format';
 import { gateProps, useControlPlane, useMutation } from '../contexts/ControlContext';
 
 // Verbatim from .claude/skills/foreman/SKILL.md § The design checkpoint — the
@@ -45,9 +44,6 @@ const RUBRIC: [string, string][] = [
 ];
 
 type Artifact = 'requirement' | 'plan' | 'design';
-
-/** Where a comment points, before the human has written its body. */
-type Anchor = Omit<CommentDraft, 'body'>;
 
 export function ApprovalPanel({
   project,
@@ -202,12 +198,6 @@ export function ApprovalPanel({
   );
 }
 
-/** Collapse a picked node's text into something quotable. */
-function snippet(text: string) {
-  const flat = text.replace(/\s+/g, ' ').trim();
-  return flat.length > 180 ? `${flat.slice(0, 180)}…` : flat;
-}
-
 /**
  * A markdown artifact whose top-level blocks can be pointed at.
  *
@@ -257,156 +247,6 @@ function AnnotatedDoc({
   return (
     <div ref={ref} className={commenting ? 'annotate annotating' : 'annotate'} onClick={pick}>
       <Markdown source={source} />
-    </div>
-  );
-}
-
-/**
- * A CSS-ish path to one element of the mock, short enough to read in a
- * terminal. It is a hint, not a selector contract — the excerpt is what
- * survives the worker rewriting the prototype.
- */
-function elementPath(el: Element) {
-  const parts: string[] = [];
-  let cur: Element | null = el;
-  while (cur && cur.tagName !== 'BODY' && cur.tagName !== 'HTML' && parts.length < 4) {
-    const node: Element = cur;
-    let part = node.tagName.toLowerCase();
-    if (node.id) {
-      parts.unshift(`${part}#${node.id}`);
-      break;
-    }
-    const cls = (node.getAttribute('class') ?? '').trim().split(/\s+/)[0];
-    if (cls) part += `.${cls}`;
-    const parent: Element | null = node.parentElement;
-    if (parent) {
-      const sibs: Element[] = Array.from(parent.children).filter(s => s.tagName === node.tagName);
-      if (sibs.length > 1) part += `:nth(${sibs.indexOf(node) + 1})`;
-    }
-    parts.unshift(part);
-    cur = parent;
-  }
-  return parts.join(' > ') || el.tagName.toLowerCase();
-}
-
-/**
- * The mock, inline.
- *
- * `srcdoc` from the snapshot rather than the endpoint, because the file://
- * snapshot has no endpoint and the human reviewing a design deserves the same
- * screen either way. The sandbox stays at the design's `allow-same-origin`
- * only: the frame needs it to style itself, and withholding `allow-scripts`
- * means the mock cannot reach the API that is sitting on that origin.
- *
- * That same `allow-same-origin` is what makes comment mode possible: the parent
- * can reach into `contentDocument` to highlight and capture the element the
- * human clicks, while the mock's own scripts stay blocked.
- */
-function PrototypeFrame({
-  project,
-  ticket,
-  prototype,
-  commenting,
-  onPick,
-}: {
-  project: string;
-  ticket: string;
-  prototype: TicketPrototype | null;
-  commenting: boolean;
-  onPick: (a: Anchor) => void;
-}) {
-  const { canMutate } = useControlPlane();
-  const frame = useRef<HTMLIFrameElement>(null);
-  const [loaded, setLoaded] = useState(0);
-
-  useEffect(() => {
-    const doc = frame.current?.contentDocument;
-    if (!commenting || !doc?.body) return;
-    let lit: HTMLElement | null = null;
-    const paint = (el: HTMLElement | null) => {
-      if (lit) lit.style.outline = '';
-      lit = el;
-      // The mock is a separate document, so the parent's CSS variables mean
-      // nothing inside it — this is the one place the accent is a literal.
-      if (el) el.style.outline = '2px solid #5e6ad2';
-    };
-    const over = (e: Event) => paint(e.target as HTMLElement);
-    const leave = () => paint(null);
-    const click = (e: MouseEvent) => {
-      // Capture phase and preventDefault: a click in comment mode is a pick,
-      // never a navigation out of the mock.
-      e.preventDefault();
-      e.stopPropagation();
-      const el = e.target as HTMLElement;
-      onPick({ target: 'prototype', anchor: elementPath(el), excerpt: snippet(el.textContent ?? '') });
-    };
-    doc.addEventListener('mouseover', over, true);
-    doc.addEventListener('mouseleave', leave, true);
-    doc.addEventListener('click', click, true);
-    doc.body.style.cursor = 'crosshair';
-    return () => {
-      doc.removeEventListener('mouseover', over, true);
-      doc.removeEventListener('mouseleave', leave, true);
-      doc.removeEventListener('click', click, true);
-      paint(null);
-      doc.body.style.cursor = '';
-    };
-  }, [commenting, loaded, onPick]);
-
-  if (!prototype) {
-    return (
-      <EmptyState
-        title="No prototype"
-        body="This change has no user-facing surface — which is itself a claim worth judging."
-      />
-    );
-  }
-  // Over file:// the endpoint does not exist, so the tab link points at the
-  // file the snapshot named. Absolute path, so it resolves from any host page.
-  const href = canMutate ? prototypeUrl(project, ticket) : `file://${prototype.path}`;
-
-  return (
-    <div>
-      <div className="flex items-center justify-between gap-3 py-1">
-        <span
-          className="font-mono truncate"
-          style={{ fontSize: 12, color: 'var(--text-muted)' }}
-          title={prototype.path}
-        >
-          {prototype.path}
-        </span>
-        <a
-          href={href}
-          target="_blank"
-          rel="noreferrer"
-          className="inline-flex items-center gap-1 shrink-0 hover:underline"
-          style={{ fontSize: 12, color: 'var(--accent)' }}
-        >
-          Open in new tab
-          <ExternalLink size={12} aria-hidden="true" />
-        </a>
-      </div>
-      {prototype.html ? (
-        <iframe
-          ref={frame}
-          onLoad={() => setLoaded(n => n + 1)}
-          title={`${ticket} prototype`}
-          srcDoc={prototype.html}
-          sandbox="allow-same-origin"
-          style={{
-            width: '100%',
-            height: 480,
-            border: commenting ? '1px solid var(--accent)' : '1px solid var(--border-hairline)',
-            borderRadius: 'var(--radius-md)',
-            backgroundColor: 'var(--surface-bg)',
-          }}
-        />
-      ) : (
-        <EmptyState
-          title="Prototype too large to preview here"
-          body={`${Math.round(prototype.bytes / 1024)}KB — open it in a tab to review it.`}
-        />
-      )}
     </div>
   );
 }

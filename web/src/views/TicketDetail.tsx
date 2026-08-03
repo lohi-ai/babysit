@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { foremanLive, type ForemanRow, type HistoryRow, type Snapshot, type TicketControl } from '../lib/data';
+import { ChevronDown } from 'lucide-react';
+import { foremanLive, type ForemanRow, type HistoryRow, type ManifestRepo, type NamedFile, type Snapshot, type TicketApproval, type TicketControl, type TicketDetail as TicketDetailData } from '../lib/data';
 import { assignTicket, controlTicket, type ControlAction } from '../lib/api';
 import { Button } from '../components/Button';
 import { Tag } from '../components/Tag';
 import { ErrorBox } from '../components/ErrorBox';
 import { Field, inputStyle } from '../components/Field';
 import { Markdown } from '../components/Markdown';
+import { PrototypeFrame } from '../components/PrototypeFrame';
 import { ApprovalPanel } from './ApprovalPanel';
 import { Modal } from '../components/Modal';
 import { controlTone } from '../components/ControlChip';
@@ -15,7 +17,26 @@ import { useFilter } from '../contexts/FilterContext';
 import { gateProps, useControlPlane, useMutation } from '../contexts/ControlContext';
 import { useScopedTicketDetail } from '../lib/scope';
 
-type Tab = 'approval' | 'requirement' | 'plan' | 'manifest' | 'history' | 'handoffs' | 'verdicts' | 'reviews';
+// The five documents the page is *for*, then everything else behind one menu.
+// Split rather than ordered, because the split is what keeps the strip from
+// overflowing: eight tabs pushed Reviews off a 1440px screen entirely.
+type Tab =
+  | 'requirement' | 'plan' | 'prototype' | 'handoffs' | 'qa'
+  | 'activity' | 'reviews' | 'manifest' | 'repos' | 'approval';
+
+const OVERFLOW: Tab[] = ['activity', 'reviews', 'manifest', 'repos', 'approval'];
+
+// One panel serves every tab, so the association is a constant rather than a
+// per-tab id. Without it the tablist announces "tab 2 of 4" over a panel a
+// screen reader has no way to reach from the tab.
+const TABPANEL_ID = 'ticket-tabpanel';
+
+/** A tab as the strip renders it. `count` is omitted where a number says nothing. */
+interface TabSpec {
+  key: Tab;
+  label: string;
+  count?: number;
+}
 
 export function TicketDetail({ snapshot, ticketId }: { snapshot: Snapshot; ticketId: string }) {
   const { state } = useFilter();
@@ -34,28 +55,38 @@ export function TicketDetail({ snapshot, ticketId }: { snapshot: Snapshot; ticke
 
   // Pause and cancel never touch a running session — this is what says so.
   const workerRunning = (snapshot.sessions?.sessions ?? []).some(s => s.ticket === ticketId);
+  // Same signal one line up in the strip: assigned is not the same as running.
+  const runner = workerRunning ? 'autopilot' : null;
 
-  const tabs: { key: Tab; label: string; available: boolean }[] = detail ? [
-    // First in the strip and first in `firstAvailable`, so a ticket with a
-    // pending decision opens on the decision. It stays in the strip once
-    // answered — the record is how the human sees what they already decided.
-    { key: 'approval',    label: detail.approval?.state === 'pending' ? 'Approval ●' : 'Approval',
-                          available: !!detail.approval },
+  // Only tabs with something in them are rendered at all. A greyed-out label
+  // still costs the width that pushed real tabs off the strip, and "Plan"
+  // unclickable teaches nothing that "no Plan tab" does not.
+  const qaCount = detail ? detail.verdicts.length + detail.evidence.length : 0;
+  const tabs: TabSpec[] = detail ? ([
     { key: 'requirement', label: 'Requirement', available: !!detail.requirement },
     { key: 'plan',        label: 'Plan',        available: !!detail.plan },
+    { key: 'prototype',   label: 'Prototype',   available: !!detail.prototype },
+    { key: 'handoffs',    label: 'Handoffs',    count: detail.handoffs.length, available: detail.handoffs.length > 0 },
+    { key: 'qa',          label: 'QA evidence', count: qaCount, available: qaCount > 0 },
+    { key: 'activity',    label: 'Activity',    count: detail.history.length, available: detail.history.length > 0 },
+    { key: 'reviews',     label: 'Reviews',     count: detail.reviews.length, available: detail.reviews.length > 0 },
     { key: 'manifest',    label: 'Manifest',    available: !!detail.manifest },
-    { key: 'history',     label: `History (${detail.history.length})`, available: detail.history.length > 0 },
-    { key: 'handoffs',    label: `Handoffs (${detail.handoffs.length})`, available: detail.handoffs.length > 0 },
-    { key: 'verdicts',    label: `Verdicts (${detail.verdicts.length})`, available: detail.verdicts.length > 0 },
-    { key: 'reviews',     label: `Reviews (${detail.reviews.length})`,   available: detail.reviews.length > 0 },
-  ] : [];
+    { key: 'repos',       label: 'Repos',       count: detail.repos.length, available: detail.repos.length > 0 },
+    { key: 'approval',    label: 'Design checkpoint', available: !!detail.approval },
+  ] satisfies (TabSpec & { available: boolean })[]).filter(t => t.available).map(({ key, label, count }) => ({ key, label, count })) : [];
 
-  // A pending decision is why the human opened the page; an answered one is
-  // reference, so it does not displace the requirement on every past ticket.
-  const firstAvailable: Tab = detail?.approval?.state === 'pending'
-    ? 'approval'
-    : tabs.find(t => t.available && t.key !== 'approval')?.key ?? 'requirement';
-  const [tab, setTab] = useState<Tab>(firstAvailable);
+  const primaryTabs = tabs.filter(t => !OVERFLOW.includes(t.key));
+  const overflowTabs = tabs.filter(t => OVERFLOW.includes(t.key));
+
+  const [tab, setTab] = useState<Tab>(tabs[0]?.key ?? 'requirement');
+  const activeTab = tabs.some(t => t.key === tab) ? tab : tabs[0]?.key ?? 'requirement';
+  // Write the fallback back, so a selection the page has already stopped
+  // honouring cannot come back to life. The page is not remounted between
+  // tickets and polls every few seconds: without this, following a Parent link
+  // to a ticket that has no Reviews yet leaves `tab` on 'reviews', and the
+  // panel jumps off whatever the human is reading the moment review-pr writes
+  // its file.
+  useEffect(() => { setTab(activeTab); }, [activeTab]);
 
   if (!detail) {
     return <ErrorBox title="Ticket not found" body={`No detail for ${ticketId} in this snapshot.`} />;
@@ -84,9 +115,10 @@ export function TicketDetail({ snapshot, ticketId }: { snapshot: Snapshot; ticke
         title={detail.id}
         breadcrumb={breadcrumb}
         actions={
+          // Status and phase used to sit here too. The strip below carries both
+          // now, and the bar does not stick — printing them twice on one screen
+          // is the noise this page was asked to lose.
           <div className="flex items-center gap-3">
-            <Tag status={detail.status} />
-            {detail.phase && <Tag status={detail.phase} />}
             <ControlActions
               project={project}
               ticket={detail.id}
@@ -101,192 +133,88 @@ export function TicketDetail({ snapshot, ticketId }: { snapshot: Snapshot; ticke
         <div className="text-lg" style={{ color: 'var(--text-secondary)' }}>{detail.title}</div>
       )}
 
-      {/* Two-column: 720 main + 280 sidebar; collapses below 1024px */}
-      <div className="ticket-detail-grid">
-        <main className="min-w-0">
-          {detail.control && (
-            <ControlBanner
-              project={project}
-              ticket={detail.id}
-              control={detail.control}
-              workerRunning={workerRunning}
+      {detail.control && (
+        <ControlBanner
+          project={project}
+          ticket={detail.id}
+          control={detail.control}
+          workerRunning={workerRunning}
+        />
+      )}
+
+      {detail.approval?.state === 'pending' && (
+        <ApprovalCallout
+          approval={detail.approval}
+          onOpen={() => setTab('approval')}
+          isOpen={activeTab === 'approval'}
+        />
+      )}
+
+      <StatusStrip
+        detail={detail}
+        running={runner}
+        foreman={
+          <AssignRow
+            project={project}
+            ticket={detail.id}
+            assignee={detail.assignee}
+            foremen={snapshot.foremen ?? []}
+          />
+        }
+      />
+
+      <div>
+        <div
+          className="flex items-end justify-between gap-2"
+          style={{ borderBottom: '1px solid var(--border-hairline)' }}
+        >
+          <nav className="flex gap-1 -mb-px overflow-x-auto" role="tablist">
+            {primaryTabs.map(t => (
+              <TabButton key={t.key} tab={t} active={activeTab === t.key} onClick={() => setTab(t.key)} />
+            ))}
+          </nav>
+          {overflowTabs.length > 0 && (
+            <OverflowTabs
+              tabs={overflowTabs}
+              active={activeTab}
+              onPick={setTab}
+              pending={detail.approval?.state === 'pending'}
             />
           )}
-          <div style={{ borderBottom: '1px solid var(--border-hairline)' }}>
-            <nav className="flex gap-1 -mb-px overflow-x-auto">
-              {tabs.map(t => (
-                <button
-                  key={t.key}
-                  disabled={!t.available}
-                  onClick={() => setTab(t.key)}
-                  className="px-3 py-2 text-sm whitespace-nowrap"
-                  style={{
-                    borderBottom: '2px solid',
-                    borderColor: tab === t.key ? 'var(--accent)' : 'transparent',
-                    color: !t.available
-                      ? 'var(--text-muted)'
-                      : tab === t.key
-                        ? 'var(--accent)'
-                        : 'var(--text-secondary)',
-                    cursor: !t.available ? 'not-allowed' : 'pointer',
-                    fontWeight: tab === t.key ? 500 : 400,
-                    opacity: !t.available ? 0.5 : 1,
-                  }}
-                >
-                  {t.label}
-                </button>
-              ))}
-            </nav>
-          </div>
+        </div>
 
-          <div className="pt-4">
-            {tab === 'approval' && detail.approval && (
-              <ApprovalPanel
-                project={project}
-                ticket={detail.id}
-                approval={detail.approval}
-                requirement={detail.requirement}
-                plan={detail.plan}
-                design={detail.design}
-                prototype={detail.prototype}
-              />
-            )}
-            {tab === 'requirement' && (detail.requirement
-              ? <Markdown source={detail.requirement} />
-              : <EmptyTab label="No requirement." />)}
-            {tab === 'plan' && (detail.plan
-              ? <Markdown source={detail.plan} />
-              : <EmptyTab label="No plan." />)}
-            {tab === 'manifest' && (detail.manifest
-              ? <Markdown source={detail.manifest} />
-              : <EmptyTab label="No manifest." />)}
-            {tab === 'history' && <HistoryTimeline rows={detail.history} />}
-            {tab === 'handoffs' && <FilesView files={detail.handoffs} />}
-            {tab === 'verdicts' && <FilesView files={detail.verdicts} />}
-            {tab === 'reviews' && <FilesView files={detail.reviews} />}
-          </div>
-        </main>
-
-        <aside className="ticket-detail-sidebar">
-          <PropertyList
-            items={[
-              { label: 'Status', value: detail.status },
-              { label: 'Foreman', value: (
-                <AssignRow
-                  project={project}
-                  ticket={detail.id}
-                  assignee={detail.assignee}
-                  foremen={snapshot.foremen ?? []}
-                />
-              ) },
-              // Control sits under its own label, never folded into Status —
-              // the two axes stay readable apart on the one screen that shows
-              // both.
-              { label: 'Control', value: detail.control
-                  ? (
-                    <span title={detail.control.at}>
-                      <span style={{ color: controlTone(detail.control.state).fg }}>{detail.control.state}</span>
-                      {' · '}{detail.control.actor || 'unknown'}
-                      {' · '}{formatRelative(detail.control.at)}
-                    </span>
-                  )
-                  : 'Active' },
-              { label: 'Size', value: detail.size ?? '—' },
-              { label: 'Parent', value: detail.parent
-                  ? <a href={`#/tickets/${detail.parent}`} className="font-mono hover:underline" style={{ color: 'var(--accent)' }}>{detail.parent}</a>
-                  : '—' },
-              { label: 'Branch', value: <span className="font-mono break-all">{detail.branch ?? '—'}</span> },
-              { label: 'Created', value: formatDate(detail.created_at) },
-              { label: 'Updated', value: formatDate(detail.updated_at) },
-              { label: 'Evidence', value: detail.evidence.length },
-            ]}
-          />
-
-          {detail.repos.length > 0 && (
-            <div className="mt-4">
-              <div className="text-xs font-medium uppercase tracking-wide mb-1" style={{ color: 'var(--text-muted)' }}>
-                Repos {detail.repos.length > 1 ? `(${detail.repos.length})` : ''}
-              </div>
-              <ul className="text-xs space-y-2">
-                {detail.repos.map(r => (
-                  <li
-                    key={r.name ?? Math.random()}
-                    className="rounded p-2 space-y-0.5"
-                    style={{ border: '1px solid var(--border-hairline)', backgroundColor: 'var(--surface-elevated)' }}
-                  >
-                    <div className="flex items-center gap-2">
-                      <span className="font-mono font-medium" style={{ color: 'var(--text-primary)' }}>{r.name ?? '—'}</span>
-                      {r.pushed && (
-                        <span
-                          className="px-1.5 py-0.5 text-xs"
-                          style={{ backgroundColor: 'var(--status-completed-bg, var(--surface-bg))', color: 'var(--status-completed-text, var(--text-secondary))', borderRadius: 'var(--radius-sm)' }}
-                          title="Branch pushed to remote"
-                        >
-                          pushed
-                        </span>
-                      )}
-                    </div>
-                    {r.branch && (
-                      <div className="font-mono break-all" style={{ color: 'var(--text-secondary)' }} title={r.branch}>
-                        {r.branch}
-                      </div>
-                    )}
-                    {r.worktree && r.worktree !== '.' && (
-                      <div className="font-mono break-all" style={{ color: 'var(--text-muted)' }} title={r.worktree}>
-                        {r.worktree}
-                      </div>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            </div>
+        <div className="pt-4" id={TABPANEL_ID} role="tabpanel">
+          {activeTab === 'requirement' && detail.requirement && <Markdown source={detail.requirement} />}
+          {activeTab === 'plan' && detail.plan && <Markdown source={detail.plan} />}
+          {activeTab === 'prototype' && (
+            <PrototypeFrame
+              project={project}
+              ticket={detail.id}
+              prototype={detail.prototype}
+              height={720}
+            />
           )}
-
-          {Object.keys(detail.verdict_statuses).length > 0 && (
-            <div className="mt-4">
-              <div className="text-xs font-medium uppercase tracking-wide mb-1" style={{ color: 'var(--text-muted)' }}>
-                Verdicts
-              </div>
-              <ul className="text-xs space-y-1">
-                {Object.entries(detail.verdict_statuses).map(([skill, status]) => (
-                  <li key={skill} className="flex items-center justify-between gap-2">
-                    <span className="font-mono truncate" style={{ color: 'var(--text-secondary)' }}>{skill}</span>
-                    <Tag tone={VERDICT_TONE[status] ?? 'muted'}>{status}</Tag>
-                  </li>
-                ))}
-              </ul>
-            </div>
+          {activeTab === 'handoffs' && <FilesView files={detail.handoffs} />}
+          {activeTab === 'qa' && <QaEvidence verdicts={detail.verdicts} evidence={detail.evidence} />}
+          {activeTab === 'activity' && <HistoryTimeline rows={detail.history} />}
+          {activeTab === 'reviews' && <FilesView files={detail.reviews} />}
+          {activeTab === 'manifest' && detail.manifest && <Markdown source={detail.manifest} />}
+          {activeTab === 'repos' && <ReposList repos={detail.repos} />}
+          {activeTab === 'approval' && detail.approval && (
+            <ApprovalPanel
+              project={project}
+              ticket={detail.id}
+              approval={detail.approval}
+              requirement={detail.requirement}
+              plan={detail.plan}
+              design={detail.design}
+              prototype={detail.prototype}
+            />
           )}
-
-          {detail.checkpoint && (
-            <div
-              className="mt-4 rounded p-3 text-xs space-y-1"
-              style={{ border: '1px solid var(--border-hairline)', backgroundColor: 'var(--surface-elevated)' }}
-            >
-              <div className="uppercase tracking-wide font-medium" style={{ color: 'var(--text-muted)' }}>Checkpoint</div>
-              <div>
-                <span className="font-medium">{detail.checkpoint.workflow}</span>
-                <span style={{ color: 'var(--text-muted)' }}> / </span>
-                <span>{detail.checkpoint.step}</span>
-              </div>
-              <div style={{ color: 'var(--text-secondary)' }}>{detail.checkpoint.status}</div>
-              {detail.checkpoint.note && (
-                <div className="whitespace-pre-wrap" style={{ color: 'var(--text-secondary)' }}>{detail.checkpoint.note}</div>
-              )}
-            </div>
+          {tabs.length === 0 && (
+            <EmptyTab label="Nothing on this ticket yet — documents appear as autopilot produces them." />
           )}
-
-          {detail.evidence.length > 0 && (
-            <div className="mt-4">
-              <div className="text-xs font-medium uppercase tracking-wide mb-1" style={{ color: 'var(--text-muted)' }}>Files</div>
-              <ul className="text-xs space-y-0.5" style={{ color: 'var(--text-secondary)' }}>
-                {detail.evidence.map(e => (
-                  <li key={e} title={e} className="font-mono truncate">{e}</li>
-                ))}
-              </ul>
-            </div>
-          )}
-        </aside>
+        </div>
       </div>
       </div>
     </>
@@ -712,16 +640,296 @@ function EmptyTab({ label }: { label: string }) {
   return <div className="text-sm" style={{ color: 'var(--text-muted)' }}>{label}</div>;
 }
 
-function PropertyList({ items }: { items: { label: string; value: React.ReactNode }[] }) {
+/**
+ * The pending design checkpoint, said out loud above the fold.
+ *
+ * It points at the decision rather than carrying it: the buttons live in
+ * ApprovalPanel, under the rubric and the documents, because approving from a
+ * banner is exactly the unread rubber stamp that panel was built to prevent.
+ */
+function ApprovalCallout({
+  approval,
+  onOpen,
+  isOpen,
+}: {
+  approval: TicketApproval;
+  onOpen: () => void;
+  isOpen: boolean;
+}) {
   return (
-    <dl className="text-xs space-y-2">
-      {items.map(it => (
-        <div key={it.label}>
-          <dt className="uppercase tracking-wide font-medium mb-0.5" style={{ color: 'var(--text-muted)' }}>{it.label}</dt>
-          <dd style={{ color: 'var(--text-primary)' }}>{it.value}</dd>
+    <div
+      className="flex items-center justify-between gap-4 flex-wrap px-4 py-3"
+      style={{
+        border: '1px solid var(--accent)',
+        borderRadius: 'var(--radius-md)',
+        backgroundColor: 'var(--accent-bg-subtle)',
+      }}
+    >
+      <div className="min-w-0">
+        <div className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
+          Design checkpoint — waiting on you
+        </div>
+        <div className="text-xs mt-0.5" style={{ color: 'var(--text-secondary)' }}>
+          {approval.requested_by || 'a worker'} published a plan for review
+          {' · '}
+          <span title={formatDate(approval.at)}>{formatRelative(approval.at)}</span>
+        </div>
+      </div>
+      <Button size="lg" variant="primary" onClick={onOpen} disabled={isOpen}>
+        {isOpen ? 'Reviewing below' : 'Review the design'}
+      </Button>
+    </div>
+  );
+}
+
+/**
+ * Status, across the top instead of down a 280px rail.
+ *
+ * The rail put eight one-line facts in a column tall enough to scroll past a
+ * two-line requirement; the same facts wrap here and read in one glance.
+ */
+function StatusStrip({
+  detail,
+  running,
+  foreman,
+}: {
+  detail: TicketDetailData;
+  running: string | null;
+  foreman: ReactNode;
+}) {
+  const qa = detail.verdict_statuses['qa'] ?? 'none';
+  const review = detail.verdict_statuses['review-pr'] ?? 'none';
+  // The checkpoint's own status and note ride along with the step: `blocked`
+  // is the word that explains a ticket sitting still, and the note is where
+  // autopilot writes what it is blocked on. Neither is shown anywhere else on
+  // the page, so the cell carries both rather than dropping them.
+  const cp = detail.checkpoint;
+  const step = cp
+    ? (
+      <span title={cp.note || undefined}>
+        {cp.workflow} / {cp.step}
+        {cp.status && (
+          <>
+            {' · '}
+            <span style={{ color: 'var(--text-muted)' }}>{cp.status}</span>
+          </>
+        )}
+      </span>
+    )
+    : detail.phase ?? '—';
+
+  const cells: { label: string; value: ReactNode }[] = [
+    { label: 'Status', value: <Tag status={detail.status} /> },
+    { label: 'Step', value: step },
+    { label: 'Running', value: running
+        ? <span className="font-mono" style={{ color: 'var(--status-in_progress-text, var(--accent))' }}>{running}</span>
+        : <span style={{ color: 'var(--text-muted)' }}>—</span> },
+    { label: 'Foreman', value: foreman },
+    { label: 'QA', value: <Tag tone={VERDICT_TONE[qa] ?? 'muted'}>{qa}</Tag> },
+    { label: 'Review', value: <Tag tone={VERDICT_TONE[review] ?? 'muted'}>{review}</Tag> },
+    { label: 'Size', value: detail.size ?? '—' },
+    { label: 'Updated', value: <span title={formatDate(detail.updated_at)}>{formatRelative(detail.updated_at)}</span> },
+  ];
+  if (detail.parent) {
+    cells.push({
+      label: 'Parent',
+      value: <a href={`#/tickets/${detail.parent}`} className="font-mono hover:underline" style={{ color: 'var(--accent)' }}>{detail.parent}</a>,
+    });
+  }
+  if (detail.branch) {
+    // Truncated, not wrapped: a `feat/<ticket>_<slug>` branch is long enough to
+    // triple the height of every cell in its row, and the tail is the part
+    // already spelled out in the breadcrumb.
+    cells.push({ label: 'Branch', value: <span className="block truncate font-mono" title={detail.branch}>{detail.branch}</span> });
+  }
+  // Control keeps its own axis — a paused ticket is not a status, and folding
+  // the two together loses which one the human changed.
+  if (detail.control) {
+    cells.push({
+      label: 'Control',
+      value: (
+        <span title={detail.control.at} style={{ color: controlTone(detail.control.state).fg }}>
+          {detail.control.state}
+        </span>
+      ),
+    });
+  }
+
+  return (
+    <dl className="ticket-status-strip">
+      {cells.map(c => (
+        <div key={c.label}>
+          <dt>{c.label}</dt>
+          <dd>{c.value}</dd>
         </div>
       ))}
     </dl>
+  );
+}
+
+function TabButton({
+  tab,
+  active,
+  onClick,
+}: {
+  tab: { key: Tab; label: string; count?: number };
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      role="tab"
+      aria-selected={active}
+      aria-controls={TABPANEL_ID}
+      onClick={onClick}
+      className="px-3 py-2 text-sm whitespace-nowrap"
+      style={{
+        borderBottom: '2px solid',
+        borderColor: active ? 'var(--accent)' : 'transparent',
+        color: active ? 'var(--accent)' : 'var(--text-secondary)',
+        fontWeight: active ? 500 : 400,
+      }}
+    >
+      {tab.label}
+      {tab.count !== undefined && (
+        <span className="ml-1.5 font-mono" style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+          {tab.count}
+        </span>
+      )}
+    </button>
+  );
+}
+
+/** Everything that is not one of the five documents, behind one menu. */
+function OverflowTabs({
+  tabs,
+  active,
+  onPick,
+  pending,
+}: {
+  tabs: { key: Tab; label: string; count?: number }[];
+  active: Tab;
+  onPick: (t: Tab) => void;
+  pending: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const anchor = useRef<HTMLDivElement>(null);
+  const activeHere = tabs.some(t => t.key === active);
+
+  return (
+    <div className="relative shrink-0" ref={anchor}>
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        className="px-3 py-2 text-sm whitespace-nowrap flex items-center gap-1"
+        style={{
+          borderBottom: '2px solid',
+          borderColor: activeHere ? 'var(--accent)' : 'transparent',
+          color: activeHere ? 'var(--accent)' : 'var(--text-secondary)',
+          fontWeight: activeHere ? 500 : 400,
+        }}
+      >
+        More
+        {/* A pending checkpoint hides in here; the dot is what says so. It
+            goes out only once the decision itself is on screen — reading
+            Activity, which also lives in this menu, answers nothing. */}
+        {pending && active !== 'approval' && (
+          <span
+            aria-label="a decision is waiting"
+            className="rounded-full"
+            style={{ width: 6, height: 6, backgroundColor: 'var(--accent)' }}
+          />
+        )}
+        <ChevronDown size={13} aria-hidden="true" />
+      </button>
+      <Popover open={open} onClose={() => setOpen(false)} label="More views" anchorRef={anchor} width={220}>
+        <ul className="space-y-0.5" role="menu">
+          {tabs.map(t => (
+            <li key={t.key} role="none">
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => { onPick(t.key); setOpen(false); }}
+                className="w-full flex items-center justify-between gap-2 text-left px-2 text-sm"
+                style={{
+                  minHeight: 44,
+                  borderRadius: 'var(--radius-sm)',
+                  color: active === t.key ? 'var(--accent)' : 'var(--text-primary)',
+                  backgroundColor: active === t.key ? 'var(--accent-bg-subtle)' : 'transparent',
+                }}
+                onMouseEnter={e => { if (active !== t.key) e.currentTarget.style.backgroundColor = 'var(--surface-hover)'; }}
+                onMouseLeave={e => { if (active !== t.key) e.currentTarget.style.backgroundColor = 'transparent'; }}
+              >
+                <span className="truncate">{t.label}</span>
+                {t.count !== undefined && (
+                  <span className="font-mono shrink-0" style={{ fontSize: 12, color: 'var(--text-muted)' }}>{t.count}</span>
+                )}
+              </button>
+            </li>
+          ))}
+        </ul>
+      </Popover>
+    </div>
+  );
+}
+
+/** The QA surface: the verdict files, then the artifacts they cite. */
+function QaEvidence({ verdicts, evidence }: { verdicts: NamedFile[]; evidence: string[] }) {
+  return (
+    <div className="space-y-4">
+      <FilesView files={verdicts} />
+      {evidence.length > 0 && (
+        <div>
+          <div className="text-xs font-medium uppercase tracking-wide mb-1" style={{ color: 'var(--text-muted)' }}>
+            Evidence files
+          </div>
+          <ul className="text-xs space-y-0.5" style={{ color: 'var(--text-secondary)' }}>
+            {evidence.map(e => (
+              <li key={e} title={e} className="font-mono truncate">{e}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ReposList({ repos }: { repos: ManifestRepo[] }) {
+  return (
+    <ul className="text-xs space-y-2">
+      {repos.map(r => (
+        <li
+          key={r.name ?? Math.random()}
+          className="rounded p-2 space-y-0.5"
+          style={{ border: '1px solid var(--border-hairline)', backgroundColor: 'var(--surface-elevated)' }}
+        >
+          <div className="flex items-center gap-2">
+            <span className="font-mono font-medium" style={{ color: 'var(--text-primary)' }}>{r.name ?? '—'}</span>
+            {r.pushed && (
+              <span
+                className="px-1.5 py-0.5 text-xs"
+                style={{ backgroundColor: 'var(--status-completed-bg, var(--surface-bg))', color: 'var(--status-completed-text, var(--text-secondary))', borderRadius: 'var(--radius-sm)' }}
+                title="Branch pushed to remote"
+              >
+                pushed
+              </span>
+            )}
+          </div>
+          {r.branch && (
+            <div className="font-mono break-all" style={{ color: 'var(--text-secondary)' }} title={r.branch}>
+              {r.branch}
+            </div>
+          )}
+          {r.worktree && r.worktree !== '.' && (
+            <div className="font-mono break-all" style={{ color: 'var(--text-muted)' }} title={r.worktree}>
+              {r.worktree}
+            </div>
+          )}
+        </li>
+      ))}
+    </ul>
   );
 }
 
