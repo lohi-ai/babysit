@@ -32,6 +32,32 @@ type RepoConfig struct {
 	Name           string  `yaml:"name,omitempty"`
 	Description    string  `yaml:"description,omitempty"`
 	RepoType       string  `yaml:"repo_type,omitempty"`
+	// WorkerAgent names the coding-agent CLI this repo's per-ticket workers run
+	// on, and ForemanAgent the one its foreman runs on; empty means "not stated
+	// here", which falls through to ~/.babysit/config.yaml and then to claude.
+	//
+	// Neither is validated against the known-agent list here. Doing so would
+	// make a repo that pins a newer agent break every command that reads this
+	// file on an older bbs; the check belongs at the spawn that needs the name.
+	// See internal/agent.Resolve.
+	WorkerAgent  string `yaml:"worker_agent,omitempty"`
+	ForemanAgent string `yaml:"foreman_agent,omitempty"`
+}
+
+// AgentFor reads the agent field for a role key — the WorkerKey/ForemanKey
+// constants in internal/agent, not repeated as a dependency here because that
+// package imports this one. The two are separate keys with no inheritance:
+// moving workers to a cheaper agent must not silently move the foreman's audit
+// of their work along with it. An unrecognized key selects nothing, which
+// resolves to the default rather than guessing a role.
+func (c RepoConfig) AgentFor(key string) string {
+	switch key {
+	case "worker_agent":
+		return c.WorkerAgent
+	case "foreman_agent":
+		return c.ForemanAgent
+	}
+	return ""
 }
 
 // RepoConfigPath is <toplevel>/.babysit/config.yaml.

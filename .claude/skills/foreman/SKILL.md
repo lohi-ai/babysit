@@ -4,9 +4,15 @@ description: Attended orchestrator for parallel feature work — one visible Cla
 ---
 # foreman
 
-Workers are full Claude Code sessions in cmux workspaces the human can open at
+Workers are full coding-agent sessions in cmux workspaces the human can open at
 any moment; you dispatch them, watch them, review their designs, and own the
 checkpoint between design and build. Workers own the code.
+
+Which CLI a worker runs on is config, not your decision — ask `bbs foreman
+worker-command` for the command line (see [Dispatch a worker](#dispatch-a-worker))
+rather than writing `claude` yourself. Everything else in this skill is
+agent-independent: the prompt is `/bbs:<skill>` on every agent, and workers are
+driven through cmux and disk state either way.
 
 ## Invocation
 
@@ -85,6 +91,37 @@ command -v cmux >/dev/null 2>&1 && cmux ping >/dev/null 2>&1 || {
 }
 ```
 
+## Which agent runs the workers
+
+Two independent config keys, in `<repo>/.babysit/config.yaml` (committed, the
+team default) or `~/.babysit/config.yaml` (this machine, wins over the repo):
+
+```yaml
+worker_agent: grok    # the per-ticket workers      (default: claude)
+foreman_agent: grok   # this session's own CLI      (default: claude)
+```
+
+They do not inherit from each other, deliberately: moving workers to another
+agent is a throughput choice, and you audit their design gates and QA evidence —
+`worker_agent: grok` alone leaves that audit on Claude Code. `BABYSIT_AGENT`
+overrides both for one run; `--agent <name>` overrides everything.
+
+Non-Claude agents need babysit's skills installed in *their* plugin store, not
+just the binary on PATH — for grok, `grok plugin install
+https://github.com/lohi-ai/babysit`. Without it a worker comes up fine and then
+cannot resolve `/bbs:autopilot`. `worker-command` preflights the binary; the
+plugin is on the human. If a worker's first pane output says the skill is
+unavailable, that is this gap — report it, do not retry on another agent.
+
+grok also gates on **directory trust**, separately from its permission mode: the
+first run in a directory absent from `~/.grok/trusted_folders.toml` stops on "Do
+you trust the contents of this directory?", and `--always-approve` does not
+answer it. `worker-command` and `spawn` both preflight this and fail with the fix
+named, so you get a `BLOCKED` rather than a pane parked on a question. The fix is
+one-time per repo (workers share the repo cwd): `cd <repo> && grok`, answer,
+quit. Do not answer it by sending keystrokes into a worker pane — a trust
+decision that never reaches the file recurs on the next spawn.
+
 Each worker is its own **workspace** — a sidebar entry with its own cwd (the
 ticket worktree), status pill and notification badge, not a horizontal tab
 inside another workspace. The human switches workers by clicking, no
@@ -112,11 +149,16 @@ The title is the durable handle; the ref is not.
 one (designing/building → `working`, escalation → `needs-attention`, design
 gate or QA handoff → `review`) — an unknown lane is rejected, not shown.
 
-**`cmux send` is byte-transparent.** Whatever bytes you hand it arrive at the
-worker's input unchanged: newlines land as newlines, and escape sequences land
-as literal characters rather than being interpreted. Anything in bbs that
-sends multi-line text to a workspace — this skill, `bbs dashboard`'s wake —
-sends it raw and never wraps or re-encodes it.
+**`cmux send` is byte-transparent, with three exceptions.** It interprets `\n`
+and `\r` as Enter and `\t` as Tab; every other byte arrives at the worker's input
+unchanged, so escape sequences land as literal characters rather than being
+interpreted. Anything in bbs that sends multi-line text to a workspace — this
+skill, `bbs dashboard`'s wake — sends it raw and never wraps or re-encodes it.
+
+The practical consequence: **text with no trailing `\n` sits in the worker's
+composer unsent.** The pane still looks busy, so it reads as a worker ignoring
+you. Either end the message with `\n` or follow it with `send-key … enter`, then
+capture the pane and confirm the composer is empty before believing it landed.
 
 Satellites belong *inside* a worker's workspace, so the whole worker closes as
 one unit:
@@ -129,9 +171,16 @@ cmux new-pane --type browser --workspace "$W" --url <url>          # a live prev
 ## Dispatch a worker
 
 ```bash
+# which CLI, with the right yolo flag and the requirement safely quoted.
+# Resolution order: --agent > BABYSIT_AGENT > <repo>/.babysit/config.yaml
+# (worker_agent:) > ~/.babysit/config.yaml > claude. It preflights, so BLOCKED
+# means the agent is not installed — report it, do not fall back to another CLI.
+CMD=$(bbs foreman worker-command --prompt "/bbs:autopilot <requirement>") || {
+  echo "BLOCKED: $CMD" >&2; exit 1; }
+
 # new sidebar workspace, unfocused so the human's current one is not stolen
 W=$(cmux workspace create --name "bbs <slug>" --cwd "$REPO" ${G:+--group "$G"} \
-      --command "claude --dangerously-skip-permissions '/bbs:autopilot <requirement>'" \
+      --command "$CMD" \
     | awk '/^OK/{print $2}')     # -> workspace:5
 
 # batch of 2+: collapse them under one sidebar header. Run once, after the
@@ -150,8 +199,10 @@ worktree` recommended), seeds requirement/design/plan, and **stops at the
 copy-paste `/goal` handoff** — that stop is your review gate. Resuming a
 crashed ticket: same spawn with `/bbs:autopilot builder <ticket>`.
 
-**Every worker is a Claude Code todo** — the task list is the user's live
-board and must mirror reality:
+**Every worker is a todo** — the task list is the user's live board and must
+mirror reality. If you are running on an agent with no task tool, skip this
+mirror silently and treat `bbs ticket board` as the board; it is the ground
+truth either way:
 
 - dispatch → `TaskCreate` `<ticket-or-slug>: <requirement one-liner>
   [<workspace title>]`, `in_progress`; beyond `MAX_WORKERS` →

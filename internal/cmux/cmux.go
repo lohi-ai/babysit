@@ -276,6 +276,12 @@ func (c *Client) Close(title string) error {
 // ErrNoWorkspace means no workspace currently carries that title.
 var ErrNoWorkspace = errors.New("no cmux workspace with that title")
 
+// Ref resolves a workspace title to its live ref, or ErrNoWorkspace when no
+// open workspace carries it. It is the read a caller uses to decide whether a
+// recorded workspace is still there — probing with a Send would answer the
+// same question by typing into somebody's terminal.
+func (c *Client) Ref(title string) (string, error) { return c.workspaceRef(title) }
+
 // workspaceRef resolves a title to a live ref, scanning every window. It runs
 // on EVERY call rather than caching, because refs are positional and churn as
 // workspaces open and close — a cached "workspace:9" silently becomes some

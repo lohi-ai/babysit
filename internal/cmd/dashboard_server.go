@@ -233,7 +233,7 @@ func (s *dashServer) handleAssign(w http.ResponseWriter, r *http.Request) {
 		// The poke lands in the foreman's chat as if a human typed it, so it has
 		// to read as an instruction rather than a notification.
 		wake := s.wake(req.Foreman, fmt.Sprintf(
-			"bbs: ticket %s was assigned to you from the dashboard — pick it up on your next tick.",
+			"ticket %s was assigned to you from the dashboard — pick it up on your next tick.",
 			st.Env.Ticket))
 		resp["wake"] = wake.state
 		resp["wake_detail"] = wake.detail
@@ -282,7 +282,7 @@ func (s *dashServer) handleControl(w http.ResponseWriter, r *http.Request) {
 		// right now, and its next tick is too late. Same channel as assign, and
 		// the same non-fatal treatment — the control state is already on disk.
 		s.wakeAssignee(st, fmt.Sprintf(
-			"bbs: ticket %s was %s from the dashboard — stop work on it.", st.Env.Ticket, state))
+			"ticket %s was %s from the dashboard — stop work on it.", st.Env.Ticket, state))
 		writeJSON(w, http.StatusOK, map[string]string{
 			"ticket": st.Env.Ticket, "control": state, "status": status,
 		})
@@ -346,7 +346,7 @@ func (s *dashServer) handleApproval(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.wakeAssignee(st, fmt.Sprintf(
-		"bbs: the plan/prototype decision on %s is in — %s. Run `bbs ticket approval status` and continue.",
+		"the plan/prototype decision on %s is in — %s. Run `bbs ticket approval status` and continue.",
 		st.Env.Ticket, state))
 	writeJSON(w, http.StatusOK, map[string]string{"ticket": st.Env.Ticket, "approval": state})
 }
@@ -409,6 +409,9 @@ type spawnReq struct {
 	ID      string `json:"id"`
 	Dir     string `json:"dir"`
 	Command string `json:"command"`
+	// Agent is optional: omitted means resolve from config, which is what the
+	// dashboard's spawn button sends.
+	Agent string `json:"agent"`
 }
 
 func (s *dashServer) handleSpawnForeman(w http.ResponseWriter, r *http.Request) {
@@ -423,7 +426,7 @@ func (s *dashServer) handleSpawnForeman(w http.ResponseWriter, r *http.Request) 
 		writeErr(w, http.StatusBadRequest, "dir is required — a foreman is bound to one project folder")
 		return
 	}
-	id, err := spawnForeman(req.ID, req.Dir, req.Command)
+	id, err := spawnForeman(req.ID, req.Dir, req.Command, req.Agent)
 	if err != nil {
 		// Spawn failures are the human's to read: cmux missing, token denied,
 		// id already registered. All of them are 400-class — the server is
@@ -457,6 +460,12 @@ func (s *dashServer) wakeAssignee(st *ticket.Store, msg string) {
 // and the foreman re-derives its inbox from the tickets on the next tick, so a
 // failed poke is a latency problem, not a correctness one.
 //
+// Every poke is prefixed with the foreman skill invocation rather than plain
+// prose. A foreman is a long-lived session, so by the time the dashboard pokes
+// it the skill may be several compactions behind it; re-invoking reloads the
+// protocol the message assumes the receiver is following. Callers pass the
+// instruction alone — the prefix is applied here so no wake site can forget it.
+//
 // The two failure classes are kept apart deliberately. ErrNoWorkspace means the
 // workspace is gone — that is criterion 10's unreachable. A preflight failure
 // means cmux itself is missing, not running, or refusing our capability token,
@@ -476,7 +485,7 @@ func (s *dashServer) wake(id, msg string) wakeResult {
 	if err != nil {
 		return wakeResult{"cmux-unavailable", err.Error()}
 	}
-	if err := client.Send(rec.WorkspaceTitle, msg+"\n"); err != nil {
+	if err := client.Send(rec.WorkspaceTitle, "/bbs:foreman "+msg+"\n"); err != nil {
 		if errors.Is(err, cmux.ErrNoWorkspace) {
 			foreman.MarkUnreachable(id)
 			return wakeResult{"unreachable", fmt.Sprintf("workspace %q is not open — the assignment is on disk and will be picked up on the foreman's next resume", rec.WorkspaceTitle)}

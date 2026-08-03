@@ -17,13 +17,24 @@ import (
 )
 
 // configHeader is written verbatim on the first `set` into a fresh file. It
-// must stay byte-identical to CONFIG_HEADER in bin/bbs-config.
+// began as a byte-for-byte copy of CONFIG_HEADER in bin/bbs-config; that script
+// is gone (bin/bbs-config is now a symlink to this binary), so the header is
+// owned here and documents new keys as they land.
 const configHeader = `# babysit configuration — edit freely, changes take effect on next skill run.
 # Docs: https://github.com/reallongnguyen/babysit
 #
 # ─── Behavior ────────────────────────────────────────────────────────
 # proactive: true           # Auto-invoke skills when the request matches one.
 #                           # Set to false to only run skills explicitly typed.
+#
+# ─── Coding agent ────────────────────────────────────────────────────
+# worker_agent: claude      # which CLI foreman dispatches workers on:
+#                           #   claude | grok
+# foreman_agent: claude     # which CLI the foreman itself runs on. Separate
+#                           # from worker_agent on purpose — the foreman audits
+#                           # its workers, so moving them does not move the audit.
+#                           # Non-claude agents need babysit in their own plugin
+#                           # store (grok: grok plugin install <babysit url>).
 #
 # ─── Telemetry ───────────────────────────────────────────────────────
 # telemetry: local          # off | local

@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"crypto/rand"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -11,9 +13,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/reallongnguyen/babysit/internal/agent"
 	"github.com/reallongnguyen/babysit/internal/cmux"
 	"github.com/reallongnguyen/babysit/internal/foreman"
 	"github.com/reallongnguyen/babysit/internal/identity"
+	"github.com/reallongnguyen/babysit/internal/qaconfig"
 	"github.com/reallongnguyen/babysit/internal/ticket"
 	"github.com/spf13/cobra"
 )
@@ -21,14 +25,26 @@ import (
 const foremanUsage = `Usage:
   bbs foreman list
   bbs foreman inbox <id>
-  bbs foreman register <id> [--dir <path>] [--workspace-title <title>] [--session <path>]
-  bbs foreman heartbeat <id> [--status <status>] [--session <path>]
-  bbs foreman spawn [<id>] [--dir <path>] [--command <text>]
+  bbs foreman register <id> [--dir <path>] [--workspace-title <title>] [--session <uuid>]
+  bbs foreman heartbeat <id> [--status <status>] [--session <uuid>]
+  bbs foreman spawn [<id>] [--dir <path>] [--command <text>] [--agent <name>]
+  bbs foreman worker-command --prompt <text> [--agent <name>] [--dir <path>]
   bbs foreman retire <id> [--keep-workspace]
   bbs foreman grant <id> [--hours <n>] [--max <n>] [--tickets <a,b>] [--unbounded]
   bbs foreman grant show <id>
   bbs foreman grant revoke <id>
 `
+
+// foremanSkillPrompt is the opening prompt every spawned foreman gets, and the
+// prefix on every poke sent into a running one. A workspace that comes up on a
+// bare `claude` is just a Claude session sitting in a repo — it does not know
+// it is a foreman until something tells it, and a long-lived one loses the
+// skill to context compaction. Re-invoking is cheap and idempotent by the
+// skill's own design (bare `/bbs:foreman` = reconcile and resume), so the
+// prompt doubles as the refresh.
+//
+// Unquoted: the agent profile shell-quotes it when rendering the command line.
+const foremanSkillPrompt = `/bbs:foreman`
 
 func newForemanCmd() *cobra.Command {
 	return &cobra.Command{
@@ -70,6 +86,8 @@ func dispatchForeman(args []string) error {
 	case "spawn":
 		_, err := foremanSpawn(rest)
 		return err
+	case "worker-command":
+		return foremanWorkerCommand(rest)
 	case "retire":
 		return foremanRetire(rest)
 	case "grant":
@@ -117,14 +135,15 @@ func foremanList() error {
 		fmt.Println("no foremen registered")
 		return nil
 	}
-	fmt.Printf("%-16s %-12s %-8s %-14s %-28s %s\n", "ID", "OWNER", "LIVE", "STATUS", "WORKSPACE", "DIR")
+	fmt.Printf("%-16s %-12s %-8s %-14s %-28s %-38s %s\n", "ID", "OWNER", "LIVE", "STATUS", "WORKSPACE", "SESSION", "DIR")
 	for _, r := range records {
 		live := "stale"
 		if r.Live() {
 			live = "live"
 		}
-		fmt.Printf("%-16s %-12s %-8s %-14s %-28s %s\n",
-			r.ID, r.Owner, live, orDefault(r.Status, "-"), orDefault(r.WorkspaceTitle, "-"), r.WorkspaceDir)
+		fmt.Printf("%-16s %-12s %-8s %-14s %-28s %-38s %s\n",
+			r.ID, r.Owner, live, orDefault(r.Status, "-"), orDefault(r.WorkspaceTitle, "-"),
+			orDefault(r.Session, "-"), r.WorkspaceDir)
 	}
 	return nil
 }
@@ -267,7 +286,44 @@ func foremanSpawn(args []string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return spawnForeman(id, kv["dir"], kv["command"])
+	return spawnForeman(id, kv["dir"], kv["command"], kv["agent"])
+}
+
+// foremanWorkerCommand prints the command line that runs one worker on a
+// prompt, so the foreman skill does not have to know which CLI it is dispatching
+// or how that CLI spells "stop asking for approval". Resolution lives here for
+// the same reason ticket identity has exactly one codepath: a bash conditional
+// in SKILL.md would be a second place agent selection could drift.
+//
+// It preflights, so a missing binary — or a directory the agent would stop and
+// ask about — is reported before cmux opens a workspace on a command that cannot
+// run. --dir is the worker's cwd, defaulting to the repo the foreman is in,
+// matching the `--cwd "$REPO"` the skill passes to `cmux workspace create`.
+func foremanWorkerCommand(args []string) error {
+	_, kv, err := foremanFlags(args)
+	if err != nil {
+		return err
+	}
+	prompt := kv["prompt"]
+	if prompt == "" {
+		return fmt.Errorf("foreman worker-command: needs --prompt <text>\n%s", foremanUsage)
+	}
+	prof, err := agent.Resolve(agent.WorkerKey, kv["agent"])
+	if err != nil {
+		return err
+	}
+	if err := prof.Preflight(); err != nil {
+		return err
+	}
+	dir := kv["dir"]
+	if dir == "" {
+		dir = qaconfig.RepoToplevel()
+	}
+	if err := prof.PreflightDir(dir); err != nil {
+		return err
+	}
+	fmt.Println(prof.WorkerCommand(prompt))
+	return nil
 }
 
 // spawnForeman creates the cmux workspace a foreman runs in and registers the
@@ -279,12 +335,21 @@ func foremanSpawn(args []string) (string, error) {
 // It takes its inputs typed rather than as an argv: the dashboard's fields
 // arrive as JSON, and round-tripping them through the flag parser would let an
 // id beginning with "-" be re-read as a flag.
-func spawnForeman(id, dir, command string) (string, error) {
+//
+// Spawn is also the resume path. A registered id whose workspace has since been
+// closed used to be a hard error ("retire it first"), which is the one thing a
+// human must not do here: retiring drops the record, and with it the only
+// pointer back to the conversation the foreman was having. So a registered id
+// with a dead workspace re-opens one on `claude --resume <session>` instead. A
+// registered id whose workspace is still OPEN stays an error — that is a real
+// collision, not a restart.
+func spawnForeman(id, dir, command, agentFlag string) (string, error) {
 	client, err := cmux.Preflight()
 	if err != nil {
 		return "", err
 	}
 
+	dirGiven := dir != ""
 	if dir == "" {
 		if dir, err = os.Getwd(); err != nil {
 			return "", err
@@ -301,30 +366,118 @@ func spawnForeman(id, dir, command string) (string, error) {
 	if err := foreman.ValidID(id); err != nil {
 		return "", err
 	}
-	if _, err := foreman.Load(id); err == nil {
-		return "", fmt.Errorf("foreman %s already registered — retire it first", id)
+
+	r, loadErr := foreman.Load(id)
+	resuming := loadErr == nil
+	if resuming {
+		if ref, err := client.Ref(r.WorkspaceTitle); err == nil {
+			return "", fmt.Errorf("foreman %s already registered and running in %s — retire it first", id, ref)
+		} else if !errors.Is(err, cmux.ErrNoWorkspace) {
+			// cmux could not answer. Spawning anyway would create a second
+			// workspace next to a live one we simply failed to see.
+			return "", fmt.Errorf("cannot tell whether %s is still running: %w", id, err)
+		}
+		// A foreman is bound to ONE project. Resuming from wherever the human
+		// happened to be standing must not re-point it: only an explicit --dir
+		// moves a foreman.
+		if !dirGiven && r.WorkspaceDir != "" {
+			dir = r.WorkspaceDir
+		}
+	} else {
+		r = foreman.Record{ID: id}
+	}
+
+	// The session id is minted here rather than read back afterwards. A foreman
+	// is one long conversation, and the only durable handle on it is the uuid
+	// Claude Code was told to use: correlating after the fact through
+	// ~/.babysit/sessions by cwd cannot tell two sessions in the same repo
+	// apart, which is exactly the case a foreman lives in.
+	//
+	// A resume with no recorded session (a foreman registered before this, or
+	// by `foreman register`) mints one and starts fresh — there is nothing to
+	// resume, and guessing a uuid would fail at launch.
+	verb, session := "spawned", r.Session
+	if session == "" {
+		if session, err = newSessionID(); err != nil {
+			return "", err
+		}
+	} else if resuming {
+		verb = "resumed"
+	}
+
+	// Which CLI runs this foreman. On a resume the recorded agent wins over
+	// config: the session uuid above is only meaningful to the CLI that minted
+	// it, so re-resolving from a config that has changed since would hand a
+	// different agent a uuid it has never heard of. An explicit --agent that
+	// contradicts the recording is a mistake worth naming rather than silently
+	// honoring either way.
+	var prof agent.Profile
+	if resuming && r.Session != "" {
+		pinned := r.Agent
+		if pinned == "" {
+			pinned = agent.Default // records written before agents were selectable
+		}
+		if agentFlag != "" && agentFlag != pinned {
+			return "", fmt.Errorf("foreman %s has a %s session — cannot resume it as %s; "+
+				"retire it first to start a fresh conversation", id, pinned, agentFlag)
+		}
+		prof, err = agent.ByName(pinned)
+	} else {
+		prof, err = agent.Resolve(agent.ForemanKey, agentFlag)
+	}
+	if err != nil {
+		return "", err
 	}
 
 	title := "bbs foreman " + id
 	if command == "" {
-		command = "claude"
+		// Only when we build the command ourselves: an explicit --command is the
+		// caller's business, and preflighting an agent it may not even invoke
+		// would refuse a legitimate `--command "bash -l"`.
+		if err := prof.Preflight(); err != nil {
+			return "", err
+		}
+		if err := prof.PreflightDir(dir); err != nil {
+			return "", err
+		}
+		if verb == "resumed" {
+			command = prof.ResumeCommand(session, foremanSkillPrompt)
+		} else {
+			command = prof.NewSessionCommand(session, foremanSkillPrompt)
+		}
 	}
 	ref, err := client.Create(cmux.CreateOpts{Title: title, Cwd: dir, Command: command})
 	if err != nil {
 		return "", err
 	}
 
-	r := foreman.Record{
-		ID: id, Owner: currentUser(),
-		ProjectDir: dir, WorkspaceDir: dir,
-		WorkspaceRef: ref, WorkspaceTitle: title,
-		Status: "idle", Heartbeat: foreman.Now(),
-	}
+	r.Owner = currentUser()
+	r.ProjectDir, r.WorkspaceDir = dir, dir
+	r.WorkspaceRef, r.WorkspaceTitle = ref, title
+	r.Session = session
+	r.Agent = prof.Name
+	r.Status = "idle"
+	r.Heartbeat = foreman.Now()
+	r.Unreachable = ""
 	if err := foreman.Save(r); err != nil {
 		return "", fmt.Errorf("workspace %s created but registering %s failed: %w", ref, id, err)
 	}
-	fmt.Printf("spawned %s in %s (%s)\n", id, ref, dir)
+	fmt.Printf("%s %s in %s (%s, session %s)\n", verb, id, ref, dir, session)
 	return id, nil
+}
+
+// newSessionID mints the uuid v4 `claude --session-id` requires. crypto/rand
+// matches newTicketID's source; unlike a ticket id this one has no epoch
+// fallback, because a non-uuid would be rejected by the CLI at launch and the
+// workspace would come up dead.
+func newSessionID() (string, error) {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("cannot mint a session id: %w", err)
+	}
+	b[6] = (b[6] & 0x0f) | 0x40 // version 4
+	b[8] = (b[8] & 0x3f) | 0x80 // variant 10
+	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16]), nil
 }
 
 // foremanRetire closes the workspace and drops the record. Retiring is not
