@@ -21,10 +21,22 @@ func timeNow() int64 { return time.Now().Unix() }
 
 // Options configures one snapshot composition.
 type Options struct {
-	StateDir       string
-	Version        string
-	SnapshotAt     string
-	SlugOverride   string // deprecated single-project filter; "" = all projects
+	StateDir     string
+	Version      string
+	SnapshotAt   string
+	SlugOverride string // deprecated single-project filter; "" = all projects
+	// CurrentSlug is the project of the directory the dashboard was launched
+	// from. It seeds meta.active_project — the filter the SPA opens on — so
+	// `bbs dashboard` in a repo shows that repo. Ignored when the slug has no
+	// state on disk: an active_project naming a project the snapshot does not
+	// carry would leave the SPA filtered to nothing.
+	CurrentSlug string
+	// CurrentDir is the repo folder the dashboard was launched from (the repo's
+	// primary worktree, not a ticket worktree). It seeds meta.current_dir, which
+	// the SPA prefills into the spawn form — a foreman is bound to a folder, and
+	// the folder the human started the server in is the one they mean. Empty
+	// when the launch cwd was not a git repo.
+	CurrentDir     string
 	DecisionsCap   int
 	SkillEventsCap int
 	Warn           func(msg string) // stderr sink (caller adds the bbs-dashboard: prefix)
@@ -85,8 +97,14 @@ func Compose(o Options) obj {
 		truncations = append(truncations, obj{"kind": "skillEvents", "kept": len(skillEvents), "total": skillEventsTotal})
 	}
 
+	// The cwd's project wins; alphabetical-first is only the fallback for a
+	// launch outside any known repo. Without this the SPA opened on whichever
+	// slug sorted first — usually a leftover test fixture, never the project
+	// the human was standing in.
 	var activeProject interface{}
-	if keys := sortedKeys(projects); len(keys) > 0 {
+	if _, ok := projects[o.CurrentSlug]; ok {
+		activeProject = o.CurrentSlug
+	} else if keys := sortedKeys(projects); len(keys) > 0 {
 		activeProject = keys[0]
 	}
 
@@ -96,6 +114,7 @@ func Compose(o Options) obj {
 			"generated_at":    o.SnapshotAt,
 			"babysit_version": o.Version,
 			"active_project":  activeProject,
+			"current_dir":     o.CurrentDir,
 			"truncations":     truncations,
 		},
 		"projects":       projects,
@@ -225,15 +244,15 @@ func ticketDetail(o Options, tdir string) (obj, bool) {
 	repos := manifestRepos(filepath.Join(tdir, "manifest.yaml"))
 
 	return obj{
-		"id":               id,
-		"title":            title,
-		"status":           dig(idx, "status", "unknown"),
-		"phase":            digRaw(idx, "phase"),
-		"branch":           digPath(idx, "pointers", "branch"),
-		"parent":           digRaw(idx, "parent"),
-		"size":             digPath(idx, "pointers", "ticket_size"),
-		"updated_at":       digRaw(idx, "updated_at"),
-		"created_at":       digRaw(idx, "created_at"),
+		"id":         id,
+		"title":      title,
+		"status":     dig(idx, "status", "unknown"),
+		"phase":      digRaw(idx, "phase"),
+		"branch":     digPath(idx, "pointers", "branch"),
+		"parent":     digRaw(idx, "parent"),
+		"size":       digPath(idx, "pointers", "ticket_size"),
+		"updated_at": digRaw(idx, "updated_at"),
+		"created_at": digRaw(idx, "created_at"),
 		// assignee and control ride alongside status, never merged into it:
 		// status is the reconciled lifecycle rung, control is the human's
 		// override on top of it. Folding "paused" into status would destroy

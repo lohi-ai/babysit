@@ -24,6 +24,10 @@ export interface Meta {
   generated_at: string;
   babysit_version: string;
   active_project: string | null;
+  // The repo folder the dashboard server was launched from. Prefilled as the
+  // workspace folder when spawning a foreman. Absent on pre-1.63 snapshots,
+  // empty when the server was launched outside a git repo.
+  current_dir?: string;
   truncations: TruncationMarker[];
   // v1 compat fields (may be absent on v2 snapshots)
   snapshot_at?: string;
