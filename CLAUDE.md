@@ -300,7 +300,20 @@ Three places must stay in sync:
 | `.claude-plugin/marketplace.json` | `metadata.version` |
 | `.claude-plugin/marketplace.json` | `plugins[0].version` |
 
-Quick check: `grep -r "version" .claude-plugin/ VERSION` — all three should show the same value.
+Quick check: `grep -r "version" .claude-plugin/ VERSION` — all three should show the same value. CI enforces this too: `.github/workflows/release.yml` fails the run when they disagree, rather than shipping a plugin that misreports its own version.
+
+**Bumping VERSION on `main` is the release.** The push triggers `release.yml`,
+which tags `v$(cat VERSION)`, builds the four archives with goreleaser, commits
+the real checksums into `Formula/bbs.rb`, and only then publishes the GitHub
+Release. Commits that don't touch `VERSION` are a no-op — the run stops as soon
+as it sees the tag already exists. Pushing a `v*` tag by hand still works for
+re-cutting or for tagging a commit that isn't main's head.
+
+Two rules the file's comments explain in place, worth knowing before editing it:
+the version is never derived from commit messages (it would desync the three
+places above), and the tagging must stay *inside* the release job — a tag pushed
+with the default `GITHUB_TOKEN` does not trigger workflows, so a separate
+tagging workflow would mint tags that never build.
 
 ## Telemetry
 

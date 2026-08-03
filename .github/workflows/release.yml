@@ -1,16 +1,25 @@
 name: Release
 
-# Fires when a human pushes a version tag (v*). The pipeline is built but never
-# fired by babysit: cutting the release is the human's action.
+# Two ways in, one pipeline:
 #
-#   1. bump VERSION (+ the two marketplace.json mirrors — CLAUDE.md 3-place rule)
-#   2. git tag v$(cat VERSION) && git push origin v$(cat VERSION)
+#   * push to main  — the normal path. VERSION is the trigger: when the commit
+#     lands with a VERSION that has no tag yet, this cuts v$(cat VERSION).
+#     Ordinary commits that don't touch VERSION are a no-op.
+#   * push a v* tag — the manual path, still supported for re-cutting or for
+#     tagging a commit that isn't main's head.
 #
-# goreleaser builds the 4 archives + checksums and publishes a DRAFT GitHub
-# Release; the human reviews and publishes it. The sync-formula step then
-# rewrites Formula/bbs.rb on the default branch with the real checksums.
+# The version is NEVER derived from commit messages. VERSION is babysit's source
+# of truth and .claude-plugin/marketplace.json mirrors it twice (CLAUDE.md's
+# 3-place rule); an auto-bump would move the tag while leaving those mirrors
+# stale, and the plugin loader reads marketplace.json to detect upgrades. So the
+# human owns the number, and CI owns everything after it.
+#
+# IMPORTANT: the tag is created inside the release job, not by a separate
+# tagging workflow. A tag pushed with the default GITHUB_TOKEN does not trigger
+# workflows, so splitting this in two would create tags that never build.
 on:
   push:
+    branches: [main]
     tags:
       - 'v*'
 
@@ -18,29 +27,95 @@ permissions:
   contents: write
 
 jobs:
-  release:
+  # Decide whether this push is a release, and on which version. Kept separate
+  # so the common case — a main push that isn't a version bump — costs one
+  # cheap job and skips goreleaser entirely.
+  plan:
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.decide.outputs.version }}
+      release: ${{ steps.decide.outputs.release }}
+      tag-here: ${{ steps.decide.outputs.tag-here }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      # The tag is the release version; VERSION is babysit's source of truth.
-      # Refuse a tag that disagrees rather than mislabel the release.
-      - name: Guard tag matches VERSION
+      - id: decide
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
         run: |
-          want="v$(cat VERSION)"
-          got="${GITHUB_REF_NAME}"
-          if [ "$got" != "$want" ]; then
-            echo "::error::tag $got != v\$(cat VERSION) ($want) — bump VERSION and its marketplace.json mirrors first"
+          set -euo pipefail
+          version="$(cat VERSION)"
+
+          # The 3-place sync rule, enforced instead of grepped by hand: a
+          # release whose marketplace.json disagrees with VERSION ships a plugin
+          # that misreports its own version, and `claude plugin update` then
+          # can't tell an upgrade from a no-op.
+          meta="$(jq -r '.metadata.version' .claude-plugin/marketplace.json)"
+          plug="$(jq -r '.plugins[0].version' .claude-plugin/marketplace.json)"
+          if [ "$meta" != "$version" ] || [ "$plug" != "$version" ]; then
+            echo "::error::VERSION ($version) != marketplace.json (metadata=$meta, plugins[0]=$plug) — CLAUDE.md's 3-place rule"
             exit 1
           fi
-          echo "tag matches VERSION: $got"
+
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+          if [ "$REF_TYPE" = "tag" ]; then
+            # Tag path: the tag names the release, VERSION must agree.
+            if [ "$REF_NAME" != "v$version" ]; then
+              echo "::error::tag $REF_NAME != v$version — bump VERSION and its marketplace.json mirrors first"
+              exit 1
+            fi
+            echo "release=true"  >> "$GITHUB_OUTPUT"
+            echo "tag-here=false" >> "$GITHUB_OUTPUT"
+            echo "tag push: releasing $REF_NAME"
+            exit 0
+          fi
+
+          # Branch path: release only if this VERSION has never been tagged.
+          # This is also what makes the run idempotent — the formula-sync commit
+          # below pushes to main and re-triggers us, and lands here as a no-op.
+          if git ls-remote --exit-code --tags origin "v$version" >/dev/null 2>&1; then
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            echo "tag-here=false" >> "$GITHUB_OUTPUT"
+            echo "v$version already tagged — nothing to release"
+            exit 0
+          fi
+          echo "release=true" >> "$GITHUB_OUTPUT"
+          echo "tag-here=true" >> "$GITHUB_OUTPUT"
+          echo "VERSION bumped to $version with no tag — cutting v$version"
+
+  release:
+    needs: plan
+    if: needs.plan.outputs.release == 'true'
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # goreleaser derives the release from the git tag, so it must exist on
+      # this commit before the build — not after it.
+      - name: Tag v${{ needs.plan.outputs.version }}
+        if: needs.plan.outputs.tag-here == 'true'
+        run: |
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "v$VERSION" -m "v$VERSION"
+          git push origin "v$VERSION"
 
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
 
+      # Builds the CLI for darwin+linux × amd64+arm64 and uploads the archives
+      # plus checksums.txt. Stays a DRAFT here on purpose: nothing is visible
+      # until the formula that points at it has been committed.
       - name: goreleaser release (draft)
         uses: goreleaser/goreleaser-action@v6
         with:
@@ -54,9 +129,6 @@ jobs:
       - name: Sync Formula/bbs.rb with release checksums
         run: |
           set -euo pipefail
-          # Read the version from the tagged commit before switching branches
-          # (the guard above already asserted it equals the tag).
-          version="$(cat VERSION)"
           # goreleaser wrote dist/checksums.txt as an untracked file; it survives
           # the branch switch. Move to the default branch FIRST, then regenerate
           # there, so the working tree is never dirtied across the checkout.
@@ -65,13 +137,22 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git fetch origin "$default"
           git checkout "$default"
-          scripts/gen-formula.sh "$version" dist/checksums.txt > Formula/bbs.rb
+          scripts/gen-formula.sh "$VERSION" dist/checksums.txt > Formula/bbs.rb
           if git diff --quiet -- Formula/bbs.rb; then
             echo "Formula already current — nothing to commit"
             exit 0
           fi
           git add Formula/bbs.rb
-          git commit -m "chore(release): sync Formula/bbs.rb checksums for v$version"
+          git commit -m "chore(release): sync Formula/bbs.rb checksums for v$VERSION"
           git push origin "$default"
         env:
           GITHUB_EVENT_REPOSITORY_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+
+      # Publish last. Homebrew cannot fetch a draft's assets, so a release that
+      # went live before its formula landed would be installable and broken;
+      # this ordering means a failed formula sync leaves a draft nobody can
+      # install rather than a published release that 404s.
+      - name: Publish the release
+        run: gh release edit "v$VERSION" --draft=false
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
