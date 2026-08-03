@@ -45,8 +45,20 @@ type Record struct {
 	// actually talks to the workspace re-derives the ref from the title.
 	WorkspaceRef   string `yaml:"workspace_ref"`
 	WorkspaceTitle string `yaml:"workspace_title"`
-	// Session is the ~/.babysit/sessions/<id>.yaml this foreman is currently
-	// running as; empty until it reports one.
+	// Agent is the coding-agent CLI this foreman's session was minted by
+	// ("claude", "grok"). It is pinned at spawn and read back on resume rather
+	// than re-resolved from config: Session below is only meaningful to the CLI
+	// that created it, so resuming with whatever config says today would hand a
+	// different agent a uuid it has never heard of. Empty means claude — every
+	// record written before agents were selectable.
+	Agent string `yaml:"agent,omitempty"`
+	// Session is the session uuid this foreman's conversation lives
+	// in — minted by `foreman spawn` and handed to the CLI as `--session-id`,
+	// so a later spawn can re-open the same conversation with `--resume`. It is
+	// the id, not the ~/.babysit/sessions/<id>.yaml path: that file is written
+	// by the session-writer hook, which does not know foremen exist, and a
+	// foreman spawned outside a hooked run would have no file to point at.
+	// Empty for a foreman that was registered rather than spawned.
 	Session   string `yaml:"session,omitempty"`
 	Status    string `yaml:"status"`
 	Heartbeat string `yaml:"heartbeat"`

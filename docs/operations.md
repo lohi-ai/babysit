@@ -12,6 +12,54 @@ bbs config set proactive true        # false = only run skills typed explicitly
 bbs config list                      # show all keys + annotated docs
 ```
 
+### Which coding agent runs the work
+
+`foreman` dispatches workers as coding-agent CLI sessions. Two keys pick which
+CLI, in `~/.babysit/config.yaml` above or in a repo's committed
+`.babysit/config.yaml` (the global file wins, so a machine can opt out without
+editing tracked state):
+
+| Key | Selects | Default |
+|-----|---------|---------|
+| `worker_agent` | the per-ticket workers | `claude` |
+| `foreman_agent` | the foreman session itself | `claude` |
+
+Supported: `claude`, `grok`. `BABYSIT_AGENT=<name>` overrides both for one run;
+`bbs foreman spawn --agent <name>` overrides everything.
+
+The two keys do not inherit from each other on purpose. A foreman reviews design
+gates and QA evidence from its workers, so moving workers to another agent is a
+throughput choice that must not silently relocate that audit — `worker_agent:
+grok` alone leaves the foreman on Claude Code.
+
+Adding an agent is a registry entry in `internal/agent`, which owns the binary
+name and the flag that suppresses tool approval. Two things it does not own:
+
+- **Skills must be installed for that agent.** Non-Claude CLIs have their own
+  plugin stores — for grok, `grok plugin install
+  https://github.com/lohi-ai/babysit`. Without it a worker launches fine and then
+  cannot resolve `/bbs:autopilot`. `bbs foreman worker-command` preflights the
+  binary on PATH; the plugin install is on the operator.
+- **A foreman's session is pinned to the agent that minted it.** `spawn` records
+  it and reuses it on resume, because a session uuid means nothing to a different
+  CLI. Changing `foreman_agent` takes effect on the next *new* foreman, not on a
+  resume; `bbs foreman spawn <id> --agent <other>` refuses rather than guess.
+
+**grok needs the directory trusted first.** grok keeps a per-folder trust record
+in `~/.grok/trusted_folders.toml`, and it is *separate* from `permission_mode` —
+with `always-approve` set globally, a first run in an unlisted directory still
+stops on "Do you trust the contents of this directory?", which `--always-approve`
+does not answer. An unattended worker parked on that prompt reads as a hung
+ticket. Both spawn paths preflight it and refuse with the fix named, so the
+failure is loud instead of silent. Grant it once per repo:
+
+```bash
+cd <repo> && grok      # answer the trust prompt, then quit
+```
+
+Workers launch with `--cwd <repo>`, so this is one decision per repo, not per
+worktree.
+
 ## Telemetry
 
 Skill runs append JSON Lines to `~/.babysit/analytics/skill-usage.jsonl`. Because babysit runs unattended, telemetry is the *primary* feedback channel — treat it as load-bearing, not decoration. Local-only by default; nothing leaves the machine.
