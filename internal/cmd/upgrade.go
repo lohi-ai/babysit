@@ -179,7 +179,17 @@ func upgradeHints(babysit string) []string {
 	case isDir(filepath.Join(home, ".claude", "plugins", "cache", "babysit")):
 		out = append(out, "  Skills: claude plugin marketplace update babysit && claude plugin update bbs@babysit")
 	case isDir(filepath.Join(home, ".claude", "skills", "babysit")):
-		out = append(out, "  Skills: ~/.claude/skills/babysit is a skills-dir install — re-sync it from a checkout")
+		// A skills-dir plugin is loaded in place, so it is often a symlink to the
+		// operator's own checkout. That shape upgrades itself: `bbs upgrade` run
+		// from the target pulls and relinks, and the plugin sees it immediately.
+		// Telling them to "re-sync" would send them looking for a copy step that
+		// does not exist.
+		dir := filepath.Join(home, ".claude", "skills", "babysit")
+		if target, err := filepath.EvalSymlinks(dir); err == nil && target != dir {
+			out = append(out, "  Skills: ~/.claude/skills/babysit links to "+target+" — run `bbs upgrade` from there")
+		} else {
+			out = append(out, "  Skills: ~/.claude/skills/babysit is a skills-dir install — re-sync it from a checkout")
+		}
 	default:
 		out = append(out, "  Skills: claude plugin marketplace update babysit && claude plugin update bbs@babysit")
 	}
