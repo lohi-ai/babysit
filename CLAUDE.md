@@ -240,7 +240,9 @@ babysit/
 ├── hooks/hooks.json   # plugin hook wiring (artifact-gated approval — see docs/artifact-gated-approval.md)
 ├── tests/             # shell + python suites for bins, workflows, and autopilot integration
 ├── docs/              # roadmap, identity, workspaces, operations, artifact-gated-approval
-├── web/               # snapshot dashboard (Vite/React) over ~/.babysit state
+├── web/               # dashboard SPA (Vite/React) over ~/.babysit state; release
+│                      #   builds stage it into internal/webui/dist for //go:embed
+│                      #   (scripts/build-webui.sh), so brew-only installs can serve it
 └── .claude/
     └── skills/        # see "Skill inventory by invocation mode" above
 ```

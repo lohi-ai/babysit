@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net"
 	"net/http"
 	"os"
@@ -29,7 +30,12 @@ import (
 //     same .index.lock. The server is a second writer to ticket state, not a
 //     second implementation of it.
 type dashServer struct {
-	stateDir  string
+	stateDir string
+	// distFS is the SPA to serve: web/dist on disk when a checkout has built
+	// it, else the copy embedded in the binary (internal/webui). distDir is the
+	// disk path, kept only for the message that names what is being served —
+	// it is empty when the embedded copy won.
+	distFS    fs.FS
 	distDir   string
 	version   string
 	slug      string // deprecated --slug filter, honored here so both modes agree
@@ -63,7 +69,7 @@ func (s *dashServer) mux() *http.ServeMux {
 		w.Header().Set("Content-Type", "application/javascript")
 		fmt.Fprintln(w, "// served mode: the SPA fetches /api/snapshot")
 	})
-	m.Handle("/", http.FileServer(http.Dir(s.distDir)))
+	m.Handle("/", http.FileServerFS(s.distFS))
 	return m
 }
 
@@ -483,7 +489,7 @@ func (s *dashServer) wake(id, msg string) wakeResult {
 
 // serveDashboard binds a localhost listener and serves until interrupted.
 func serveDashboard(s *dashServer, port int, open bool) error {
-	if _, err := os.Stat(filepath.Join(s.distDir, "index.html")); err != nil {
+	if s.distFS == nil {
 		// Same string as the snapshot path's, verbatim: `bbs dashboard` with no
 		// flags now lands here instead of there, and that is the message
 		// tests/test_bbs_dashboard.sh asserts on for the default invocation.
@@ -499,7 +505,11 @@ func serveDashboard(s *dashServer, port int, open bool) error {
 	addr := ln.Addr().(*net.TCPAddr)
 	s.origin = fmt.Sprintf("http://127.0.0.1:%d", addr.Port)
 
-	fmt.Printf(retarget("bbs-dashboard: serving %s on %s\n"), s.distDir, s.origin)
+	src := s.distDir
+	if src == "" {
+		src = "the embedded dashboard"
+	}
+	fmt.Printf(retarget("bbs-dashboard: serving %s on %s\n"), src, s.origin)
 	if open {
 		openBrowser(s.origin + "/")
 	}
