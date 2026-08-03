@@ -225,6 +225,26 @@ grep -q 'restart Claude Code' "$T/g.err" || CMP_MSG="$CMP_MSG no-restart-line;"
 [ -f "$S2/just-upgraded-from" ] && CMP_MSG="$CMP_MSG marker-written;"
 report "upgrade-outside-a-git-clone-names-the-real-upgrade-path"
 
+# The brew shape, found live on 2026-08-03. /opt/homebrew is itself a git clone
+# and the Cellar sits inside it, so a bare `git rev-parse --git-dir` said "yes,
+# a checkout" and `bbs upgrade` ran `git pull` against HOMEBREW's repository.
+# The install dir must be the repo TOPLEVEL, not merely inside a repo. Go side
+# alone: the oracle has the bug this guards.
+new_case
+ENCL="$T/c$N/enclosing"; mkdir -p "$ENCL"
+git init -q -b main "$ENCL"
+( cd "$ENCL" && git config user.email t@e.com && git config user.name t \
+    && echo x > f && git add -A && git commit -qm seed ) >/dev/null
+NESTED="$ENCL/Cellar/bbs/1.0.0"; mkdir -p "$NESTED"
+cp -R "$BD/bin" "$NESTED/bin"; rm -f "$NESTED/bin/setup-skills"
+CMP_MSG=""
+( cd "$NESTED" && env -i PATH="$RUNPATH" HOME="$HOME_DIR" BABYSIT_DIR="$NESTED" BABYSIT_STATE_DIR="$S2" \
+    "$NESTED/bin/bbs-upgrade" >"$T/g.out" 2>"$T/g.err" ); grc=$?
+[ "$grc" = 1 ] || CMP_MSG="exit=$grc want 1;"
+grep -q 'not installed via git clone' "$T/g.err" || CMP_MSG="$CMP_MSG treated-as-checkout[$(head -1 "$T/g.err")];"
+grep -q 'Pulling latest' "$T/g.out" && CMP_MSG="$CMP_MSG PULLED-THE-ENCLOSING-REPO;"
+report "upgrade-nested-in-someone-elses-repo-does-not-pull-it"
+
 new_case; prep_clones "1.0.0\n" "2.0.0\n"
 cmp_run; same_state just-upgraded-from; same_state last-update-check; same_state update-snoozed
 report "upgrade-success-writes-marker-on-version-change"

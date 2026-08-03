@@ -199,9 +199,11 @@ func rmF(path string) error {
 // original had the same bug — it used $0 without readlink -f — and the port
 // inherited it faithfully; resolving the chain is the fix for both.
 //
-// A brew install still lands outside a checkout (/opt/homebrew has no VERSION),
-// which is correct: there is no clone to pull, and upgrade's "not installed via
-// git clone" is the honest answer there.
+// A brew install still lands outside babysit's checkout, which is correct:
+// there is no clone to pull. Note it does NOT land outside every clone —
+// /opt/homebrew is itself a git repo, so "am I in a checkout" must be answered
+// by comparing the repo toplevel to this dir (upgrade.go isBabysitCheckout),
+// never by a bare `git rev-parse --git-dir` that walks up into Homebrew's.
 func babysitDir() string {
 	if d := os.Getenv("BABYSIT_DIR"); d != "" {
 		return d

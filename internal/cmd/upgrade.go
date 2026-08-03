@@ -61,7 +61,7 @@ func runUpgrade(args []string) error {
 		fmt.Fprintln(os.Stderr, err)
 		return errSilent
 	}
-	if exec.Command("git", "rev-parse", "--git-dir").Run() != nil {
+	if !isBabysitCheckout(babysit) {
 		fmt.Fprintln(os.Stderr, "babysit was not installed via git clone — nothing here to pull.")
 		for _, ln := range upgradeHints(babysit) {
 			fmt.Fprintln(os.Stderr, ln)
@@ -128,6 +128,34 @@ func runUpgrade(args []string) error {
 	}
 	fmt.Printf("✓ babysit upgraded%s\n", suffix)
 	return nil
+}
+
+// isBabysitCheckout reports whether babysit is the ROOT of a git checkout, not
+// merely a directory that happens to sit inside one.
+//
+// `git rev-parse --git-dir` walks up the tree, so it answers yes for a brew
+// install: /opt/homebrew is itself a git clone, and the Cellar lives inside it.
+// Testing only that made `bbs upgrade` run `git pull` against Homebrew's
+// repository and then fail hunting for a setup-skills the formula never ships.
+// Requiring the enclosing repo's toplevel to BE this directory is what
+// distinguishes babysit's own clone from whatever repo it was dropped into.
+//
+// Deliberately not also requiring a VERSION file: a checkout without one is a
+// supported upgrade shape (the version suffix is simply omitted).
+func isBabysitCheckout(babysit string) bool {
+	top := gitOut("rev-parse", "--show-toplevel")
+	if top == "" {
+		return false
+	}
+	// Compare resolved paths — /tmp vs /private/tmp on macOS, and any symlinked
+	// install dir, would otherwise read as a mismatch on a healthy checkout.
+	if r, err := filepath.EvalSymlinks(top); err == nil {
+		top = r
+	}
+	if r, err := filepath.EvalSymlinks(babysit); err == nil {
+		babysit = r
+	}
+	return top == babysit
 }
 
 // upgradeHints names the commands that actually upgrade an install with no
