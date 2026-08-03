@@ -1,6 +1,7 @@
 # goreleaser config for the bbs CLI.
 #
-# What ships: the Go `bbs` multicall binary (subcommands `config` + `env` today).
+# What ships: the Go `bbs` multicall binary, with the dashboard SPA embedded in
+# it (see the before-hook below and internal/webui).
 # The babysit skill pack and the 18 bash bins are NOT in these artifacts — they
 # install via `git clone` + `bin/setup-skills` (see README / docs/install.md).
 #
@@ -15,6 +16,9 @@ project_name: bbs
 before:
   hooks:
     - go mod tidy
+    # Stages web/dist into internal/webui/dist so //go:embed picks it up. Needs
+    # npm — a local `goreleaser build --snapshot` without Node will stop here.
+    - ./scripts/build-webui.sh
 
 builds:
   - id: bbs

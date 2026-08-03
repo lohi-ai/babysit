@@ -35,6 +35,14 @@ core bins are now Go and ship inside this one binary, reachable as `bbs <sub>`:
 self-contained in the binary — a brew-only install runs every subcommand
 without the skill pack.
 
+**Note on `dashboard`:** released binaries carry the built SPA inside them
+(`internal/webui`, staged by `scripts/build-webui.sh` in goreleaser's
+before-hooks), so `bbs dashboard` on a brew-only install serves the real
+dashboard with no checkout and no npm. A checkout's own `web/dist` takes
+precedence when it exists, so `bbs dashboard build` still does what it always
+did. `--snapshot` needs real files next to `index.html`, so it unpacks the
+embedded copy into `~/.babysit/cache/dashboard` and writes `data.js` there.
+
 **Note on `design`:** the `design` command itself is Go (ships in the binary),
 but its CSV/DESIGN.md data files live in the skill pack, so a brew-only
 `bbs design suggest` needs `--data <dir>` pointed at a skill-pack checkout.

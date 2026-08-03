@@ -113,6 +113,14 @@ jobs:
         with:
           go-version-file: go.mod
 
+      # goreleaser's before-hook builds the dashboard SPA (scripts/build-webui.sh)
+      # for //go:embed, so npm has to be here before goreleaser runs.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
       # Builds the CLI for darwin+linux × amd64+arm64 and uploads the archives
       # plus checksums.txt. Stays a DRAFT here on purpose: nothing is visible
       # until the formula that points at it has been committed.

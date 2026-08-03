@@ -30,6 +30,12 @@ web/data.js
 web/public/data.js
 web/*.tsbuildinfo
 
+# The SPA copied in at release time for //go:embed. Only the placeholder is
+# tracked — the vite output is a build artifact, and committing it would put a
+# generated 350 KB bundle in every diff.
+internal/webui/dist/*
+!internal/webui/dist/.keep
+
 # browse skill — `bun init` scaffold leftovers (not the real source under src/)
 .claude/skills/browse/.cursor/
 .claude/skills/browse/.gitignore

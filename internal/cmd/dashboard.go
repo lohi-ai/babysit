@@ -3,6 +3,7 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/reallongnguyen/babysit/internal/dashboard"
 	"github.com/reallongnguyen/babysit/internal/identity"
+	"github.com/reallongnguyen/babysit/internal/webui"
 	"github.com/spf13/cobra"
 )
 
@@ -197,9 +199,17 @@ func runDashboard(args []string) error {
 		dashErr("--port only applies to server mode; add --server (or drop --no-open)")
 		os.Exit(1)
 	}
+
+	// --dev is the one path that wants neither: vite serves web/ from source.
+	var distFS fs.FS
+	if !dev {
+		distFS, distDir = resolveDist(distDir, stateDir, mode != "server")
+	}
+
 	if mode == "server" {
 		return serveDashboard(&dashServer{
 			stateDir:  stateDir,
+			distFS:    distFS,
 			distDir:   distDir,
 			version:   version,
 			slug:      slugOverride,
@@ -286,6 +296,63 @@ func runDashboard(args []string) error {
 		openBrowser("file://" + filepath.Join(distDir, "index.html"))
 	}
 	return nil
+}
+
+// resolveDist picks the SPA this run serves, and reports where it lives on
+// disk. web/dist wins when a checkout has built it, so `bbs-dashboard build`
+// followed by `bbs dashboard` shows the new build without recompiling Go; the
+// copy embedded in the binary is the fallback that makes a brew-only install
+// (no checkout, no npm) work at all.
+//
+// needFiles is snapshot mode: it writes data.js next to index.html and opens
+// the pair over file://, which an fs.FS cannot do, so the embedded tree is
+// unpacked into the state dir and that path is returned instead. Server mode
+// reads straight out of the binary and never touches disk.
+//
+// A nil FS means neither source exists — callers report the build hint.
+func resolveDist(distDir, stateDir string, needFiles bool) (fs.FS, string) {
+	if _, err := os.Stat(filepath.Join(distDir, "index.html")); err == nil {
+		return os.DirFS(distDir), distDir
+	}
+	embedded, ok := webui.FS()
+	if !ok {
+		return nil, distDir
+	}
+	if !needFiles {
+		return embedded, ""
+	}
+	cache := filepath.Join(stateDir, "cache", "dashboard")
+	if err := unpackDist(embedded, cache); err != nil {
+		dashErr("cannot unpack the embedded dashboard into " + cache + ": " + err.Error())
+		return nil, distDir
+	}
+	return os.DirFS(cache), cache
+}
+
+// unpackDist materializes the embedded SPA at dir, skipping the work when the
+// version stamp says it is already there. The stamp is the whole freshness
+// check: the tree only ever changes with the binary, and re-copying a few
+// hundred KB on every snapshot would be pure waste. It reads resolveVersion()
+// rather than the caller's, which is the VERSION file next to a checkout and
+// is "unknown" on the brew installs this path exists for.
+func unpackDist(src fs.FS, dir string) error {
+	version := resolveVersion()
+	stamp := filepath.Join(dir, ".bbs-version")
+	if b, err := os.ReadFile(stamp); err == nil && strings.TrimSpace(string(b)) == version {
+		return nil
+	}
+	// Replace rather than merge: a stale index.html left behind by an older
+	// binary would be served alongside the new bundle it doesn't reference.
+	if err := os.RemoveAll(dir); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(dir), 0o755); err != nil {
+		return err
+	}
+	if err := os.CopyFS(dir, src); err != nil {
+		return err
+	}
+	return os.WriteFile(stamp, []byte(version+"\n"), 0o644)
 }
 
 var dashSlugBad = regexp.MustCompile(`[^a-zA-Z0-9_.-]`)

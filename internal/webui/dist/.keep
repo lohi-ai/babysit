@@ -1,0 +1,6 @@
+Placeholder so //go:embed always has a file to match.
+
+The real contents land here at release time: .goreleaser.yaml builds web/ and
+copies the vite output over this directory. A plain `go build` leaves it as-is,
+which is what makes an ordinary dev build carry no SPA and fall back to
+web/dist on disk.
