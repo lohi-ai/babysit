@@ -128,6 +128,7 @@ func runBoard(args []string) {
 
 	if gitdir != "" {
 		printFooter(gitdir, now)
+		printBaseLine(primary, gitdir, now)
 	}
 	os.Exit(0)
 }
@@ -186,6 +187,65 @@ func printFooter(gitdir string, now int64) {
 		serving = "(base only)"
 	}
 	fmt.Printf("SERVING: %s\n", serving)
+}
+
+// printBaseLine reports how the primary checkout's local base compares to
+// origin/<base>. It exists because every ticket branch is cut from
+// origin/<base>, never local: commits sitting only on local base are invisible
+// to every ticket cut afterwards, and nothing else on the board says so.
+//
+// Read-only and offline — board never fetches, so the comparison is against the
+// last-known remote ref. The fetch age is printed alongside it so a stale
+// answer reads as stale instead of as fact. Warn-only by construction: a
+// diverged base is normal mid-flight, so this never blocks and never advises
+// anything destructive.
+func printBaseLine(primary, gitdir string, now int64) {
+	base := baseBranchIn(primary)
+	if base == "" || !gitCOK(primary, "show-ref", "--verify", "--quiet", "refs/heads/"+base) {
+		return
+	}
+	if !gitCOK(primary, "show-ref", "--verify", "--quiet", "refs/remotes/origin/"+base) {
+		fmt.Printf("BASE: %s — no origin/%s ref (no remote, or never fetched)\n", base, base)
+		return
+	}
+
+	counts := gitCOut(primary, "rev-list", "--left-right", "--count", "origin/"+base+"..."+base)
+	fields := strings.Fields(counts)
+	if len(fields) != 2 {
+		return
+	}
+	behind, ahead := fields[0], fields[1]
+
+	age := ""
+	if fi, err := os.Stat(filepath.Join(gitdir, "FETCH_HEAD")); err == nil {
+		// FETCH_HEAD's mtime is the last fetch of anything, not of this branch
+		// specifically — hence "last fetch", which is the claim it supports.
+		age = fmt.Sprintf(" (last fetch %s ago)", roughAge(now-fi.ModTime().Unix()))
+	}
+
+	if behind == "0" && ahead == "0" {
+		fmt.Printf("BASE: %s — matches origin/%s%s\n", base, base, age)
+		return
+	}
+	fmt.Printf("BASE: %s — %s ahead / %s behind origin/%s%s\n", base, ahead, behind, base, age)
+	if ahead != "0" {
+		fmt.Printf("  ↑ %s commit(s) exist only on local '%s' — tickets are cut from origin/%s, so new ones will not have them\n", ahead, base, base)
+	}
+	if behind != "0" {
+		fmt.Printf(retarget("  ↓ origin/%s moved on — bbs-ticket refresh (in a ticket) or bbs-ticket reset-base (on the primary)\n"), base)
+	}
+}
+
+// roughAge renders a duration the way a human skims it — one unit, no decimals.
+func roughAge(sec int64) string {
+	switch {
+	case sec < 3600:
+		return fmt.Sprintf("%dm", sec/60)
+	case sec < 86400:
+		return fmt.Sprintf("%dh", sec/3600)
+	default:
+		return fmt.Sprintf("%dd", sec/86400)
+	}
 }
 
 // sessionFor returns "id(Nm)" for the first live session claiming this ticket,

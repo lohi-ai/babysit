@@ -19,7 +19,7 @@
 /bbs:foreman rebuild the novel request flow
 ```
 
-Mỗi yêu cầu một worker nhìn thấy được, nằm trong workspace cmux riêng ở sidebar (mỗi worker chạy autopilot trọn gói — plan, code, review, QA, push), design được duyệt trước khi viết dòng code nào, và mọi ticket xong đều được merge lên base local để bạn review cả lô đang chạy trong một trình duyệt — rồi mới tạo PR. Đây là luồng nâng cao: nó cần [cmux](https://cmux.com) và một repo ở mode `worktree`, và chỉ đáng công khi bạn có vài ticket độc lập để giao cùng lúc.
+Mỗi yêu cầu một worker nhìn thấy được, nằm trong workspace cmux riêng ở sidebar (mỗi worker chạy autopilot trọn gói — plan, code, review, QA, push), design được duyệt trước khi viết dòng code nào, và mọi ticket xong đều được merge lên base local để bạn review cả lô đang chạy trong một trình duyệt — rồi mới tạo PR. Đây là luồng nâng cao: nó cần [cmux](https://cmux.com), và chỉ đáng công khi bạn có vài ticket độc lập để giao cùng lúc.
 
 *babysit là việc bạn làm khi khỏi cần ai trông.* Nó chuộng mấy quyết định Claude tự làm tự kiểm được, hơn là mấy quyết định phải có người ngồi kè kè — đẻ ra cho các lần chạy theo lịch, pipeline được điều phối, và bất cứ thứ gì bạn muốn giao rồi đi chơi.
 
@@ -183,30 +183,36 @@ Trong bất kỳ repo nào bạn muốn autopilot ship từ đó:
 /bbs:setup-project
 ```
 
-Wizard viết ra config `.babysit/` nhỏ nhất mà vẫn đủ xài: `git-flow.yaml` với `base_branch`, `branch_prefix`, `push`, `mode`, và `qa.yaml` với `url`, `start`, `check`, `flows`. Chạy lại thì idempotent.
+Wizard viết ra config `.babysit/` nhỏ nhất mà vẫn đủ xài: `git-flow.yaml` với `profile` và `base_branch`, và `qa.yaml` với `url`, `start`, `check`, `flows`. Chạy lại thì idempotent — với repo đã cấu hình, chạy lại chính là cách đổi profile.
 
-#### Git flow: chọn một trong ba mode
+#### Git flow: chọn một profile
 
-`mode:` trong `.babysit/git-flow.yaml` quyết định branch của mỗi ticket nằm ở đâu — đây là thuộc tính của repo, đặt một lần:
+Chỉ có một cái núm. Wizard hỏi đúng một câu — **ở repo này, sai một lần thì trả giá bao nhiêu?** — vì đó mới là thứ một git flow thật sự trả lời, chứ không phải team đông bao nhiêu hay bạn ngồi canh sát tới đâu. Câu trả lời của bạn là `profile:`, mọi thứ còn lại suy ra từ đó:
 
-| Mode | Hình dạng | Hợp với |
-|------|-----------|---------|
-| `trunk` | không cắt branch — ticket đi chung trên branch dùng chung (vd. `develop`); danh tính đi theo `BABYSIT_TICKET` | repo cá nhân: nhiều session trong một thư mục, một dev server test hết cùng lúc |
-| `branch` *(mặc định)* | cắt `feat/<id>_<slug>` ngay tại chỗ khi checkout là base sạch; tự né sang worktree khi không sạch | PR sạch một-ticket với việc phần lớn tuần tự — QA rẻ nhất, server phục vụ thẳng branch của ticket |
-| `worktree` | mỗi ticket có worktree riêng; checkout chính ghim ở base làm bề mặt test dùng chung | repo team/doanh nghiệp: nhiều ticket song song, mỗi cái một PR sạch |
+| | `pet` | `startup` | `enterprise` |
+|---|---|---|---|
+| ai dùng | solo, dự án nghiệp dư | solo freelance / team nhỏ | team, codebase doanh nghiệp |
+| ưu tiên | ship ngay | tốc độ release > chất lượng code | chất lượng code > tốc độ release |
+| việc của ticket nằm đâu | không cắt branch — đi thẳng trên base | `feat/<id>_<slug>` | `feat/<id>_<slug>` |
+| review diễn ra ở đâu | không ở đâu cả — push chính là release | **tại máy**, trong browser, tác giả tự merge | **trên GitHub**, người khác merge |
+| độ gắt QA | `smoke` — 3–5 ca | `standard` — 5–10 | `strict` — 8–12 |
+| effort `review-pr` | `low` | `medium` | `high` |
 
-Ở mode `worktree`, QA đưa một ticket lên bề mặt dùng chung bằng `bbs ticket merge-base` (chạy từ worktree), hoặc nhảy bề mặt qua lại giữa các ticket bằng `bbs ticket switch <ticket>...` (chạy từ checkout chính — reset về base, rồi merge đúng các ticket được gọi tên). Sau khi các PR merge lên upstream, `bbs ticket reset-base` kéo base local về lại origin. Cả ba đều từ chối lớn tiếng thay vì làm mất việc. Lớp dành cho người ngồi trên cùng — `board`, `serve`, `/bbs:fix-pr` — nằm ở mục [Làm nhiều ticket song song](#làm-nhiều-ticket-song-song-mode-worktree). Chi tiết: [`references/git-flow.md`](.claude/skills/references/git-flow.md).
+Mỗi profile cũng đòi hỏi vài thứ ở *bạn* — khi bắt đầu một ticket thì phải đang đứng ở branch nào, và base local dùng để làm gì. Bản giao kèo đó, cùng với cách chạy ticket song song trong từng profile, nằm ở **[docs/profiles.md](docs/profiles.md)**.
 
-#### Solo dev hay team nhỏ: trunk hay worktree?
+**Lần đầu dùng, hoặc chưa chắc? Chọn `startup`.** Đây vốn đã là thứ mà một repo không có key `profile:` tự suy ra, và là chỗ bắt đầu an toàn với một repo bạn còn quý: có branch và có PR nghĩa là không thứ gì lọt lên base branch mà chưa ai xem, còn QA thì giao lại cho bạn app đang chạy ngay trong browser. Đổi profile sau này chỉ tốn một dòng.
 
-Số người trong team không phải là trục để quyết. Cái quyết định là **lúc này bạn đang làm việc kiểu nào — ngồi canh, hay đứng dậy đi:**
+Độ gắt chỉ nới **bề rộng, không hạ cái ngưỡng**. Một `PASS` mang đúng một nghĩa ở cả ba mức: mọi chiều rubric áp dụng được phải từ B trở lên, và phải có một lượt chạy end-to-end tươi trên đúng code cuối cùng. Dự án nghiệp dư chạy ít ca hơn — chứ không phải không chạy ca nào, và cũng không bao giờ pass với một chiều điểm C.
 
-- **Bạn đang ngồi bàn phím, chỉnh hướng từng lần chạy** (pair-programming trên dự án của chính mình): chọn **`trunk`**. Ticket đi chung trên branch hiện tại — không cắt branch, không worktree, không nghi thức PR. Nó nhanh nhất chính vì có người ngồi đó bắt ngay khi đi sai.
-- **Bạn muốn việc chạy trong lúc mình không canh** — vài ticket cùng lúc, hoặc một ticket bấm nút rồi bỏ đó: chọn **`worktree`**. Mỗi ticket build trong worktree riêng; checkout chính ghim ở base làm dev server duy nhất để bạn review. Đây cũng là luồng của *solo* — một người chạy một mẻ ở nền vẫn là background worker, dù team hay không.
+Tự tay đặt `mode:`, `land:`, hay `push:` sẽ đè lên preset của profile. Đó là cửa thoát hiểm, không phải hình dạng thường ngày — một cái núm viết tay là một cái núm thôi bám theo profile của nó.
 
-Trường hợp thứ hai chính là thứ **`/bbs:foreman`** bật lên. Đưa nó vài yêu cầu; nó mở một worker hiện hình cho mỗi ticket, chốt review design trước khi viết một dòng code, và — với `land: local` (mặc định ở mode `worktree`) — merge hết các ticket xong lên base local để bạn review cả mẻ trong một browser, rồi tự tay mở các PR.
+#### Chạy nhiều ticket song song là một trục *khác*
 
-**Nguyên tắc bỏ túi:** khởi đầu bằng `trunk` khi bạn còn pair. Đến ngày muốn giao một mẻ rồi bước đi, chạy lại `/bbs:setup-project`, chuyển sang `worktree`, và lái nó bằng `/bbs:foreman`.
+Để ý cái bảng trên thiếu gì: không có profile nào tên "song song". **Không profile nào phải trả cái giá của worktree.** Worktree tốn thêm một commit cộng một lần `merge-base` cho mỗi vòng test, và đổi lại đúng một thứ — cho phép nhiều ticket dùng chung một dev server. Nó không làm việc test sâu hơn. Nên cả ba profile đều giữ nguyên vòng lặp trong 0 bước (sửa → nhìn browser), còn `mode: worktree` là thứ **`/bbs:foreman` tự xin theo từng lần giao việc**, không phải thứ bạn cấu hình.
+
+Nghĩa là: đừng chạy lại `/bbs:setup-project` để "chuyển sang song song". Hãy giao cả mẻ cho **`/bbs:foreman`**. Nó mở một worker hiện hình cho mỗi ticket, chốt review design trước khi viết một dòng code, và — với `land: local` — merge hết các ticket xong lên base local để bạn review cả mẻ trong một browser, rồi tự tay mở các PR.
+
+Khi foreman đưa bạn vào mode worktree, QA đưa một ticket lên bề mặt dùng chung bằng `bbs ticket merge-base` (chạy từ worktree), hoặc nhảy bề mặt qua lại giữa các ticket bằng `bbs ticket switch <ticket>...` (chạy từ checkout chính — reset về base, rồi merge đúng các ticket được gọi tên). Sau khi các PR merge lên upstream, `bbs ticket reset-base` kéo base local về lại origin. Cả ba đều từ chối lớn tiếng thay vì làm mất việc. Lớp dành cho người ngồi trên cùng — `board`, `serve`, `/bbs:fix-pr` — nằm ở mục [Làm nhiều ticket song song](#làm-nhiều-ticket-song-song-mode-worktree). Chi tiết: [`references/git-flow.md`](.claude/skills/references/git-flow.md).
 
 ### 3. Chạy
 
@@ -253,7 +259,7 @@ Khi vòng lặp một-ticket đã quen tay, `foreman` chạy cả một mẻ. T�
 
 Foreman mở một worker cho mỗi ticket — một workspace cmux bạn bấm ở sidebar để xem hoặc tự lái — theo dõi các pane, và giữ chốt chặn giữa design và build: khi một worker dừng ở bản bàn giao plan/prototype, foreman review design, góp ý, rồi hoặc bật đèn xanh cho build hoặc hỏi bạn khi tiếng nói của bạn có thể đổi hướng kết quả. Nó tự trả lời các câu hỏi máy móc của worker, chuyển cho bạn những câu cần bạn, kiểm chứng mọi verdict QA/review trên đĩa, và — với `land: local` (mặc định ở mode worktree) — merge hết các ticket xong lên base local để bạn review sản phẩm gộp trên dev server trước khi quyết: PR từng ticket hay một compose PR.
 
-**Hai thứ phải có trước, nên nó mới là bài học thứ hai:** [cmux](https://cmux.com) (phụ thuộc cứng — thiếu là foreman dừng ngay) và một repo ở mode `worktree`, để các ticket song song không giành nhau một checkout. Với một ticket lẻ chạy tuần tự, nó chẳng hơn `/bbs:autopilot` chỗ nào.
+**Một thứ phải có trước, nên nó mới là bài học thứ hai:** [cmux](https://cmux.com) — thiếu là foreman dừng ngay. Bạn không cần cấu hình lại repo: foreman tự xin worktree theo từng lần giao việc, để các ticket song song không giành nhau một checkout, còn profile của bạn vẫn là thứ quyết định độ gắt. Với một ticket lẻ chạy tuần tự, nó chẳng hơn `/bbs:autopilot` chỗ nào.
 
 ## Cách dùng
 
@@ -314,6 +320,7 @@ bbs ticket serve            # để trống: gộp mọi ticket đã xong (qa + 
 ## Đào sâu hơn
 
 - **Ruột routing & debug** — Parse → Probe → Assign → Dispatch, `bbs autopilot explain`, `--dry-run`, các lối thoát `--replan` / `--force`: [`.claude/skills/autopilot/SKILL.md`](.claude/skills/autopilot/SKILL.md).
+- **Profile** — [`docs/profiles.md`](docs/profiles.md): mỗi profile đòi hỏi gì ở base branch của bạn, và cách chạy ticket song song trong từng profile.
 - **Schema config** — [`.claude/skills/references/git-flow.md`](.claude/skills/references/git-flow.md) và [`docs/qa-config.md`](docs/qa-config.md) để tự viết tay `.babysit/`.
 
 ## Danh mục skill
