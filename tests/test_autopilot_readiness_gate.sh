@@ -85,9 +85,15 @@ T="$(mktemp -d)"
   bash -eu -c "$seed" || { echo "seed block failed to execute"; exit 1; }
   cfg=".babysit/git-flow.yaml"
   [ -f "$cfg" ] || { echo "seed did not write $cfg"; exit 1; }
-  grep -q '^base_branch: .' "$cfg" || { echo "empty base_branch"; exit 1; }
-  grep -qx 'mode: branch' "$cfg"   || { echo "mode != branch"; exit 1; }
-  grep -qx 'push: false' "$cfg"    || { echo "push != false without a remote"; exit 1; }
+  grep -q '^base_branch: .' "$cfg"  || { echo "empty base_branch"; exit 1; }
+  grep -qx 'profile: startup' "$cfg" || { echo "profile != startup"; exit 1; }
+  grep -qx 'push: false' "$cfg"     || { echo "push != false without a remote"; exit 1; }
+  # the seed is only useful if the resolver reads it back as the shape the
+  # gate promised: a branch per ticket, standard rigor, no push without a remote
+  gf="$("$SCRIPT_DIR/bin/bbs" autopilot git-flow)" || { echo "git-flow rejected the seed"; exit 1; }
+  printf '%s\n' "$gf" | grep -qx 'BBS_MODE=branch'   || { echo "seed does not derive mode=branch: $gf"; exit 1; }
+  printf '%s\n' "$gf" | grep -qx 'BBS_RIGOR=standard' || { echo "seed does not derive standard rigor: $gf"; exit 1; }
+  printf '%s\n' "$gf" | grep -qx 'BBS_PUSH=false'    || { echo "seed does not derive push=false: $gf"; exit 1; }
 ) && ok "bootstrap-seed-block-executes" || fail "bootstrap-seed-block-executes"
 rm -rf "$T"
 

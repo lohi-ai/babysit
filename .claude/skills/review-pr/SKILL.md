@@ -22,7 +22,10 @@ Argument grammar: `[low|medium|high|xhigh|max] [--fix] [--comment] [<target>]`
 1. Parse `--comment` / `--fix`. The first token is the level if it matches a
    known level name; everything after the level is the free-form `target`
    (a PR number, branch name, or file path to review instead of the diff).
-2. No level given → use the session effort level; if undefined → `medium`.
+2. No level given → use the session effort level; if undefined → the repo's
+   `$BBS_REVIEW_EFFORT` (`eval "$(bbs autopilot git-flow)"`, which derives it
+   from the git-flow profile: `pet`→low, `startup`→medium, `enterprise`→high);
+   if that is unreadable too → `medium`.
 3. Emit the level's inline template (§2), assembled from the shared fragments
    (§1), plus the `--comment` / `--fix` appendices (§3) when those flags are set.
 

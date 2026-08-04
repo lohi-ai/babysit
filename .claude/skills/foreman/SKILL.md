@@ -175,7 +175,7 @@ cmux new-pane --type browser --workspace "$W" --url <url>          # a live prev
 # Resolution order: --agent > BABYSIT_AGENT > <repo>/.babysit/config.yaml
 # (worker_agent:) > ~/.babysit/config.yaml > claude. It preflights, so BLOCKED
 # means the agent is not installed — report it, do not fall back to another CLI.
-CMD=$(bbs foreman worker-command --prompt "/bbs:autopilot <requirement>") || {
+CMD=$(bbs foreman worker-command --prompt "/bbs:autopilot --mode=worktree <requirement>") || {
   echo "BLOCKED: $CMD" >&2; exit 1; }
 
 # new sidebar workspace, unfocused so the human's current one is not stolen
@@ -194,10 +194,16 @@ On resume, re-derive `$G` by name from `cmux workspace-group list --json`, and
 adopt a worker dispatched without it via
 `cmux workspace-group add --group "$G" --workspace "$W"`.
 
-Workers always run autopilot: it creates the ticket + worktree (`mode:
-worktree` recommended), seeds requirement/design/plan, and **stops at the
-copy-paste `/goal` handoff** — that stop is your review gate. Resuming a
-crashed ticket: same spawn with `/bbs:autopilot builder <ticket>`.
+Workers always run autopilot: it creates the ticket + worktree, seeds
+requirement/design/plan, and **stops at the copy-paste `/goal` handoff** —
+that stop is your review gate. Resuming a crashed ticket: same spawn with
+`/bbs:autopilot builder <ticket>`.
+
+Dispatch with `--mode=worktree` on the autopilot invocation. No git-flow
+profile defaults to worktrees — they cost a commit + `merge-base` per test
+iteration and buy only parallelism, which is exactly what a batch needs and a
+serial ticket doesn't. Parallelism is foreman's to request, per dispatch;
+rigor stays whatever the repo's profile says.
 
 **Every worker is a todo** — the task list is the user's live board and must
 mirror reality. If you are running on an agent with no task tool, skip this
@@ -407,13 +413,15 @@ assignment. QA across workers
 serializes on `bbs ticket qa-lease` — workers handle that themselves;
 `board` shows who holds it.
 
-Batch done → check `land:` in `.babysit/git-flow.yaml`. `land: local`
-(default under `mode: worktree`) → `bbs ticket serve` (bare) composes every
-finished ticket on the shared dev server for combined review; ticket
-branches stay the source of truth, `reset-base` discards the pile. The
-aggregate NEXT offers `/bbs:create-pr <t>` per ticket or one compose PR
-(create-pr § Compose PR). `land: pr` → skip composing; NEXT is per-ticket
-`/bbs:create-pr`.
+Batch done → `eval "$(bbs autopilot git-flow)"` and branch on `$BBS_LAND`.
+`local` → `bbs ticket serve` (bare) composes every finished ticket on the
+shared dev server for combined review; ticket branches stay the source of
+truth, `reset-base` discards the pile. The aggregate NEXT offers
+`/bbs:create-pr <t>` per ticket or one compose PR (create-pr § Compose PR).
+`pr` → skip composing; NEXT is per-ticket `/bbs:create-pr`. `none` (a pet
+project) → there are no PRs: compose with bare `serve` for one look, then the
+NEXT is landing the branches on `$BBS_BASE_BRANCH` — say so plainly rather
+than pointing at `create-pr`, which BLOCKs under this policy.
 
 ## Rules
 

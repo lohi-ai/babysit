@@ -53,7 +53,9 @@ Exercise the application like a user and leave reproducible evidence.
    re-verify on the updated surface.
 3. Code-level checks (tests, typecheck, lint) first — they gate, they don't
    prove.
-4. Build a flow matrix from the acceptance criteria — not just the diff —
+4. Size the matrix to the repo's rigor: `eval "$(bbs autopilot git-flow)"` →
+   `$BBS_RIGOR` (see § Rigor tiers; unset or unreadable = `standard`).
+   Build a flow matrix from the acceptance criteria — not just the diff —
    covering happy path, validation, empty/error states, failure/retry, and
    responsive behavior. Derive the change's reach independently: for each
    changed file/function, find callers and flows sharing its state or
@@ -73,8 +75,9 @@ Exercise the application like a user and leave reproducible evidence.
    engine — Read `../browse/SKILL.md` § Engine before the first browser
    command; its session-name export and setup are mandatory. Non-UI: a real
    call sequence (curl, CLI, the repo's e2e suite). Never "test" a flow by
-   reading code or unit tests alone. Spend a few minutes off-script around
-   the changed surface — findings feed back as derived cases.
+   reading code or unit tests alone. Off-script time around the changed
+   surface — findings feed back as derived cases — per the tier: `smoke`
+   skips it, `standard` spends a few minutes, `strict` always spends it.
 6. Fix regressions owned by the current branch, then rerun the affected flow
    and checks.
 7. Finish with one full end-to-end pass of the primary user journey on the
@@ -90,6 +93,31 @@ One case = user journey + expected observable + evidence — *as a user, do
 journey** delivers the feature's core value end-to-end; it carries the
 verdict and runs last. Tie every failure to the criterion it violates, with
 reproduction steps.
+## Rigor tiers
+`$BBS_RIGOR` scales **breadth** — how many cases, how much off-script time,
+which dimensions may be `N/A`. It never scales the honesty floor below: a
+`PASS` means the same thing in all three tiers, and a pet project runs fewer
+cases, not zero.
+
+- **smoke** — 3–5 cases: the primary journey e2e plus ≥1 non-happy case. No
+  extra viewport/browser sweep unless the change is UI-visible. No off-script
+  budget. `compat`/`security`/`a11y`/`perf` may be `N/A` on a change that
+  doesn't obviously touch them (still with a reason).
+- **standard** (default) — 5–10 cases: the full matrix from the acceptance
+  criteria plus adjacent-regression cases.
+- **strict** — 8–12 cases; `security`, `a11y` and `compat` must carry a real
+  grade — an `N/A` there needs a reason that would survive review, not "the
+  change looks unrelated". Off-script exploration is mandatory. When the diff
+  touches auth, money, or data paths, also run `security-review`.
+
+**Leave the surface serving the ticket** under `smoke`/`standard`, and put
+that URL in the handoff's `NEXT` — the human's review is a browser look, so
+handing back a live URL plus the screenshots below collapses "QA browses,
+releases, human re-serves and browses again" into one. Under `strict` the
+review happens on GitHub: release the surface before handing off and let the
+evidence travel in the PR body. Exception: under `$BBS_MODE=worktree` always
+release, lease included — the surface is shared, and composing the batch for
+review is `serve`'s job, not a QA session's.
 ## Coverage rubric
 Grade every dimension A–D against the change's risk surface; a dimension the
 change can't touch is `N/A` **with a one-line reason** — never a silent skip.
@@ -104,7 +132,9 @@ change can't touch is `N/A` **with a one-line reason** — never a silent skip.
 - **perf**: A = responsive under realistic data volume · B = no obvious lag on happy path · C = not observed · D = timeout/jank seen
 - **freshness** (always applies): A = final full e2e pass on the *final* code state · B = e2e passed but code changed after · C = partial/stale e2e · D = unit/curl/code-read only
 `PASS`/`FIXED` require **every applicable** dimension at B or better and
-freshness at A. Any applicable dimension at C or D forces `VERDICT: FAIL`
+freshness at A — **identical in all three rigor tiers**. Rigor decides which
+dimensions are legitimately `N/A` and how many cases feed a grade; it never
+lowers the bar a graded dimension has to clear. Any applicable dimension at C or D forces `VERDICT: FAIL`
 (→ `STATUS: BLOCKED`), or `DONE_WITH_CONCERNS` naming the blocker if a real
 blocker stopped coverage. Report the grade line for every dimension,
 including `N/A: <reason>`.
@@ -116,7 +146,7 @@ including `N/A: <reason>`.
   evidence — tool, journey steps, observed result — and the app proven
   running locally (or the local-run blocker named). Happy-path-only is not a
   PASS.
-- Prefer 5-10 deep checks over many vague clicks.
+- Prefer deep checks over many vague clicks; `$BBS_RIGOR` sets how many.
 - Every QA summary names the local target or blocker, the case matrix, and
   at least one non-happy-path result.
 - `VERDICT: FAIL` always pairs with `STATUS: BLOCKED` — never `DONE*`. The
@@ -126,7 +156,7 @@ including `N/A: <reason>`.
 ```text
 STATUS: DONE | DONE_WITH_CONCERNS | NEEDS_CONTEXT | BLOCKED
 VERDICT: PASS | FIXED(<N>) | FAIL
-SUMMARY: <local target/blocker + flow matrix + findings>
+SUMMARY: <rigor tier + local target/blocker + flow matrix + findings>
 SOURCES: <context read in step 1: requirement, plan, implement-handoff, review-pr — or conversation-only>
 RUBRIC: flow=<> boundary=<> regression=<> data=<> compat=<> security=<> a11y=<> perf=<> freshness=<>  (grade or N/A each)
 EVIDENCE: <last e2e run: tool + journey + result; screenshot + errors/report paths under evidence/qa/>

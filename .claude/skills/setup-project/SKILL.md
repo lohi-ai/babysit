@@ -5,7 +5,7 @@ description: Configure the current repo for babysit/autopilot. Use when the user
 # setup-project
 Set up only the config the repo needs. Re-running should be safe.
 ## Create Or Update
-- `.babysit/git-flow.yaml`: minimal `base_branch`, `branch_prefix`, `push`, and `mode`.
+- `.babysit/git-flow.yaml`: `profile` + `base_branch`, nothing else. Everything else derives (`references/git-flow.md § Profiles`).
 - `.babysit/qa.yaml`: minimal local `url`, `start`, `check`, and `flows`.
 - `.babysit/config.yaml`: committed — which workspace this repo belongs to, plus optional `name`, `description`, `repo_type`. Written via `bbs config repo set`; only when the repo joins a workspace.
 - `.babysit/.env`: gitignored machine-local values (credentials; related repo paths only when there is no workspace entry).
@@ -14,13 +14,13 @@ Set up only the config the repo needs. Re-running should be safe.
 ## Rules
 - Detect defaults from the repo before asking: remote, default branch, run
   commands (package scripts, compose, Makefile), app URL hints.
-- Ask once: **how will babysit work in this repo?** (see `references/git-flow.md § Profiles`) — the answer picks the git-flow preset; never ask about `mode`/`land`/`push` directly:
-  - Pair-programming assistant — a human watches every run → `trunk`: ride the current branch, no cuts, no PRs.
-  - Background worker — one ticket at a time (freelance / client repo) → `branch-pr`: cut per ticket, straight PR — the client-facing work trail.
-  - Background worker — parallel tickets, composed local review (small team, or solo + foreman) → `worktree-review`: parallel worktree tickets, review the composed surface on local dev (`serve`), then `create-pr`.
-  - Background worker — parallel tickets, straight PRs (big team / enterprise) → `worktree-pr`: parallel worktree tickets, straight per-ticket PRs; review lives on GitHub, browser-test any PR locally on demand (`bbs ticket serve <ticket>`).
-  Write the resulting knobs (not a `profile:` key) into `git-flow.yaml`, with the profile name as a comment.
-- Re-run on a configured repo = switch: read the current profile from `git-flow.yaml`, ask the same question with the current answer marked as current, and on change rewrite only the git-flow knobs and walk the user through the transition steps (`references/git-flow.md § Profiles`, "Switching later"). Leave `qa.yaml`, `.env`, and the landing doc untouched unless they're missing.
+- Ask **one** question: **what does a mistake cost in this repo?** (see `references/git-flow.md § Profiles`) — the answer is the profile; never ask about `mode`/`land`/`push`/rigor directly:
+  - A pet project — ship now, mistakes are cheap → `pet`: work lands on `base_branch`, no PR, smoke QA.
+  - Client or small-team work — release speed matters more than polish → `startup`: branch per ticket, PR, standard QA, review locally in the browser before merging.
+  - A team or enterprise codebase — code quality outranks release speed → `enterprise`: branch per ticket, PR, strict QA, review on GitHub.
+  Write `profile:` and `base_branch:` into `git-flow.yaml` and nothing else — a knob written out by hand is a knob that stops tracking its profile. Add `land:`/`mode:`/`push:` only when the human asks for something the profile doesn't give them.
+- Re-run on a configured repo = switch: read `profile:` from `git-flow.yaml`, ask the same question with the current answer marked as current, and on change rewrite only `profile:` and walk the user through the transition steps (`references/git-flow.md § Profiles`, "Switching"). Leave `qa.yaml`, `.env`, and the landing doc untouched unless they're missing.
+- Parallelism is orthogonal: no profile uses worktrees, `foreman` requests them per dispatch. Never offer "parallel tickets" as a profile answer.
 - Prefer the simple top-level `qa.yaml` shape with a localhost `url`; hosted
   URLs are secondary, never a substitute for local QA. If the project cannot
   run locally, record the blocker and closest harness in the landing doc.
@@ -31,9 +31,10 @@ Set up only the config the repo needs. Re-running should be safe.
 - Prefer `AGENTS.md` when both exist; otherwise update whichever exists, or
   create `AGENTS.md`. Don't duplicate git-flow/QA rules there — link the
   config files.
-- Suggest **cmux** once, never block on it: on a `worktree-*` profile, if
-  `command -v cmux` misses, tell the human it is the recommended terminal for
-  this shape of work (https://cmux.com) — worker-per-workspace, status pills,
+- Suggest **cmux** once, never block on it: when the human mentions running
+  tickets in parallel, if `command -v cmux` misses, tell them it is the
+  recommended terminal for that shape of work (https://cmux.com) —
+  worker-per-workspace, status pills,
   a real diff viewer, a browser split beside the dev server — and that
   `foreman` requires it outright. It is a machine preference, so it goes in
   the message, not in committed config or the landing doc.
@@ -42,14 +43,11 @@ Set up only the config the repo needs. Re-running should be safe.
 ## QA Harness Notes
 Prefer this committed shape:
 ```yaml
-# .babysit/git-flow.yaml
-# profile: branch-pr — see references/git-flow.md § Profiles
+# .babysit/git-flow.yaml — see references/git-flow.md § Profiles
+profile: startup      # pet | startup | enterprise
 base_branch: main
-branch_prefix: feat
-push: true
-mode: branch
-land: pr
 ```
+Check what that derives before finishing: `bbs autopilot git-flow`.
 ```yaml
 # .babysit/qa.yaml
 version: 1

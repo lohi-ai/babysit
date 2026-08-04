@@ -1,6 +1,4 @@
-# Minimal config for goal -> autopilot -> QA.
+# See .claude/skills/references/git-flow.md § Profiles.
+profile: enterprise   # pet | startup | enterprise
 base_branch: main
-branch_prefix: feat
-push: true
-mode: worktree
-land: local
+land: local           # override: this repo composes its batch on local dev
