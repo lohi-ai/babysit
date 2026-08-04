@@ -351,7 +351,10 @@ done
 # A signal-killed setup-skills exits 128+N, not 1.
 new_case; prep_clones "1.0.0\n" "2.0.0\n"
 for d in "$AD" "$BD"; do printf '#!/bin/sh\nkill -TERM $$\n' > "$d/bin/setup-skills"; done
-CASE_ERR_FILTER='^Terminated: '; cmp_run; CASE_ERR_FILTER=""
+# The killing shell announces the signal itself, and the wording is not
+# portable: macOS bash says `Terminated: 15`, Linux bash says bare `Terminated`.
+# Match the word only, or the filter silently misses on Linux.
+CASE_ERR_FILTER='^Terminated'; cmp_run; CASE_ERR_FILTER=""
 same_state just-upgraded-from
 report "upgrade-setup-skills-killed-by-SIGTERM-exits-143"
 

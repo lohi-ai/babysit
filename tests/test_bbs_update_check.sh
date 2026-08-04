@@ -168,9 +168,12 @@ c() {
     an=$(env HOME="$B/home" BABYSIT_DIR="$B/dir" BABYSIT_STATE_DIR="$B/state" \
           BABYSIT_REMOTE_URL="$url" "$BIN" update-check "$@" 2>"$T/nerr"); nc=$?
   else
+    # `exec -a` (set argv0, the whole point of this arm) is a bash builtin
+    # extension. `sh` is bash on macOS but dash on Linux, where it dies with
+    # "exec: -a: not found" — ask for bash by name.
     an=$(env HOME="$B/home" BABYSIT_DIR="$B/dir" BABYSIT_STATE_DIR="$B/state" \
           BABYSIT_REMOTE_URL="$url" \
-          sh -c 'exec -a bbs-update-check "$0" "$@"' "$BIN" "$@" 2>"$T/nerr"); nc=$?
+          bash -c 'exec -a bbs-update-check "$0" "$@"' "$BIN" "$@" 2>"$T/nerr"); nc=$?
   fi
   aerr="$(cat "$T/aerr")"; nerr="$(cat "$T/nerr")"
   as="$(snapshot "$A/state")"; ns="$(snapshot "$B/state")"
