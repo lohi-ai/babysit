@@ -219,11 +219,12 @@ func runEnsure(args []string) {
 		} else {
 			if gfMode == "worktree" {
 				fmt.Fprintf(os.Stderr, "ensure: mode=worktree — cutting into a worktree (primary checkout stays on '%s')\n", curBranch)
-			} else if curBranch != baseBranch {
-				fmt.Fprintf(os.Stderr, "ensure: on '%s' (base is '%s') — diverting the cut to a worktree\n", curBranch, baseBranch)
-				divertWarning(curBranch, baseBranch)
 			} else {
-				fmt.Fprintf(os.Stderr, "ensure: '%s' has uncommitted changes — diverting the cut to a worktree\n", curBranch)
+				if curBranch != baseBranch {
+					fmt.Fprintf(os.Stderr, "ensure: on '%s' (base is '%s') — diverting the cut to a worktree\n", curBranch, baseBranch)
+				} else {
+					fmt.Fprintf(os.Stderr, "ensure: '%s' has uncommitted changes — diverting the cut to a worktree\n", curBranch)
+				}
 				divertWarning(curBranch, baseBranch)
 			}
 			if srcRef == "" {

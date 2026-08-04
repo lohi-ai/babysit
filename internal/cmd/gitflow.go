@@ -69,15 +69,12 @@ func resolveGitFlow(dir string) (gitFlowPolicy, error) {
 func gitFlowFrom(content, base string) (gitFlowPolicy, error) {
 	name := gfScalar(content, "profile")
 	aliasMode, aliasLand := "", ""
-	switch {
-	case name == "":
+	if name == "" {
 		// Repos predating `profile:` keep today's shape: cut a branch, open a
 		// PR, standard rigor. Their explicit keys still win below.
 		name = "startup"
-	default:
-		if a, ok := gitFlowAliases[name]; ok {
-			name, aliasMode, aliasLand = a.profile, a.mode, a.land
-		}
+	} else if a, ok := gitFlowAliases[name]; ok {
+		name, aliasMode, aliasLand = a.profile, a.mode, a.land
 	}
 	p, ok := gitFlowProfiles[name]
 	if !ok {

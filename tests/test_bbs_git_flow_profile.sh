@@ -16,6 +16,7 @@
 #   pet-ensure-rides-main                  profile: pet → no cut
 #   enterprise-ensure-cuts-in-place        profile: enterprise + clean base → in-place cut
 #   dirty-tree-divert-warns-about-loop     branch mode + dirty → warns, doesn't cut silently
+#   skills-consume-the-derived-policy      qa/create-pr/review-pr/setup-project read it
 
 set -u
 SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
@@ -184,6 +185,37 @@ T="$(mktemp -d)"
     || { echo "no recovery hint: $(cat "$T/err")"; exit 1; }
 ) && ok "dirty-tree-divert-warns-about-loop" || fail "dirty-tree-divert-warns-about-loop"
 rm -rf "$T"
+
+# ── skills-consume-the-derived-policy ─────────────────────────────────
+# The resolver is only half the feature: a profile that nothing reads changes
+# nothing. Pin the consumer side of each skill the way
+# test_autopilot_readiness_gate.sh pins builder.md's gate prose — the
+# derivation above keeps passing even after a consumer silently drops it.
+SK="$SCRIPT_DIR/.claude/skills"
+(
+  qa="$SK/qa/SKILL.md"
+  grep -q 'bbs autopilot git-flow' "$qa" || { echo "qa does not read the derived policy"; exit 1; }
+  grep -q 'BBS_RIGOR' "$qa"              || { echo "qa does not consume \$BBS_RIGOR"; exit 1; }
+  for tier in smoke standard strict; do
+    grep -q -- "- \*\*$tier\*\*" "$qa" || { echo "qa has no $tier tier definition"; exit 1; }
+  done
+  # the load-bearing invariant: rigor scales breadth, never the honesty floor
+  grep -q 'identical in all three rigor tiers' "$qa" \
+    || { echo "qa no longer pins the floor as tier-independent"; exit 1; }
+
+  pr="$SK/create-pr/SKILL.md"
+  grep -q 'bbs autopilot git-flow' "$pr" || { echo "create-pr does not read the derived policy"; exit 1; }
+  awk '/land: none/{f=1} f&&/STATUS: BLOCKED/{found=1} END{exit !found}' "$pr" \
+    || { echo "create-pr does not BLOCK under land: none"; exit 1; }
+
+  rv="$SK/review-pr/SKILL.md"
+  grep -q 'BBS_REVIEW_EFFORT' "$rv" || { echo "review-pr does not fall back to the repo's effort"; exit 1; }
+
+  sp="$SK/setup-project/SKILL.md"
+  grep -q 'profile' "$sp" || { echo "setup-project does not write a profile"; exit 1; }
+  grep -q 'never ask about `mode`/`land`/`push`/rigor directly' "$sp" \
+    || { echo "setup-project no longer asks exactly one question"; exit 1; }
+) && ok "skills-consume-the-derived-policy" || fail "skills-consume-the-derived-policy"
 
 echo
 if [ "$FAIL" -eq 0 ]; then

@@ -105,6 +105,10 @@ func TestGitFlowBase(t *testing.T) {
 		{"branches:\n  develop: dev\n", "dev"},
 		{"# base_branch: nope\nbranches:\n  develop: dev\nother: x\n", "dev"},
 		{"profile: pet\n", ""},
+		// An empty `base_branch:` does not shadow the develop fallback. The
+		// pre-Go bash returned "" here and stopped; a key with no value is a
+		// key the human never answered, so the ladder keeps walking.
+		{"base_branch:\nbranches:\n  develop: dev\n", "dev"},
 	}
 	for _, c := range cases {
 		if got := gitFlowBase(c.yaml); got != c.want {
