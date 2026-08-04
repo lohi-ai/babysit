@@ -237,6 +237,92 @@ T="$(mktemp -d)"
 ) && ok "lease-stale-guard-clears" || fail "lease-stale-guard-clears"
 rm -rf "$T"
 
+# ── lease-race-single-owner ───────────────────────────────────────────
+# The lease only means anything if a burst of workers racing for it produces
+# exactly one owner — foreman dispatches a batch at once, so this is the
+# designed usage, not an edge case.
+T="$(mktemp -d)"
+(
+  export PATH="$SCRIPT_DIR/bin:$PATH"
+  export HOME="$T/home"; mkdir -p "$HOME"
+  export AGENT_ROLE=mayor
+  build_two_tickets "$T" || { echo "fixture failed"; exit 1; }
+  cd "$T/repo"
+
+  # The window this closes is only microseconds wide (publish the lease dir,
+  # then fill in its owner), so one burst proves little — repeat it.
+  for trial in $(seq 1 8); do
+    rm -rf "$T/repo/.git/bbs-qa-lease" "$T/go"
+    for i in $(seq 1 8); do
+      ( while [ ! -f "$T/go" ]; do :; done      # start barrier: collide, don't queue
+        "$BBS_TICKET_BIN" qa-lease acquire --ticket "race-$i" >"$T/r$i" 2>&1 ) &
+    done
+    : > "$T/go"; wait
+    won=$(grep -l "ACQUIRED=1" "$T"/r[1-8] 2>/dev/null | wc -l | tr -d ' ')
+    [ "$won" -eq 1 ] || { echo "trial $trial: $won owners, want 1: $(cat "$T"/r[1-8])"; exit 1; }
+  done
+) && ok "lease-race-single-owner" || fail "lease-race-single-owner"
+rm -rf "$T"
+
+# ── lease-race-stale-single-owner ─────────────────────────────────────
+# Taking over a stale lease is read-then-replace; without its own mutex every
+# racer deletes the lease and publishes, and each reports a successful steal.
+# The invariant is one owner, not one steal: a racer that publishes into the
+# gap left by the winner's delete took the surface legitimately, and reports a
+# plain acquire rather than a steal.
+T="$(mktemp -d)"
+(
+  export PATH="$SCRIPT_DIR/bin:$PATH"
+  export HOME="$T/home"; mkdir -p "$HOME"
+  export AGENT_ROLE=mayor
+  build_two_tickets "$T" || { echo "fixture failed"; exit 1; }
+  cd "$T/repo"
+
+  # A burst, repeated: one racer winning is not evidence when the losers only
+  # collide some of the time. Six racers × six trials caught the unlocked
+  # version every time it was measured.
+  for trial in 1 2 3 4 5 6; do
+    (cd "$WT_A" && "$BBS_TICKET_BIN" qa-lease acquire >/dev/null 2>&1) || { echo "A acquire failed"; exit 1; }
+    backdate_lease "$T/repo" 3900
+    rm -f "$T/go"
+    for i in 1 2 3 4 5 6; do
+      ( while [ ! -f "$T/go" ]; do :; done
+        "$BBS_TICKET_BIN" qa-lease acquire --ticket "steal-$i" >"$T/s$i" 2>&1 ) &
+    done
+    : > "$T/go"; wait
+    won=$(grep -l "ACQUIRED=1" "$T"/s[1-6] 2>/dev/null | wc -l | tr -d ' ')
+    [ "$won" -eq 1 ] || { echo "trial $trial: $won owners, want 1: $(cat "$T"/s[1-6])"; exit 1; }
+    # the one that claimed it is the one holding it
+    claimed=$(grep -l "ACQUIRED=1" "$T"/s[1-6] | head -1)
+    grep -q "^OWNER=$("$BBS_TICKET_BIN" qa-lease status | sed -n 's|^OWNER=||p')$" "$claimed" \
+      || { echo "trial $trial: winner disagrees with the lease on disk: $(cat "$claimed")"; exit 1; }
+    rm -rf "$T/repo/.git/bbs-qa-lease"
+  done
+) && ok "lease-race-stale-single-owner" || fail "lease-race-stale-single-owner"
+rm -rf "$T"
+
+# ── lease-ownerless-not-stale ─────────────────────────────────────────
+# A lease directory whose owner file has not landed yet is mid-acquire, not
+# abandoned. Reading it as stale is what let a surface-mover delete a live
+# lease and land a merge on a surface that was under QA.
+T="$(mktemp -d)"
+(
+  export PATH="$SCRIPT_DIR/bin:$PATH"
+  export HOME="$T/home"; mkdir -p "$HOME"
+  export AGENT_ROLE=mayor
+  build_two_tickets "$T" || { echo "fixture failed"; exit 1; }
+
+  mkdir -p "$T/repo/.git/bbs-qa-lease"          # exactly the mid-acquire state
+  (cd "$WT_B" && "$BBS_TICKET_BIN" merge-base >/dev/null 2>"$T/err"); rc=$?
+  [ "$rc" -ne 0 ] || { echo "merge-base landed on a lease that was mid-acquire: $(cat "$T/err")"; exit 1; }
+  [ ! -f "$T/repo/b.txt" ] || { echo "b.txt landed despite the held lease"; exit 1; }
+  [ -d "$T/repo/.git/bbs-qa-lease" ] || { echo "guard deleted a lease that was mid-acquire"; exit 1; }
+
+  out="$(cd "$WT_B" && "$BBS_TICKET_BIN" qa-lease acquire 2>&1)"; rc=$?
+  [ "$rc" -ne 0 ] || { echo "acquire stole a lease that was mid-acquire: $out"; exit 1; }
+) && ok "lease-ownerless-not-stale" || fail "lease-ownerless-not-stale"
+rm -rf "$T"
+
 echo
 if [ "$FAIL" -eq 0 ]; then
   printf '\033[0;32mPASS\033[0m %d scenario(s)\n' "$PASS"

@@ -92,6 +92,54 @@ func lockAcquire(lockdir string, maxTries int) bool {
 
 func lockRelease(lockdir string) { _ = os.RemoveAll(lockdir) }
 
+// ownerlessGrace bounds how long a lease directory may sit without a readable
+// owner before another run may take it over. leasePublish installs a lease
+// atomically, so a live acquire never leaves one — only a lease written by an
+// older bbs (mkdir, then write) or a corrupt one can. Two minutes is an
+// enormous margin next to the microseconds a publish takes, and it keeps a
+// broken lease from wedging the pool until someone runs release --force.
+const ownerlessGrace = 2 * time.Minute
+
+// leaseStale reports whether the lease in dir may be taken over, and the
+// reason to print. An unreadable owner is NOT staleness on its own: reading
+// it as stale is what let two runs each claim the one test surface — a racer
+// that caught the lease before its owner file landed deleted it and published
+// its own, and both printed ACQUIRED=1.
+func leaseStale(dir, owner string, age, ttl int64) (bool, string) {
+	if owner == "" {
+		if fi, err := os.Stat(dir); err != nil || time.Since(fi.ModTime()) > ownerlessGrace {
+			return true, "lease has no readable owner"
+		}
+		return false, ""
+	}
+	if age > ttl {
+		return true, fmt.Sprintf("%dmin > %dmin ttl", age, ttl)
+	}
+	return false, ""
+}
+
+// leasePublish installs body as the lease at dir, atomically: the owner file
+// is written inside a temp directory that is then renamed into place, so the
+// lease never exists on disk without its owner. rename(2) fails with ENOTEMPTY
+// when dir already holds a published lease, which is what makes this the
+// mutual-exclusion primitive — a bare os.Mkdir published an empty directory
+// that every other racer read as abandoned.
+func leasePublish(dir, body string) bool {
+	tmp, err := os.MkdirTemp(filepath.Dir(dir), filepath.Base(dir)+".tmp-")
+	if err != nil {
+		return false
+	}
+	if err := os.WriteFile(filepath.Join(tmp, "owner"), []byte(body), 0o644); err != nil {
+		_ = os.RemoveAll(tmp)
+		return false
+	}
+	if err := os.Rename(tmp, dir); err != nil {
+		_ = os.RemoveAll(tmp)
+		return false
+	}
+	return true
+}
+
 // leaseRead returns the first `key=…` value from <dir>/owner (sed -n
 // 's/^key=//p' | head -1).
 func leaseRead(dir, key string) string {
@@ -160,13 +208,19 @@ func qaLeaseGuard(gitdir, cmd, ownerTicket string) int {
 	since := parseIntOr(leaseRead(dir, "since_epoch"), now)
 	ttl := parseIntOr(leaseRead(dir, "ttl_min"), 60)
 	age := (now - since) / 60
-	if owner == "" || age > ttl {
-		fmt.Fprintf(os.Stderr, "%s: warning — cleared stale qa-lease from '%s' (%dmin > %dmin ttl).\n",
-			cmd, orUnknown(owner), age, ttl)
+	if stale, why := leaseStale(dir, owner, age, ttl); stale {
+		fmt.Fprintf(os.Stderr, "%s: warning — cleared stale qa-lease from '%s' (%s).\n",
+			cmd, orUnknown(owner), why)
 		_ = os.RemoveAll(dir)
 		return 0
 	}
 	fmt.Fprintln(os.Stderr, "STATUS: BLOCKED")
+	if owner == "" {
+		// Within ownerlessGrace: a peer is publishing its lease right now.
+		fmt.Fprintf(os.Stderr, "REASON: another run is taking the qa-lease right now — %s would change the surface mid-QA.\n", cmd)
+		fmt.Fprintln(os.Stderr, "RECOMMENDATION: re-run in a moment; a lease still ownerless after two minutes is treated as stale and cleared.")
+		return 2
+	}
 	fmt.Fprintf(os.Stderr, "REASON: shared test surface is qa-leased by '%s' (%dmin into a %dmin lease) — %s would change it mid-QA.\n", owner, age, ttl, cmd)
 	fmt.Fprintf(os.Stderr, retarget("RECOMMENDATION: wait for '%s' to run 'bbs-ticket qa-lease release', or 'bbs-ticket qa-lease release --force' if that run is dead.\n"), owner)
 	return 2
@@ -951,10 +1005,18 @@ func runQALease(args []string) {
 	gitdir := gitCOut(primary, "rev-parse", "--absolute-git-dir")
 	qlDir := filepath.Join(gitdir, "bbs-qa-lease")
 	read := func(k string) string { return leaseRead(qlDir, k) }
-	writeOwner := func() {
-		body := fmt.Sprintf("owner=%s\npid=%d\nsince=%s\nsince_epoch=%d\nttl_min=%s\n",
+	leaseBody := func() string {
+		return fmt.Sprintf("owner=%s\npid=%d\nsince=%s\nsince_epoch=%d\nttl_min=%s\n",
 			qlTicket, os.Getpid(), isoNow(), time.Now().Unix(), ttl)
-		_ = os.WriteFile(filepath.Join(qlDir, "owner"), []byte(body), 0o644)
+	}
+	// Refresh rewrites the owner of a lease we already hold. Write-then-rename
+	// so a concurrent reader never sees the truncated file and mistakes this
+	// lease for an ownerless one.
+	writeOwner := func() {
+		tmp := filepath.Join(qlDir, ".owner.tmp")
+		if os.WriteFile(tmp, []byte(leaseBody()), 0o644) == nil {
+			_ = os.Rename(tmp, filepath.Join(qlDir, "owner"))
+		}
 	}
 	ageMin := func() int64 {
 		now := time.Now().Unix()
@@ -967,8 +1029,7 @@ func runQALease(args []string) {
 			fmt.Fprintln(os.Stderr, "qa-lease: no owner — no ticket in scope and no --ticket given")
 			os.Exit(2)
 		}
-		if os.Mkdir(qlDir, 0o755) == nil {
-			writeOwner()
+		if leasePublish(qlDir, leaseBody()) {
 			if env.Ticket != "" {
 				ticket.New(env).HistoryAppendExtra("qa_lease_acquire", actorRole(),
 					fmt.Sprintf(`{"owner":"%s","ttl_min":%s}`, qlTicket, ttl))
@@ -984,23 +1045,38 @@ func runQALease(args []string) {
 		}
 		age := ageMin()
 		heldTTL := parseIntOr(read("ttl_min"), 60)
-		if owner == "" || age > heldTTL {
-			_ = os.RemoveAll(qlDir)
-			if os.Mkdir(qlDir, 0o755) == nil {
-				writeOwner()
-				fmt.Fprintf(os.Stderr, "qa-lease: stole stale lease from '%s' (%dmin > %dmin ttl)\n", orUnknown(owner), age, heldTTL)
-				if env.Ticket != "" {
-					ticket.New(env).HistoryAppendExtra("qa_lease_steal", actorRole(),
-						fmt.Sprintf(`{"owner":"%s","stolen_from":"%s","ttl_min":%s}`, qlTicket, orUnknown(owner), ttl))
+		// Taking over a stale lease is read-then-replace, so it needs its own
+		// mutex: without one, every run that read the same stale lease deletes
+		// it and publishes, and each reports a successful steal. Re-check the
+		// lease under the lock — by then a peer may already have taken it.
+		stealLock := qlDir + ".steal"
+		if stale, _ := leaseStale(qlDir, owner, age, heldTTL); stale && lockAcquire(stealLock, 50) {
+			owner, age = read("owner"), ageMin()
+			heldTTL = parseIntOr(read("ttl_min"), 60)
+			if stale, why := leaseStale(qlDir, owner, age, heldTTL); stale {
+				_ = os.RemoveAll(qlDir)
+				if leasePublish(qlDir, leaseBody()) {
+					lockRelease(stealLock) // os.Exit skips defers — release by hand
+					fmt.Fprintf(os.Stderr, "qa-lease: stole stale lease from '%s' (%s)\n", orUnknown(owner), why)
+					if env.Ticket != "" {
+						ticket.New(env).HistoryAppendExtra("qa_lease_steal", actorRole(),
+							fmt.Sprintf(`{"owner":"%s","stolen_from":"%s","ttl_min":%s}`, qlTicket, orUnknown(owner), ttl))
+					}
+					fmt.Printf("OWNER=%s\nTTL_MIN=%s\nACQUIRED=1\nSTOLE_FROM=%s\n", qlTicket, ttl, orUnknown(owner))
+					os.Exit(0)
 				}
-				fmt.Printf("OWNER=%s\nTTL_MIN=%s\nACQUIRED=1\nSTOLE_FROM=%s\n", qlTicket, ttl, orUnknown(owner))
-				os.Exit(0)
 			}
-			owner = read("owner")
-			age = ageMin()
+			lockRelease(stealLock)
+			owner, age = read("owner"), ageMin()
+			heldTTL = parseIntOr(read("ttl_min"), 60)
 		}
 		fmt.Fprintln(os.Stderr, "STATUS: BLOCKED")
-		fmt.Fprintf(os.Stderr, "REASON: qa-lease held by '%s' (%dmin into a %dmin lease) — one QA session at a time on the shared surface.\n", orUnknown(owner), age, heldTTL)
+		if owner == "" {
+			fmt.Fprintln(os.Stderr, "REASON: another run is taking the qa-lease right now — one QA session at a time on the shared surface.")
+			fmt.Fprintln(os.Stderr, "RECOMMENDATION: re-run acquire in a moment; a lease still ownerless after two minutes is treated as stale and stolen.")
+			os.Exit(2)
+		}
+		fmt.Fprintf(os.Stderr, "REASON: qa-lease held by '%s' (%dmin into a %dmin lease) — one QA session at a time on the shared surface.\n", owner, age, heldTTL)
 		fmt.Fprintln(os.Stderr, retarget("RECOMMENDATION: wait and re-run acquire, or 'bbs-ticket qa-lease release --force' if that run is dead."))
 		os.Exit(2)
 	case "release":
