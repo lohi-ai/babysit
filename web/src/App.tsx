@@ -10,10 +10,21 @@ import { TicketsList } from './views/TicketsList';
 import { TicketDetail } from './views/TicketDetail';
 import { Timeline } from './views/Timeline';
 import { Analytics } from './views/Analytics';
-import { LiveStatus } from './views/LiveStatus';
 import { Foremen } from './views/Foremen';
 import { DecisionsFeed } from './views/DecisionsFeed';
 import { SkillEvents } from './views/SkillEvents';
+
+// Routes that moved. Rewritten before matching so a bookmark or a pasted link
+// lands on the view that absorbed it, and the nav highlights that view instead
+// of nothing. `#/live` merged into Home in v1.66.
+const MOVED: Record<string, string> = { '#/live': '#/' };
+
+function normalize(raw: string): string {
+  const hash = raw || '#/';
+  const [route, query] = [hash.split('?')[0], hash.split('?')[1]];
+  const moved = MOVED[route];
+  return moved ? moved + (query ? `?${query}` : '') : hash;
+}
 
 function useHashRoute(): string {
   const [hash, setHash] = useState<string>(() => {
@@ -22,10 +33,16 @@ function useHashRoute(): string {
       history.replaceState(null, '', '#/');
       return '#/';
     }
-    return window.location.hash;
+    const to = normalize(window.location.hash);
+    if (to !== window.location.hash) history.replaceState(null, '', to);
+    return to;
   });
   useEffect(() => {
-    const h = () => setHash(window.location.hash || '#/');
+    const h = () => {
+      const to = normalize(window.location.hash);
+      if (to !== window.location.hash) history.replaceState(null, '', to);
+      setHash(to);
+    };
     window.addEventListener('hashchange', h);
     return () => window.removeEventListener('hashchange', h);
   }, []);
@@ -47,7 +64,6 @@ function AppInner({ snapshot, hash, error, retry }: { snapshot: LoadedSnapshot; 
   else if (ticketId) view = <TicketDetail snapshot={snapshot} ticketId={ticketId} />;
   else if (route === '#/timeline') view = <Timeline snapshot={snapshot} />;
   else if (route === '#/analytics') view = <Analytics snapshot={snapshot} />;
-  else if (route === '#/live') view = <LiveStatus snapshot={snapshot} />;
   else if (route === '#/foremen') view = <Foremen snapshot={snapshot} />;
   else if (route === '#/decisions') view = <DecisionsFeed snapshot={snapshot} />;
   else if (route === '#/skill-events') view = <SkillEvents snapshot={snapshot} />;
