@@ -33,6 +33,33 @@ func gitCOK(dir string, args ...string) bool {
 	return gitOK(append([]string{"-C", dir}, args...)...)
 }
 
+// gitCRun is gitCOK plus git's own last line of output, so a caller can say
+// what went wrong instead of guessing.
+func gitCRun(dir string, args ...string) (bool, string) {
+	c := exec.Command("git", append([]string{"-C", dir}, args...)...)
+	out, err := c.CombinedOutput()
+	last := ""
+	for _, ln := range strings.Split(string(out), "\n") {
+		if ln = strings.TrimSpace(ln); ln != "" {
+			last = ln
+		}
+	}
+	return err == nil, last
+}
+
+// mergeFailure classifies a failed `git merge` in dir. A content conflict
+// leaves unmerged paths in the index; everything else (no committer identity, a
+// rejected hook, a stale index.lock) leaves none and is a different problem
+// with a different fix. Calling all of them "merge conflict" sends the operator
+// into a worktree to resolve a file that was never in conflict — which is
+// exactly how a missing git identity read as a conflict on every Linux run.
+func mergeFailure(dir, gitSaid string) (conflicted bool, detail string) {
+	if u := strings.TrimSpace(gitCOut(dir, "diff", "--name-only", "--diff-filter=U")); u != "" {
+		return true, strings.Join(strings.Fields(u), ", ")
+	}
+	return false, gitSaid
+}
+
 func insideWorkTree() bool { return gitOK("rev-parse", "--is-inside-work-tree") }
 
 func haveGit() bool {
@@ -291,11 +318,17 @@ func runMergeBase(args []string) {
 		os.Exit(2)
 	}
 	pre := gitCOut(primary, "rev-parse", "HEAD")
-	if !gitCOK(primary, "merge", "--no-edit", branch) {
+	if ok, said := gitCRun(primary, "merge", "--no-edit", branch); !ok {
+		conflicted, detail := mergeFailure(primary, said)
 		gitCOK(primary, "merge", "--abort")
 		lockRelease(lock)
 		fmt.Fprintln(os.Stderr, "STATUS: BLOCKED")
-		fmt.Fprintf(os.Stderr, "REASON: merge conflict landing '%s' on '%s' (%s); merge aborted, primary untouched.\n", branch, base, primary)
+		if !conflicted {
+			fmt.Fprintf(os.Stderr, "REASON: could not merge '%s' onto '%s' (%s) — no files conflicted; git said: %s\n", branch, base, primary, detail)
+			fmt.Fprintln(os.Stderr, "RECOMMENDATION: fix what git reported (commonly an unset user.email/user.name, or a leftover index.lock), then re-run.")
+			os.Exit(2)
+		}
+		fmt.Fprintf(os.Stderr, "REASON: merge conflict landing '%s' on '%s' (%s) in %s; merge aborted, primary untouched.\n", branch, base, primary, detail)
 		fmt.Fprintf(os.Stderr, "RECOMMENDATION: in the worktree, merge 'origin/%s' into '%s' (never local '%s' — it carries other tickets), resolve, commit, re-run merge-base.\n", base, branch, base)
 		fmt.Fprintf(os.Stderr, retarget("  If origin/%s merges clean, the conflict is with another in-flight ticket — QA solo via 'bbs-ticket switch %s' and land the PRs in sequence.\n"), base, env.Ticket)
 		os.Exit(2)
@@ -373,10 +406,16 @@ func runRefresh(args []string) {
 		fmt.Fprintf(os.Stderr, "refresh: '%s' already contains origin/%s\n", branch, base)
 		os.Exit(0)
 	}
-	if !gitOK("merge", "--no-edit", "origin/"+base) {
+	if ok, said := gitCRun(".", "merge", "--no-edit", "origin/"+base); !ok {
+		conflicted, detail := mergeFailure(".", said)
 		gitOK("merge", "--abort")
 		fmt.Fprintln(os.Stderr, "STATUS: BLOCKED")
-		fmt.Fprintf(os.Stderr, "REASON: merge conflict bringing origin/%s into '%s'; merge aborted, branch untouched.\n", base, branch)
+		if !conflicted {
+			fmt.Fprintf(os.Stderr, "REASON: could not bring origin/%s into '%s' — no files conflicted; git said: %s\n", base, branch, detail)
+			fmt.Fprintln(os.Stderr, "RECOMMENDATION: fix what git reported (commonly an unset user.email/user.name, or a leftover index.lock), then re-run.")
+			os.Exit(2)
+		}
+		fmt.Fprintf(os.Stderr, "REASON: merge conflict bringing origin/%s into '%s' in %s; merge aborted, branch untouched.\n", base, branch, detail)
 		fmt.Fprintf(os.Stderr, "RECOMMENDATION: run 'git merge origin/%s' here, resolve, commit; then re-run merge-base/switch if this ticket is on the test surface.\n", base)
 		os.Exit(2)
 	}
@@ -586,11 +625,17 @@ func runSwitch(args []string) {
 		os.Exit(2)
 	}
 	for _, b := range branches {
-		if !gitCOK(primary, "merge", "--no-edit", b) {
+		if ok, said := gitCRun(primary, "merge", "--no-edit", b); !ok {
+			conflicted, detail := mergeFailure(primary, said)
 			gitCOK(primary, "merge", "--abort")
 			lockRelease(lock)
 			fmt.Fprintln(os.Stderr, "STATUS: BLOCKED")
-			fmt.Fprintf(os.Stderr, "REASON: merge conflict landing '%s' on '%s' — that merge aborted; earlier tickets in this switch are already on the surface.\n", b, base)
+			if !conflicted {
+				fmt.Fprintf(os.Stderr, "REASON: could not merge '%s' onto '%s' — no files conflicted; git said: %s\n", b, base, detail)
+				fmt.Fprintln(os.Stderr, "RECOMMENDATION: fix what git reported (commonly an unset user.email/user.name, or a leftover index.lock), then re-run.")
+				os.Exit(2)
+			}
+			fmt.Fprintf(os.Stderr, "REASON: merge conflict landing '%s' on '%s' in %s — that merge aborted; earlier tickets in this switch are already on the surface.\n", b, base, detail)
 			fmt.Fprintf(os.Stderr, "RECOMMENDATION: in that ticket's worktree, merge 'origin/%s' in (never local '%s'), resolve, commit, re-run switch.\n", base, base)
 			fmt.Fprintf(os.Stderr, "  If origin/%s merges clean, it conflicts with an earlier ticket in this switch — switch them separately or resolve the pair together.\n", base)
 			os.Exit(2)

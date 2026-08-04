@@ -34,7 +34,9 @@ mkdir -p "$SESS_DIR" 2>/dev/null || exit 0
 # plenty for a last-seen heartbeat.
 if [ -f "$SF" ]; then
   NOW="$(date +%s)"
-  MT="$(stat -f %m "$SF" 2>/dev/null || stat -c %Y "$SF" 2>/dev/null || echo 0)"
+  # GNU first: `stat -f %m F` does not fail on GNU, it prints filesystem status
+  # and exits 0, so the BSD-first order never reaches this fallback on Linux.
+  MT="$(stat -c %Y "$SF" 2>/dev/null || stat -f %m "$SF" 2>/dev/null || echo 0)"
   [ $((NOW - MT)) -lt 60 ] && exit 0
 fi
 

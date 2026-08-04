@@ -56,7 +56,9 @@ fi
 CKPT="$("${TICKET_BIN[@]}" path checkpoint --read 2>/dev/null || true)"
 if [ -n "$CKPT" ] && [ -f "$CKPT" ]; then
   LAST_COMMIT="$(git log -1 --format=%ct 2>/dev/null || true)"
-  CKPT_MTIME="$(stat -f %m "$CKPT" 2>/dev/null || stat -c %Y "$CKPT" 2>/dev/null || true)"
+  # GNU first: `stat -f %m F` succeeds on GNU (it prints filesystem status), so
+  # the BSD-first order would never fall through and this compare would blow up.
+  CKPT_MTIME="$(stat -c %Y "$CKPT" 2>/dev/null || stat -f %m "$CKPT" 2>/dev/null || true)"
   if [ -n "$LAST_COMMIT" ] && [ -n "$CKPT_MTIME" ] && [ "$CKPT_MTIME" -lt "$LAST_COMMIT" ]; then
     ISSUES="${ISSUES:+$ISSUES; }checkpoint predates the last commit"
   fi

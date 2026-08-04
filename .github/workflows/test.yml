@@ -30,11 +30,26 @@ jobs:
 
       # Several suites commit inside throwaway repos. A runner has no global
       # identity, and git fails the commit rather than inventing one.
+      #
+      # It has to be env vars, not just `git config --global`: the suites point
+      # HOME at a temp dir to isolate ~/.babysit, which also hides ~/.gitconfig,
+      # so a global identity is invisible exactly where it is needed. macOS hid
+      # this — git auto-detects an identity there, while a runner whose hostname
+      # has no domain refuses to guess, and every merge bbs runs then fails and
+      # gets reported as a merge conflict.
       - name: Configure git identity
         run: |
           git config --global user.email ci@babysit.test
           git config --global user.name  babysit-ci
           git config --global init.defaultBranch main
+          {
+            echo "GIT_AUTHOR_NAME=babysit-ci"
+            echo "GIT_AUTHOR_EMAIL=ci@babysit.test"
+            echo "GIT_COMMITTER_NAME=babysit-ci"
+            echo "GIT_COMMITTER_EMAIL=ci@babysit.test"
+          } >> "$GITHUB_ENV"
+          # Hooks and a few skills shell out to a bare `bbs`.
+          echo "$GITHUB_WORKSPACE/bin" >> "$GITHUB_PATH"
 
       - name: go test
         run: go test ./...

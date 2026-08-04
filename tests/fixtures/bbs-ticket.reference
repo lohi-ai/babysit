@@ -2629,7 +2629,7 @@ EOF
         printf '%-40s %-14s %-6s %s\n' "SESSION_ID" "TICKET" "AGE" "CWD"
         for SS_F in "$SS_DIR"/*.yaml; do
           [ -e "$SS_F" ] || continue
-          SS_MT="$(stat -f %m "$SS_F" 2>/dev/null || stat -c %Y "$SS_F" 2>/dev/null || echo 0)"
+          SS_MT="$(stat -c %Y "$SS_F" 2>/dev/null || stat -f %m "$SS_F" 2>/dev/null || echo 0)"
           [ "$SS_MT" -lt "$SS_CUTOFF" ] && continue
           printf '%-40s %-14s %-6s %s\n' \
             "$(ss_field "$SS_F" session_id)" "$(ss_field "$SS_F" ticket)" \
@@ -3296,7 +3296,7 @@ EOF
       [ -d "$BD_SESS_DIR" ] || return 0
       for f in "$BD_SESS_DIR"/*.yaml; do
         [ -e "$f" ] || continue
-        mt="$(stat -f %m "$f" 2>/dev/null || stat -c %Y "$f" 2>/dev/null || echo 0)"
+        mt="$(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f" 2>/dev/null || echo 0)"
         [ $((BD_NOW - mt)) -gt 7200 ] && continue   # 120m window, matches session list
         t="$(ss_field "$f" ticket)"
         [ "$t" = "$1" ] || continue

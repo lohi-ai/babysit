@@ -219,6 +219,38 @@ T="$(mktemp -d)"
 ) && ok "switch-persists-serving" || fail "switch-persists-serving"
 rm -rf "$T"
 
+# ── switch-merge-failure-is-not-a-conflict ────────────────────────────
+# A merge can exit non-zero without a single file conflicting — no committer
+# identity, a rejected hook, a stale index.lock. Reporting those as "merge
+# conflict" sends the operator into a worktree to resolve nothing. This is the
+# case that hid a missing git identity behind a conflict message on every Linux
+# run: macOS auto-detects an identity, a domainless-hostname box refuses to.
+# user.useConfigOnly reproduces that refusal on any platform.
+T="$(mktemp -d)"
+(
+  export PATH="$SCRIPT_DIR/bin:$PATH"
+  export HOME="$T/home"; mkdir -p "$HOME"
+  export AGENT_ROLE=mayor
+  build_two_tickets "$T" || { echo "fixture failed"; exit 1; }
+  # Strip every identity source the merge commit could draw on.
+  git config --local user.useConfigOnly true
+  git config --local --unset user.email 2>/dev/null || true
+  git config --local --unset user.name  2>/dev/null || true
+  unset GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL
+
+  out="$("$BBS_TICKET_BIN" switch "$TK_A" "$TK_B" 2>&1)"; rc=$?
+  [ "$rc" -ne 0 ] || { echo "expected a non-zero exit; out: $out"; exit 1; }
+  printf '%s\n' "$out" | grep -q "no files conflicted" \
+    || { echo "blamed a conflict for a merge that never conflicted; out: $out"; exit 1; }
+  printf '%s\n' "$out" | grep -q "git said:" \
+    || { echo "did not quote git's own error; out: $out"; exit 1; }
+  # The recommendation must not send them off to resolve a file.
+  printf '%s\n' "$out" | grep -q "resolve, commit" \
+    && { echo "still telling the operator to resolve a conflict; out: $out"; exit 1; }
+  exit 0
+) && ok "switch-merge-failure-is-not-a-conflict" || fail "switch-merge-failure-is-not-a-conflict"
+rm -rf "$T"
+
 echo
 if [ "$FAIL" -eq 0 ]; then
   printf '\033[0;32mPASS\033[0m %d scenario(s)\n' "$PASS"

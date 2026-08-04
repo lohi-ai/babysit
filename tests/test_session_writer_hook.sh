@@ -103,10 +103,10 @@ T="$(mktemp -d)"
   export BABYSIT_SESSION="sess-mtime" BABYSIT_TICKET="bs-m"
   bash -c ". '$BLOCK'" >/dev/null 2>&1
   F="$HOME/.babysit/sessions/sess-mtime.yaml"
-  T1="$(stat -f %m "$F" 2>/dev/null || stat -c %Y "$F" 2>/dev/null)"
+  T1="$(stat -c %Y "$F" 2>/dev/null || stat -f %m "$F" 2>/dev/null)"
   sleep 2
   bash -c ". '$BLOCK'" >/dev/null 2>&1
-  T2="$(stat -f %m "$F" 2>/dev/null || stat -c %Y "$F" 2>/dev/null)"
+  T2="$(stat -c %Y "$F" 2>/dev/null || stat -f %m "$F" 2>/dev/null)"
   [ "$T2" -gt "$T1" ] || { echo "mtime not bumped: $T1 → $T2"; exit 1; }
 ) && ok "mtime-bumped-on-rewrite" || fail "mtime-bumped-on-rewrite"
 rm -rf "$T"

@@ -401,13 +401,22 @@ for i in range(2005):
     row = {'ts': f'2026-04-{(i%28)+1:02d}T{(i%24):02d}:00:00Z', 'skill': 'plan-draft', 'phase': 'plan', 'classification': 'Mechanical', 'principle': 'auto', 'decision': f'decision {i}'}
     print(json.dumps(row))
 " > "$T/state/analytics/decisions.jsonl"
+# This one reads data.js from a file rather than inlining it into `node -e`
+# like the smaller cases above: 2000 decisions push the snapshot past Linux's
+# 128 KiB cap on a single argv string (MAX_ARG_STRLEN), which macOS does not
+# have — inlined, it dies with E2BIG and the 2>/dev/null hides why.
+cat > "$T/check.js" <<'JS'
+const fs = require('fs');
+global.window = {};
+eval(fs.readFileSync(process.argv[2], 'utf8'));
+const d = window.__BBS_DATA__;
+const trunc = (d.meta.truncations || []).find(t => t.kind === 'decisions');
+if (!trunc || trunc.kept !== 2000 || trunc.total !== 2005) process.exit(1);
+if (d.decisions.length !== 2000) process.exit(1);
+JS
 if BABYSIT_STATE_DIR="$T/state" BABYSIT_DASHBOARD_REPO="$T/repo" \
    "$BBS_DASHBOARD" --no-open > "$T/out.txt" 2> "$T/err.txt"; then
-  if node -e "global.window={}; $(cat "$T/repo/web/dist/data.js"); \
-    var d=window.__BBS_DATA__; \
-    var trunc=d.meta.truncations.find(function(t){return t.kind==='decisions';}); \
-    if(!trunc||trunc.kept!==2000||trunc.total!==2005){process.exit(1);}
-    if(d.decisions.length!==2000){process.exit(1);}" 2>/dev/null; then
+  if node "$T/check.js" "$T/repo/web/dist/data.js" 2>/dev/null; then
     ok "truncation: decisions capped at 2000, meta.truncations records total=2005"
   else
     fail "truncation: decisions capped at 2000, meta.truncations records total=2005" \
