@@ -22,7 +22,7 @@ import (
 // bash script (unknown flags/args are ignored, not rejected by cobra).
 func newAutopilotCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:                "autopilot {checkpoint|read|clear|current|set-current|timeline|recover|base-branch|lint-workflow|probe|explain|check-skill-deps} ...",
+		Use:                "autopilot {checkpoint|read|clear|current|set-current|timeline|recover|base-branch|git-flow|lint-workflow|probe|explain|check-skill-deps} ...",
 		Short:              "autopilot state helper (checkpoints, timeline, probe/explain)",
 		DisableFlagParsing: true,
 		RunE: func(_ *cobra.Command, args []string) error {
@@ -32,7 +32,7 @@ func newAutopilotCmd() *cobra.Command {
 	}
 }
 
-const autopilotUsage = "usage: bbs-autopilot {checkpoint|read|clear|current|set-current|timeline|recover|base-branch|lint-workflow|probe|explain|check-skill-deps} ..."
+const autopilotUsage = "usage: bbs-autopilot {checkpoint|read|clear|current|set-current|timeline|recover|base-branch|git-flow|lint-workflow|probe|explain|check-skill-deps} ..."
 
 // apState is the identity + state-root resolved once per invocation, mirroring
 // the top-of-script derivation in bin/bbs-autopilot.
@@ -69,6 +69,8 @@ func runAutopilot(args []string) {
 		a.recover()
 	case "base-branch":
 		fmt.Println(a.baseBranch())
+	case "git-flow":
+		printGitFlow()
 	case "lint-workflow":
 		a.lintWorkflow(rest)
 	case "probe":
@@ -650,64 +652,6 @@ func baseBranchIn(dir string) string {
 		}
 	}
 	return "main"
-}
-
-// gitFlowBase ports the two awk passes: top-level `base_branch:`, then the
-// `develop:` key nested under `branches:`.
-func gitFlowBase(content string) string {
-	lines := strings.Split(content, "\n")
-	// awk sub(/[[:space:]]+#.*$/) strips only a comment preceded by whitespace.
-	commentTail := regexp.MustCompile(`\s+#.*$`)
-	trimComment := func(s string) string {
-		if j := commentTail.FindStringIndex(s); j != nil {
-			return s[:j[0]]
-		}
-		return s
-	}
-	unquote := func(s string) string {
-		s = strings.TrimSpace(s)
-		s = strings.TrimPrefix(s, `"`)
-		s = strings.TrimPrefix(s, `'`)
-		s = strings.TrimSuffix(s, `"`)
-		s = strings.TrimSuffix(s, `'`)
-		return s
-	}
-	commentLine := regexp.MustCompile(`^\s*#`)
-	// pass 1: base_branch:
-	for _, ln := range lines {
-		if commentLine.MatchString(ln) {
-			continue
-		}
-		if strings.HasPrefix(ln, "base_branch:") {
-			v := strings.TrimPrefix(ln, "base_branch:")
-			v = strings.TrimLeft(v, " \t")
-			v = trimComment(v)
-			return unquote(v)
-		}
-	}
-	// pass 2: branches: → develop:
-	topKey := regexp.MustCompile(`^[A-Za-z_]`)
-	branchesHdr := regexp.MustCompile(`^branches:\s*$`)
-	develop := regexp.MustCompile(`^\s+develop:\s*`)
-	inBranches := false
-	for _, ln := range lines {
-		if commentLine.MatchString(ln) {
-			continue
-		}
-		if branchesHdr.MatchString(ln) {
-			inBranches = true
-			continue
-		}
-		if topKey.MatchString(ln) && !strings.HasPrefix(ln, " ") && !strings.HasPrefix(ln, "\t") {
-			inBranches = false
-		}
-		if inBranches && develop.MatchString(ln) {
-			v := develop.ReplaceAllString(ln, "")
-			v = trimComment(v)
-			return unquote(v)
-		}
-	}
-	return ""
 }
 
 // ─── lint-workflow ───────────────────────────────────────────────────────────
