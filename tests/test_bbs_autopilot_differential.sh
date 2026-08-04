@@ -22,6 +22,13 @@ GO="$BIN/bbs-autopilot"
 
 PASS=0; FAIL=0
 mask() { sed -E 's/[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z/<TS>/g'; }
+
+# Subcommands the Go impl grew *on purpose* after the port was frozen. The
+# oracle can never list them, so the usage line would pin the Go side to bash
+# forever; normalising just these names keeps the rest of the string honest —
+# a reworded or reordered usage line still fails. Every entry needs a reason.
+#   bs-85spcpj3: `git-flow` prints the profile-derived policy (BBS_MODE, …).
+mask_usage() { sed -E 's/\|git-flow\|/|/'; }
 cmp_case() { # name  expected(masked)  actual(masked)  ec_e  ec_a
   if [ "$2" = "$3" ] && [ "$4" = "$5" ]; then
     echo "ok   $1"; PASS=$((PASS+1))
@@ -101,7 +108,7 @@ for args in "checkpoint --ticket t" "checkpoint --ticket t --workflow w --step s
   # shellcheck disable=SC2086
   e="$(BABYSIT_PROJECT_HOME="$WORK/ph-b" bash "$ORACLE" $args 2>&1)"; ec_e=$?
   # shellcheck disable=SC2086
-  g="$(BABYSIT_PROJECT_HOME="$WORK/ph-g" "$GO"        $args 2>&1)"; ec_g=$?
+  g="$(BABYSIT_PROJECT_HOME="$WORK/ph-g" "$GO"        $args 2>&1 | mask_usage)"; ec_g=$?   # pipefail (set -o above) → the Go exit code survives the filter
   cmp_case "err: '${args:-<none>}'" "$e" "$g" "$ec_e" "$ec_g"
 done
 
