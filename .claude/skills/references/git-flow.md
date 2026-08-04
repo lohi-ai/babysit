@@ -109,20 +109,27 @@ after landing; a ticket that added migrations runs `revert:` before
 releasing its lease — `reset-base` drops code, not schema.
 `bbs ticket switch <ticket…>` hops the surface from the primary's side:
 `reset-base` + merge the named tickets, so the server serves exactly base +
-those tickets. Same lock as `merge-base`, opposite direction.
+those tickets — one lease covers the reset and every merge, so the surface is
+never observably half-built. Same lock as `merge-base`, opposite direction.
 ## QA lease — parallel tickets, one test surface
-`bbs ticket qa-lease` keeps the surface stable for a whole QA session: while
-a ticket holds it, `merge-base`/`switch`/`reset-base` from any other ticket
-BLOCK naming the owner. Protocol:
-1. `bbs ticket qa-lease acquire` (BLOCKs while another ticket QAs).
+One lock guards the shared surface: the qa-lease. `merge-base` / `switch` /
+`reset-base` take it for the length of their work; `bbs ticket qa-lease`
+holds the same lease across a whole QA session. The one contention rule is
+**wait out a surface op, BLOCK on a QA session** — a merge lands in seconds,
+a QA session runs for as long as someone is testing, so the second is named
+rather than waited on. Protocol:
+1. `bbs ticket qa-lease acquire` (BLOCKs while another ticket QAs). It waits
+   out a merge already landing — a lease granted mid-merge would cover a
+   surface about to change — so acquire can take seconds, and BLOCKs after 30s.
 2. `bbs ticket switch <ticket>`; run `prepare:` when set.
 3. QA; fixes commit in the worktree, re-`switch` after each.
 4. `bbs ticket set-verdict --skill qa`; run `revert:` if migrations were
    added; `bbs ticket qa-lease release`.
 Reentrant for the owner. Past ttl (60 min default, `--ttl-min`) a crashed
-holder's lease is stale — the next `acquire` steals it, loudly. Per repo: a
+holder's lease is stale — the next `acquire` steals it, loudly; a surface op's
+lease expires in 5 min, so a killed merge cannot wedge the repo. Per repo: a
 cross-repo ticket acquires one lease per repo, releases them all. Solo runs
-(no lease on disk) see zero behavior change.
+(no QA lease on disk) see zero behavior change.
 ## Attended parallel review — board / serve / fix-pr
 1. `bbs ticket board` — read-only status: tickets, verdicts, PRs, lease,
    what the primary serves.

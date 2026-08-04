@@ -262,7 +262,21 @@ func runEnsure(args []string) {
 				}
 			}
 			_ = os.MkdirAll(filepath.Dir(ensureWorktree), 0o755)
-			if !gitOK("worktree", "add", "--no-track", "-b", newBranch, "--", ensureWorktree, srcRef) {
+			// `git worktree add` is not safe to run concurrently in one repo:
+			// two of them race on .git/worktrees/<name>/commondir and one dies
+			// reading the other's half-built directory. A foreman dispatching a
+			// batch is exactly that shape, and the ticket that lost the race got
+			// no worktree at all, so serialize the add on its own lock.
+			// Fail open on timeout: a leaked lock dir would otherwise block
+			// every new ticket in the repo for good, and the unlocked add is
+			// only as bad as it was before this lock existed.
+			wtLock := filepath.Join(gitCommonDir(), "bbs-worktree-add.lock")
+			locked := lockAcquire(wtLock, 300)
+			addOK := gitOK("worktree", "add", "--no-track", "-b", newBranch, "--", ensureWorktree, srcRef)
+			if locked {
+				lockRelease(wtLock) // os.Exit skips defers — release by hand
+			}
+			if !addOK {
 				fmt.Fprintf(os.Stderr, "ensure: git worktree add failed (%s → %s)\n", srcRef, ensureWorktree)
 				os.Exit(2)
 			}
@@ -342,6 +356,23 @@ func runEnsure(args []string) {
 		fmt.Printf("export BABYSIT_TICKET=%s\n", ticketID)
 	}
 	os.Exit(0)
+}
+
+// gitCommonDir returns the repository's shared git dir — the one holding
+// worktrees/, so every checkout of the repo agrees on the path. `rev-parse
+// --git-common-dir` answers relative to cwd from the primary checkout (".git"),
+// so resolve it before handing it to anything that is not run from there.
+func gitCommonDir() string {
+	d := gitOut("rev-parse", "--git-common-dir")
+	if d == "" {
+		d = ".git"
+	}
+	if !filepath.IsAbs(d) {
+		if abs, err := filepath.Abs(d); err == nil {
+			d = abs
+		}
+	}
+	return d
 }
 
 // newTicketID mirrors bash: bs-<8 lowercase-alnum> from crypto rand, epoch

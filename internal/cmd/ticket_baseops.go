@@ -192,38 +192,204 @@ func ticketSafe(s string) string {
 	return out
 }
 
-// qaLeaseGuard ports qa_lease_guard(): BLOCK (return 2) when the shared surface
-// is qa-leased by a ticket other than `ownerTicket`. Own lease / free / stale
-// (cleared with a warning) pass through (return 0).
-func qaLeaseGuard(gitdir, cmd, ownerTicket string) int {
-	dir := filepath.Join(gitdir, "bbs-qa-lease")
-	if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
-		return 0
+// ─── the surface lease ───────────────────────────────────────────────────────
+//
+// One lock guards the shared test surface: the lease at <gitdir>/bbs-qa-lease.
+// Every op that changes what the primary checkout serves — merge-base, switch,
+// reset-base — holds it for the length of its work, and a QA session holds the
+// same lease across many such ops.
+//
+// There used to be a second mutex (bbs-merge-base.lock) for the merge itself,
+// with the lease layered over it as an advisory guard. Guard and action then
+// lived in different critical sections, so every check had to be repeated once
+// the lock was finally held, and three separate races came out of that seam.
+// One lock has no seam to race in.
+//
+// The single contention rule: **wait out a short holder, block on a long one.**
+// A merge lands in seconds, so waiting for it costs nothing and leaves the
+// surface genuinely still. A QA session runs for as long as someone is testing,
+// so the operator is told whose lease it is instead of hanging.
+const (
+	leaseShort = "short" // one surface op
+	leaseLong  = "long"  // a whole QA session
+	// shortTTLMin bounds how long a surface op may hold the lease. The lock it
+	// replaces had no timeout at all, so a single killed merge wedged every
+	// ticket in the repo until someone deleted the directory by hand. A merge
+	// takes seconds; five minutes is slack for a slow fetch on a large repo,
+	// and a holder past it is dead.
+	shortTTLMin = 5
+	// leaseWait is how long to wait out a short holder before blocking.
+	leaseWait = 30 * time.Second
+)
+
+// surfaceHeld names the lease this process already owns. It makes an op invoked
+// in-process by another (switch → reset-base) reentrant without threading a
+// "the caller already holds it" flag through every signature — and without it,
+// a ticketless switch would sit waiting on its own lease.
+var surfaceHeld string
+
+func leaseDirOf(gitdir string) string { return filepath.Join(gitdir, "bbs-qa-lease") }
+
+func leaseBodyFor(owner, kind, ttl string) string {
+	return fmt.Sprintf("owner=%s\nkind=%s\npid=%d\nsince=%s\nsince_epoch=%d\nttl_min=%s\n",
+		owner, kind, os.Getpid(), isoNow(), time.Now().Unix(), ttl)
+}
+
+// leaseKind reads a lease's kind. One written by an older bbs has no kind= at
+// all — read it as long, which is what every lease meant back then.
+func leaseKind(dir string) string { return orDefault(leaseRead(dir, "kind"), leaseLong) }
+
+// leaseRewrite replaces the owner of a lease we already hold. Write-then-rename
+// so a concurrent reader never sees the truncated file and mistakes this lease
+// for an ownerless one.
+func leaseRewrite(dir, body string) {
+	tmp := filepath.Join(dir, ".owner.tmp")
+	if os.WriteFile(tmp, []byte(body), 0o644) == nil {
+		_ = os.Rename(tmp, filepath.Join(dir, "owner"))
 	}
-	owner := leaseRead(dir, "owner")
-	if ownerTicket != "" && owner == ownerTicket {
-		return 0
-	}
+}
+
+// leaseAge returns how many minutes the lease has stood, and its declared ttl.
+func leaseAge(dir string) (age, ttl int64) {
 	now := time.Now().Unix()
-	since := parseIntOr(leaseRead(dir, "since_epoch"), now)
-	ttl := parseIntOr(leaseRead(dir, "ttl_min"), 60)
-	age := (now - since) / 60
-	if stale, why := leaseStale(dir, owner, age, ttl); stale {
-		fmt.Fprintf(os.Stderr, "%s: warning — cleared stale qa-lease from '%s' (%s).\n",
-			cmd, orUnknown(owner), why)
-		_ = os.RemoveAll(dir)
-		return 0
+	return (now - parseIntOr(leaseRead(dir, "since_epoch"), now)) / 60,
+		parseIntOr(leaseRead(dir, "ttl_min"), 60)
+}
+
+// leaseResult is what an acquire attempt came to. blocked non-nil means the
+// lease is someone else's and the caller should report and give up; the caller
+// owns the wording, since "would change the surface mid-QA" and "one QA session
+// at a time" are the same fact told to two different audiences.
+type leaseResult struct {
+	blocked    *leaseHolder
+	refreshed  bool   // the lease was already ours
+	stoleOwner string // non-empty when a stale lease was taken over
+	stoleWhy   string
+}
+
+type leaseHolder struct {
+	owner    string // "" = a peer is publishing right now
+	kind     string
+	age, ttl int64
+}
+
+// leaseAcquire takes the surface lease at dir for owner, as kind.
+func leaseAcquire(dir, owner, kind, ttl string) leaseResult {
+	deadline := time.Now().Add(leaseWait)
+	for {
+		if leasePublish(dir, leaseBodyFor(owner, kind, ttl)) {
+			return leaseResult{}
+		}
+		held := leaseRead(dir, "owner")
+		// Ours already — but only a long lease is reentrant. Our own *short*
+		// lease is a peer op mid-merge (same ticket, another process), and
+		// stepping on it would run two merges in one checkout.
+		if held != "" && held == owner && leaseKind(dir) == leaseLong {
+			if kind == leaseLong {
+				// A QA session refreshing itself. A surface op that finds the
+				// session's lease leaves the body alone — rewriting it would
+				// cut the QA ttl down to a merge's.
+				leaseRewrite(dir, leaseBodyFor(owner, kind, ttl))
+			}
+			return leaseResult{refreshed: true}
+		}
+		age, heldTTL := leaseAge(dir)
+		if stale, _ := leaseStale(dir, held, age, heldTTL); stale {
+			// One attempt, then report whatever is there. Retrying a steal in a
+			// loop is how a run spins for as long as a peer keeps re-taking it.
+			if stoleFrom, why, ok := leaseSteal(dir, owner, kind, ttl); ok {
+				return leaseResult{stoleOwner: stoleFrom, stoleWhy: why}
+			}
+			age, heldTTL = leaseAge(dir)
+			return leaseResult{blocked: &leaseHolder{leaseRead(dir, "owner"), leaseKind(dir), age, heldTTL}}
+		}
+		if heldKind := leaseKind(dir); heldKind == leaseLong || time.Now().After(deadline) {
+			return leaseResult{blocked: &leaseHolder{held, heldKind, age, heldTTL}}
+		}
+		time.Sleep(100 * time.Millisecond)
 	}
-	fmt.Fprintln(os.Stderr, "STATUS: BLOCKED")
+}
+
+// leaseSteal takes over a lease already judged stale. Read-then-replace needs
+// its own mutex: without one, every run that read the same stale lease deletes
+// it and publishes, and each reports a successful steal. The re-check under the
+// lock catches a peer that got there first.
+func leaseSteal(dir, owner, kind, ttl string) (stoleFrom, why string, ok bool) {
+	stealLock := dir + ".steal"
+	if !lockAcquire(stealLock, 50) {
+		return "", "", false
+	}
+	defer lockRelease(stealLock)
+	held := leaseRead(dir, "owner")
+	age, heldTTL := leaseAge(dir)
+	stale, reason := leaseStale(dir, held, age, heldTTL)
+	if !stale {
+		return "", "", false
+	}
+	_ = os.RemoveAll(dir)
+	if !leasePublish(dir, leaseBodyFor(owner, kind, ttl)) {
+		return "", "", false
+	}
+	return orUnknown(held), reason, true
+}
+
+// surfaceAcquire takes the surface lease for one op and returns the release to
+// run when it is done. Reentrant two ways — for a QA session already holding the
+// lease under this ticket, and for an op this process invoked in-process — and
+// both give back a no-op release, because whoever took the lease releases it.
+//
+// ok=false means the reason is already on stderr and the caller should exit 2.
+func surfaceAcquire(gitdir, cmd, ticketID string) (release func(), ok bool) {
+	if surfaceHeld != "" {
+		return func() {}, true
+	}
+	dir := leaseDirOf(gitdir)
+	owner := ticketID
 	if owner == "" {
-		// Within ownerlessGrace: a peer is publishing its lease right now.
-		fmt.Fprintf(os.Stderr, "REASON: another run is taking the qa-lease right now — %s would change the surface mid-QA.\n", cmd)
-		fmt.Fprintln(os.Stderr, "RECOMMENDATION: re-run in a moment; a lease still ownerless after two minutes is treated as stale and cleared.")
-		return 2
+		// switch and reset-base can run from the primary with no ticket in
+		// scope. They still need the lease, so give them an owner unique to the
+		// run — two of them are peers, not one reentrant session.
+		owner = fmt.Sprintf("%s-%d", cmd, os.Getpid())
 	}
-	fmt.Fprintf(os.Stderr, "REASON: shared test surface is qa-leased by '%s' (%dmin into a %dmin lease) — %s would change it mid-QA.\n", owner, age, ttl, cmd)
-	fmt.Fprintf(os.Stderr, retarget("RECOMMENDATION: wait for '%s' to run 'bbs-ticket qa-lease release', or 'bbs-ticket qa-lease release --force' if that run is dead.\n"), owner)
-	return 2
+	res := leaseAcquire(dir, owner, leaseShort, strconv.Itoa(shortTTLMin))
+	if res.stoleOwner != "" {
+		fmt.Fprintf(os.Stderr, "%s: warning — cleared stale qa-lease from '%s' (%s).\n",
+			cmd, res.stoleOwner, res.stoleWhy)
+	}
+	if b := res.blocked; b != nil {
+		fmt.Fprintln(os.Stderr, "STATUS: BLOCKED")
+		if b.owner == "" {
+			// Within ownerlessGrace: a peer is publishing its lease right now.
+			fmt.Fprintf(os.Stderr, "REASON: another run is taking the qa-lease right now — %s would change the surface mid-QA.\n", cmd)
+			fmt.Fprintln(os.Stderr, "RECOMMENDATION: re-run in a moment; a lease still ownerless after two minutes is treated as stale and cleared.")
+			return nil, false
+		}
+		if b.kind == leaseShort {
+			// Waited out the full leaseWait and the peer op is still going. Not a
+			// QA session, so say so — the operator is waiting on a merge, not on
+			// someone testing.
+			fmt.Fprintf(os.Stderr, "REASON: '%s' has held the surface for 30s and is still landing — %s waited and gave up.\n", b.owner, cmd)
+			fmt.Fprintf(os.Stderr, "RECOMMENDATION: re-run; if that run died, its lease lapses %d minutes after it started and the next op clears it.\n", shortTTLMin)
+			return nil, false
+		}
+		fmt.Fprintf(os.Stderr, "REASON: shared test surface is qa-leased by '%s' (%dmin into a %dmin lease) — %s would change it mid-QA.\n", b.owner, b.age, b.ttl, cmd)
+		fmt.Fprintf(os.Stderr, retarget("RECOMMENDATION: wait for '%s' to run 'bbs-ticket qa-lease release', or 'bbs-ticket qa-lease release --force' if that run is dead.\n"), b.owner)
+		return nil, false
+	}
+	surfaceHeld = owner
+	if res.refreshed {
+		// The QA session's lease, not ours to end.
+		return func() { surfaceHeld = "" }, true
+	}
+	return func() {
+		surfaceHeld = ""
+		// Only drop a lease still ours. Past shortTTLMin a peer may have judged
+		// this op dead and taken over, and removing theirs would hand the
+		// surface to a third run while they are using it.
+		if leaseRead(dir, "owner") == owner {
+			_ = os.RemoveAll(dir)
+		}
+	}, true
 }
 
 // servingWrite ports _serving_write: persist what the primary serves as a comma
@@ -305,7 +471,12 @@ func ticketExec(dir string, extraEnv map[string]string, captureOut, quietErr boo
 
 // ─── merge-base ──────────────────────────────────────────────────────────────
 
-func runMergeBase(args []string) {
+func runMergeBase(args []string) { os.Exit(mergeBase(args)) }
+
+// mergeBase returns the exit code rather than calling os.Exit, so the surface
+// lease can be released by a defer instead of by hand at each of the eight ways
+// out. Releasing by hand is how a lock gets leaked.
+func mergeBase(args []string) int {
 	base := ""
 	for i := 0; i < len(args); i++ {
 		if args[i] == "--base" {
@@ -314,11 +485,11 @@ func runMergeBase(args []string) {
 	}
 	if !haveGit() {
 		fmt.Fprintln(os.Stderr, "merge-base: git not found")
-		os.Exit(2)
+		return 2
 	}
 	if !insideWorkTree() {
 		fmt.Fprintln(os.Stderr, "merge-base: not in a git work tree")
-		os.Exit(2)
+		return 2
 	}
 	top := gitOut("rev-parse", "--show-toplevel")
 	primary := gitPrimary()
@@ -326,73 +497,69 @@ func runMergeBase(args []string) {
 		fmt.Fprintln(os.Stderr, "STATUS: BLOCKED")
 		fmt.Fprintln(os.Stderr, "REASON: merge-base must run from a linked ticket worktree — cwd is the primary checkout.")
 		fmt.Fprintln(os.Stderr, "RECOMMENDATION: cd into the ticket worktree (.babysit/worktrees/<ticket>_<slug>/) and re-run.")
-		os.Exit(2)
+		return 2
 	}
 	branch := gitOut("branch", "--show-current")
 	if branch == "" {
 		fmt.Fprintln(os.Stderr, "merge-base: detached HEAD in worktree — checkout the ticket branch first")
-		os.Exit(2)
+		return 2
 	}
 	if gitOut("status", "--porcelain") != "" {
 		fmt.Fprintln(os.Stderr, "STATUS: BLOCKED")
 		fmt.Fprintln(os.Stderr, "REASON: worktree has uncommitted changes — the merge lands commits, not the working tree.")
 		fmt.Fprintln(os.Stderr, "RECOMMENDATION: commit (or stash) in the worktree, then re-run merge-base.")
-		os.Exit(2)
+		return 2
 	}
 	if base == "" {
 		base = baseBranchIn(primary)
 	}
 	if branch == base {
 		fmt.Fprintf(os.Stderr, "merge-base: worktree is on the base branch '%s' — nothing to land\n", base)
-		os.Exit(2)
+		return 2
 	}
+	env := identity.Resolve()
+	gitdir := gitCOut(primary, "rev-parse", "--absolute-git-dir")
+	release, ok := surfaceAcquire(gitdir, "merge-base", env.Ticket)
+	if !ok {
+		return 2
+	}
+	defer release()
+	// Everything that reads the primary belongs under the lease. A peer's merge
+	// leaves that checkout mid-write for as long as it runs, and reading it from
+	// outside the lease sees the peer's half-written tree as the operator's own
+	// uncommitted work — the ticket then fails to land, told to stash changes
+	// that are not theirs.
 	primaryBranch := gitCOut(primary, "branch", "--show-current")
 	if primaryBranch != base {
 		fmt.Fprintln(os.Stderr, "STATUS: BLOCKED")
 		fmt.Fprintf(os.Stderr, "REASON: primary checkout %s is on '%s', not base '%s'.\n", primary, primaryBranch, base)
 		fmt.Fprintf(os.Stderr, "RECOMMENDATION: checkout '%s' in the primary checkout (or pass --base), then re-run.\n", base)
-		os.Exit(2)
+		return 2
 	}
 	if gitCOut(primary, "status", "--porcelain") != "" {
 		fmt.Fprintln(os.Stderr, "STATUS: BLOCKED")
 		fmt.Fprintf(os.Stderr, "REASON: primary checkout %s has uncommitted changes — merging would tangle them with the ticket.\n", primary)
 		fmt.Fprintln(os.Stderr, "RECOMMENDATION: commit or stash the primary checkout's changes, then re-run merge-base.")
-		os.Exit(2)
-	}
-	env := identity.Resolve()
-	gitdir := gitCOut(primary, "rev-parse", "--absolute-git-dir")
-	if qaLeaseGuard(gitdir, "merge-base", env.Ticket) != 0 {
-		os.Exit(2)
-	}
-	lock := filepath.Join(gitdir, "bbs-merge-base.lock")
-	if !lockAcquire(lock, 300) {
-		fmt.Fprintln(os.Stderr, "STATUS: BLOCKED")
-		fmt.Fprintf(os.Stderr, "REASON: could not acquire %s after 30s — another merge-base may be stuck.\n", lock)
-		fmt.Fprintln(os.Stderr, "RECOMMENDATION: if no merge is in flight, remove the lock dir and re-run.")
-		os.Exit(2)
+		return 2
 	}
 	pre := gitCOut(primary, "rev-parse", "HEAD")
 	if ok, said := gitCRun(primary, "merge", "--no-edit", branch); !ok {
 		conflicted, detail := mergeFailure(primary, said)
 		gitCOK(primary, "merge", "--abort")
-		lockRelease(lock)
 		fmt.Fprintln(os.Stderr, "STATUS: BLOCKED")
 		if !conflicted {
 			fmt.Fprintf(os.Stderr, "REASON: could not merge '%s' onto '%s' (%s) — no files conflicted; git said: %s\n", branch, base, primary, detail)
 			fmt.Fprintln(os.Stderr, "RECOMMENDATION: fix what git reported (commonly an unset user.email/user.name, or a leftover index.lock), then re-run.")
-			os.Exit(2)
+			return 2
 		}
 		fmt.Fprintf(os.Stderr, "REASON: merge conflict landing '%s' on '%s' (%s) in %s; merge aborted, primary untouched.\n", branch, base, primary, detail)
 		fmt.Fprintf(os.Stderr, "RECOMMENDATION: in the worktree, merge 'origin/%s' into '%s' (never local '%s' — it carries other tickets), resolve, commit, re-run merge-base.\n", base, branch, base)
 		fmt.Fprintf(os.Stderr, retarget("  If origin/%s merges clean, the conflict is with another in-flight ticket — QA solo via 'bbs-ticket switch %s' and land the PRs in sequence.\n"), base, env.Ticket)
-		os.Exit(2)
+		return 2
 	}
 	post := gitCOut(primary, "rev-parse", "HEAD")
 	if env.Ticket != "" {
 		servingWrite(gitdir, "append", []string{env.Ticket})
-	}
-	lockRelease(lock)
-	if env.Ticket != "" {
 		ticket.New(env).HistoryAppendExtra("merge_base", actorRole(),
 			fmt.Sprintf(`{"base":"%s","head":"%s"}`, base, post))
 	}
@@ -407,7 +574,7 @@ func runMergeBase(args []string) {
 	fmt.Printf("HEAD=%s\n", post)
 	fmt.Fprintf(os.Stderr, "merge-base: primary checkout now includes '%s' — test against the server there;\n", branch)
 	fmt.Fprintln(os.Stderr, "  fix in this worktree, commit, and re-run merge-base after every QA fix.")
-	os.Exit(0)
+	return 0
 }
 
 // ─── refresh ─────────────────────────────────────────────────────────────────
@@ -488,10 +655,7 @@ func runRefresh(args []string) {
 
 // ─── reset-base ──────────────────────────────────────────────────────────────
 
-func runResetBase(args []string) {
-	rc := resetBase(args)
-	os.Exit(rc)
-}
+func runResetBase(args []string) { os.Exit(resetBase(args)) }
 
 // resetBase performs the reset and returns the exit code so switch can invoke it
 // in-process the way bash calls `"$0" reset-base --quiet`.
@@ -501,6 +665,11 @@ func runResetBase(args []string) {
 // lines below say "then re-run" rather than naming reset-base: the operator ran
 // serve, and telling them to re-run a command they never invoked sends them
 // somewhere else entirely.
+//
+// When switch calls it, the surface lease is already held by this process and
+// surfaceAcquire is reentrant — reset and merge have to be one step, or a second
+// switch resets the base between them and its merge lands on a tree still
+// carrying the first switch's ticket, while serving names only its own.
 func resetBase(args []string) int {
 	base, quiet := "", false
 	for i := 0; i < len(args); i++ {
@@ -526,19 +695,16 @@ func resetBase(args []string) int {
 	if base == "" {
 		base = baseBranchIn(primary)
 	}
-	primaryBranch := gitCOut(primary, "branch", "--show-current")
-	if primaryBranch != base {
-		fmt.Fprintln(os.Stderr, "STATUS: BLOCKED")
-		fmt.Fprintf(os.Stderr, "REASON: primary checkout %s is on '%s', not base '%s'.\n", primary, primaryBranch, base)
-		fmt.Fprintf(os.Stderr, "RECOMMENDATION: checkout '%s' there (or pass --base), then re-run.\n", base)
+	env := identity.Resolve()
+	gitdir := gitCOut(primary, "rev-parse", "--absolute-git-dir")
+	release, ok := surfaceAcquire(gitdir, "reset-base", env.Ticket)
+	if !ok {
 		return 2
 	}
-	if gitCOut(primary, "status", "--porcelain") != "" {
-		fmt.Fprintln(os.Stderr, "STATUS: BLOCKED")
-		fmt.Fprintf(os.Stderr, "REASON: primary checkout %s has uncommitted changes — reset --hard would destroy them.\n", primary)
-		fmt.Fprintln(os.Stderr, "RECOMMENDATION: commit or stash them, then re-run.")
-		return 2
-	}
+	defer release()
+	// The fetch and every check below read the primary, so they belong under the
+	// lease: the stray-commit scan in particular compares refs a peer's merge is
+	// in the middle of moving.
 	if !gitCOK(primary, "fetch", "origin", base) {
 		fmt.Fprintf(os.Stderr, "reset-base: warning — fetch failed, using the last-known origin/%s\n", base)
 	}
@@ -565,27 +731,26 @@ func resetBase(args []string) int {
 		fmt.Fprintln(os.Stderr, "RECOMMENDATION: push them, or move them to a ticket branch, then re-run.")
 		return 2
 	}
-	env := identity.Resolve()
-	gitdir := gitCOut(primary, "rev-parse", "--absolute-git-dir")
-	if qaLeaseGuard(gitdir, "reset-base", env.Ticket) != 0 {
+	primaryBranch := gitCOut(primary, "branch", "--show-current")
+	if primaryBranch != base {
+		fmt.Fprintln(os.Stderr, "STATUS: BLOCKED")
+		fmt.Fprintf(os.Stderr, "REASON: primary checkout %s is on '%s', not base '%s'.\n", primary, primaryBranch, base)
+		fmt.Fprintf(os.Stderr, "RECOMMENDATION: checkout '%s' there (or pass --base), then re-run.\n", base)
 		return 2
 	}
-	lock := filepath.Join(gitdir, "bbs-merge-base.lock")
-	if !lockAcquire(lock, 300) {
+	if gitCOut(primary, "status", "--porcelain") != "" {
 		fmt.Fprintln(os.Stderr, "STATUS: BLOCKED")
-		fmt.Fprintf(os.Stderr, "REASON: could not acquire %s after 30s — a merge-base may be in flight.\n", lock)
-		fmt.Fprintln(os.Stderr, "RECOMMENDATION: if nothing is running, remove the lock dir and re-run.")
+		fmt.Fprintf(os.Stderr, "REASON: primary checkout %s has uncommitted changes — reset --hard would destroy them.\n", primary)
+		fmt.Fprintln(os.Stderr, "RECOMMENDATION: commit or stash them, then re-run.")
 		return 2
 	}
 	pre := gitCOut(primary, "rev-parse", "HEAD")
 	if !gitCOK(primary, "reset", "--hard", "origin/"+base) {
-		lockRelease(lock)
 		fmt.Fprintf(os.Stderr, "reset-base: git reset --hard origin/%s failed\n", base)
 		return 2
 	}
 	post := gitCOut(primary, "rev-parse", "HEAD")
 	servingWrite(gitdir, "set", nil)
-	lockRelease(lock)
 	if env.Ticket != "" {
 		ticket.New(env).HistoryAppendExtra("reset_base", actorRole(),
 			fmt.Sprintf(`{"base":"%s","head":"%s"}`, base, post))
@@ -607,7 +772,9 @@ func resetBase(args []string) int {
 
 // ─── switch ──────────────────────────────────────────────────────────────────
 
-func runSwitch(args []string) {
+func runSwitch(args []string) { os.Exit(switchSurface(args)) }
+
+func switchSurface(args []string) int {
 	base := ""
 	var tickets []string
 	for i := 0; i < len(args); i++ {
@@ -616,22 +783,22 @@ func runSwitch(args []string) {
 			base, i = valueAt(args, i), i+1
 		case strings.HasPrefix(args[i], "-"):
 			fmt.Fprintf(os.Stderr, "switch: unknown flag '%s'\n", args[i])
-			os.Exit(2)
+			return 2
 		default:
 			tickets = append(tickets, args[i])
 		}
 	}
 	if len(tickets) == 0 {
 		fmt.Fprintln(os.Stderr, retarget("usage: bbs-ticket switch <ticket> [<ticket>...] [--base BRANCH]"))
-		os.Exit(2)
+		return 2
 	}
 	if !haveGit() {
 		fmt.Fprintln(os.Stderr, "switch: git not found")
-		os.Exit(2)
+		return 2
 	}
 	if !insideWorkTree() {
 		fmt.Fprintln(os.Stderr, "switch: not in a git work tree")
-		os.Exit(2)
+		return 2
 	}
 	primary := gitPrimary()
 	if primary == "" {
@@ -639,9 +806,6 @@ func runSwitch(args []string) {
 	}
 	env := identity.Resolve()
 	gitdir := gitCOut(primary, "rev-parse", "--absolute-git-dir")
-	if qaLeaseGuard(gitdir, "switch", env.Ticket) != 0 {
-		os.Exit(2)
-	}
 	// Resolve every ticket to a branch before touching anything.
 	var branches []string
 	for _, t := range tickets {
@@ -656,54 +820,52 @@ func runSwitch(args []string) {
 			fmt.Fprintln(os.Stderr, "STATUS: BLOCKED")
 			fmt.Fprintf(os.Stderr, "REASON: no local branch matches '*/%s_*' — unknown ticket or branch never cut.\n", t)
 			fmt.Fprintln(os.Stderr, retarget("RECOMMENDATION: check the id (bbs-ticket session list), or run ensure for it first."))
-			os.Exit(2)
+			return 2
 		}
 		branches = append(branches, b)
 	}
+	// One lease covers the reset and every merge. reset-base below finds it
+	// already held by this process and is reentrant.
+	release, ok := surfaceAcquire(gitdir, "switch", env.Ticket)
+	if !ok {
+		return 2
+	}
+	defer release()
 	// Clean slate via reset-base (its safety checks BLOCK loudly, stderr passes).
 	rbArgs := []string{"--quiet"}
 	if base != "" {
 		rbArgs = append(rbArgs, "--base", base)
 	}
 	if rc := resetBase(rbArgs); rc != 0 {
-		os.Exit(rc)
+		return rc
 	}
 	if base == "" {
 		base = baseBranchIn(primary)
-	}
-	lock := filepath.Join(gitdir, "bbs-merge-base.lock")
-	if !lockAcquire(lock, 300) {
-		fmt.Fprintln(os.Stderr, "STATUS: BLOCKED")
-		fmt.Fprintf(os.Stderr, "REASON: could not acquire %s after 30s — a merge-base may be in flight.\n", lock)
-		fmt.Fprintln(os.Stderr, "RECOMMENDATION: if nothing is running, remove the lock dir and re-run.")
-		os.Exit(2)
 	}
 	for _, b := range branches {
 		if ok, said := gitCRun(primary, "merge", "--no-edit", b); !ok {
 			conflicted, detail := mergeFailure(primary, said)
 			gitCOK(primary, "merge", "--abort")
-			lockRelease(lock)
 			fmt.Fprintln(os.Stderr, "STATUS: BLOCKED")
 			if !conflicted {
 				fmt.Fprintf(os.Stderr, "REASON: could not merge '%s' onto '%s' — no files conflicted; git said: %s\n", b, base, detail)
 				fmt.Fprintln(os.Stderr, "RECOMMENDATION: fix what git reported (commonly an unset user.email/user.name, or a leftover index.lock), then re-run.")
-				os.Exit(2)
+				return 2
 			}
 			fmt.Fprintf(os.Stderr, "REASON: merge conflict landing '%s' on '%s' in %s — that merge aborted; earlier tickets in this switch are already on the surface.\n", b, base, detail)
 			fmt.Fprintf(os.Stderr, "RECOMMENDATION: in that ticket's worktree, merge 'origin/%s' in (never local '%s'), resolve, commit, re-run switch.\n", base, base)
 			fmt.Fprintf(os.Stderr, "  If origin/%s merges clean, it conflicts with an earlier ticket in this switch — switch them separately or resolve the pair together.\n", base)
-			os.Exit(2)
+			return 2
 		}
 	}
 	head := gitCOut(primary, "rev-parse", "HEAD")
 	servingWrite(gitdir, "set", tickets)
-	lockRelease(lock)
 	fmt.Printf("BASE=%s\n", base)
 	fmt.Printf("PRIMARY=%s\n", primary)
 	fmt.Printf("HEAD=%s\n", head)
 	fmt.Printf("SERVING=%s\n", strings.Join(tickets, ","))
 	fmt.Fprintf(os.Stderr, "switch: test surface now serves '%s' + %s — fixes go in the ticket worktree(s), then re-run switch.\n", base, strings.Join(tickets, " "))
-	os.Exit(0)
+	return 0
 }
 
 // ─── serve ───────────────────────────────────────────────────────────────────
@@ -1003,25 +1165,8 @@ func runQALease(args []string) {
 		primary = gitOut("rev-parse", "--show-toplevel")
 	}
 	gitdir := gitCOut(primary, "rev-parse", "--absolute-git-dir")
-	qlDir := filepath.Join(gitdir, "bbs-qa-lease")
+	qlDir := leaseDirOf(gitdir)
 	read := func(k string) string { return leaseRead(qlDir, k) }
-	leaseBody := func() string {
-		return fmt.Sprintf("owner=%s\npid=%d\nsince=%s\nsince_epoch=%d\nttl_min=%s\n",
-			qlTicket, os.Getpid(), isoNow(), time.Now().Unix(), ttl)
-	}
-	// Refresh rewrites the owner of a lease we already hold. Write-then-rename
-	// so a concurrent reader never sees the truncated file and mistakes this
-	// lease for an ownerless one.
-	writeOwner := func() {
-		tmp := filepath.Join(qlDir, ".owner.tmp")
-		if os.WriteFile(tmp, []byte(leaseBody()), 0o644) == nil {
-			_ = os.Rename(tmp, filepath.Join(qlDir, "owner"))
-		}
-	}
-	ageMin := func() int64 {
-		now := time.Now().Unix()
-		return (now - parseIntOr(read("since_epoch"), now)) / 60
-	}
 
 	switch verb {
 	case "acquire":
@@ -1029,56 +1174,47 @@ func runQALease(args []string) {
 			fmt.Fprintln(os.Stderr, "qa-lease: no owner — no ticket in scope and no --ticket given")
 			os.Exit(2)
 		}
-		if leasePublish(qlDir, leaseBody()) {
-			if env.Ticket != "" {
-				ticket.New(env).HistoryAppendExtra("qa_lease_acquire", actorRole(),
-					fmt.Sprintf(`{"owner":"%s","ttl_min":%s}`, qlTicket, ttl))
+		// A QA session is a long hold of the same lease every surface op takes,
+		// so leaseAcquire waits out a merge already landing before granting it:
+		// a lease published in that gap would cover a surface about to change.
+		// Waiting is the point — the merge finishes in seconds, and the surface
+		// is then genuinely still.
+		res := leaseAcquire(qlDir, qlTicket, leaseLong, ttl)
+		if b := res.blocked; b != nil {
+			fmt.Fprintln(os.Stderr, "STATUS: BLOCKED")
+			if b.owner == "" {
+				fmt.Fprintln(os.Stderr, "REASON: another run is taking the qa-lease right now — one QA session at a time on the shared surface.")
+				fmt.Fprintln(os.Stderr, "RECOMMENDATION: re-run acquire in a moment; a lease still ownerless after two minutes is treated as stale and stolen.")
+				os.Exit(2)
 			}
-			fmt.Printf("OWNER=%s\nTTL_MIN=%s\nACQUIRED=1\n", qlTicket, ttl)
+			if b.kind == leaseShort {
+				fmt.Fprintf(os.Stderr, "REASON: '%s' has held the surface for 30s and is still landing — the lease would cover a surface still changing.\n", b.owner)
+				fmt.Fprintf(os.Stderr, "RECOMMENDATION: re-run acquire; if that run died, its lease lapses %d minutes after it started.\n", shortTTLMin)
+				os.Exit(2)
+			}
+			fmt.Fprintf(os.Stderr, "REASON: qa-lease held by '%s' (%dmin into a %dmin lease) — one QA session at a time on the shared surface.\n", b.owner, b.age, b.ttl)
+			fmt.Fprintln(os.Stderr, retarget("RECOMMENDATION: wait and re-run acquire, or 'bbs-ticket qa-lease release --force' if that run is dead."))
+			os.Exit(2)
+		}
+		if res.stoleOwner != "" {
+			fmt.Fprintf(os.Stderr, "qa-lease: stole stale lease from '%s' (%s)\n", res.stoleOwner, res.stoleWhy)
+			if env.Ticket != "" {
+				ticket.New(env).HistoryAppendExtra("qa_lease_steal", actorRole(),
+					fmt.Sprintf(`{"owner":"%s","stolen_from":"%s","ttl_min":%s}`, qlTicket, res.stoleOwner, ttl))
+			}
+			fmt.Printf("OWNER=%s\nTTL_MIN=%s\nACQUIRED=1\nSTOLE_FROM=%s\n", qlTicket, ttl, res.stoleOwner)
 			os.Exit(0)
 		}
-		owner := read("owner")
-		if owner != "" && owner == qlTicket {
-			writeOwner()
+		if res.refreshed {
 			fmt.Printf("OWNER=%s\nTTL_MIN=%s\nACQUIRED=1\nREFRESHED=1\n", qlTicket, ttl)
 			os.Exit(0)
 		}
-		age := ageMin()
-		heldTTL := parseIntOr(read("ttl_min"), 60)
-		// Taking over a stale lease is read-then-replace, so it needs its own
-		// mutex: without one, every run that read the same stale lease deletes
-		// it and publishes, and each reports a successful steal. Re-check the
-		// lease under the lock — by then a peer may already have taken it.
-		stealLock := qlDir + ".steal"
-		if stale, _ := leaseStale(qlDir, owner, age, heldTTL); stale && lockAcquire(stealLock, 50) {
-			owner, age = read("owner"), ageMin()
-			heldTTL = parseIntOr(read("ttl_min"), 60)
-			if stale, why := leaseStale(qlDir, owner, age, heldTTL); stale {
-				_ = os.RemoveAll(qlDir)
-				if leasePublish(qlDir, leaseBody()) {
-					lockRelease(stealLock) // os.Exit skips defers — release by hand
-					fmt.Fprintf(os.Stderr, "qa-lease: stole stale lease from '%s' (%s)\n", orUnknown(owner), why)
-					if env.Ticket != "" {
-						ticket.New(env).HistoryAppendExtra("qa_lease_steal", actorRole(),
-							fmt.Sprintf(`{"owner":"%s","stolen_from":"%s","ttl_min":%s}`, qlTicket, orUnknown(owner), ttl))
-					}
-					fmt.Printf("OWNER=%s\nTTL_MIN=%s\nACQUIRED=1\nSTOLE_FROM=%s\n", qlTicket, ttl, orUnknown(owner))
-					os.Exit(0)
-				}
-			}
-			lockRelease(stealLock)
-			owner, age = read("owner"), ageMin()
-			heldTTL = parseIntOr(read("ttl_min"), 60)
+		if env.Ticket != "" {
+			ticket.New(env).HistoryAppendExtra("qa_lease_acquire", actorRole(),
+				fmt.Sprintf(`{"owner":"%s","ttl_min":%s}`, qlTicket, ttl))
 		}
-		fmt.Fprintln(os.Stderr, "STATUS: BLOCKED")
-		if owner == "" {
-			fmt.Fprintln(os.Stderr, "REASON: another run is taking the qa-lease right now — one QA session at a time on the shared surface.")
-			fmt.Fprintln(os.Stderr, "RECOMMENDATION: re-run acquire in a moment; a lease still ownerless after two minutes is treated as stale and stolen.")
-			os.Exit(2)
-		}
-		fmt.Fprintf(os.Stderr, "REASON: qa-lease held by '%s' (%dmin into a %dmin lease) — one QA session at a time on the shared surface.\n", owner, age, heldTTL)
-		fmt.Fprintln(os.Stderr, retarget("RECOMMENDATION: wait and re-run acquire, or 'bbs-ticket qa-lease release --force' if that run is dead."))
-		os.Exit(2)
+		fmt.Printf("OWNER=%s\nTTL_MIN=%s\nACQUIRED=1\n", qlTicket, ttl)
+		os.Exit(0)
 	case "release":
 		if fi, err := os.Stat(qlDir); err != nil || !fi.IsDir() {
 			fmt.Println("FREE=1")
@@ -1107,8 +1243,9 @@ func runQALease(args []string) {
 			fmt.Println("FREE")
 			os.Exit(0)
 		}
+		age, _ := leaseAge(qlDir)
 		fmt.Printf("OWNER=%s\n", read("owner"))
-		fmt.Printf("AGE_MIN=%d\n", ageMin())
+		fmt.Printf("AGE_MIN=%d\n", age)
 		fmt.Printf("TTL_MIN=%s\n", read("ttl_min"))
 		os.Exit(0)
 	default:
