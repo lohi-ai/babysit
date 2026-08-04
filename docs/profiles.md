@@ -55,10 +55,13 @@ BASE: main — 3 ahead / 12 behind origin/main (last fetch 2h ago)
   ↓ origin/main moved on — bbs ticket refresh (in a ticket) or bbs ticket reset-base (on the primary)
 ```
 
-It never blocks — a diverged base is normal mid-flight. The `↑` line is the
-one worth acting on: those commits are invisible to every ticket cut after
-them. Board doesn't fetch, so the numbers are as fresh as the age in
-parentheses.
+It never blocks — a diverged base is normal mid-flight. Board doesn't fetch, so
+the numbers are as fresh as the age in parentheses.
+
+Under `startup` and `enterprise` the `↑` line is the one worth acting on:
+those commits are invisible to every ticket cut after them. Under `pet` it
+means the opposite — nothing is cut, so tickets build *on* that work and the
+only thing wrong is that it isn't pushed. The line words itself per mode.
 
 ### So what does a ticket branch get cut from?
 

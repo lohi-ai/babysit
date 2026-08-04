@@ -190,9 +190,12 @@ func printFooter(gitdir string, now int64) {
 }
 
 // printBaseLine reports how the primary checkout's local base compares to
-// origin/<base>. It exists because every ticket branch is cut from
-// origin/<base>, never local: commits sitting only on local base are invisible
-// to every ticket cut afterwards, and nothing else on the board says so.
+// origin/<base>. Under the branch-cutting modes every ticket branch is cut from
+// origin/<base>, never local, so commits sitting only on local base are
+// invisible to every ticket cut afterwards and nothing else on the board says
+// so. Under `mode: trunk` no branch is cut at all, which inverts what the same
+// count means — the ahead line is worded per mode rather than asserting the
+// branch-cutting consequence at a pet repo it does not apply to.
 //
 // Read-only and offline — board never fetches, so the comparison is against the
 // last-known remote ref. The fetch age is printed alongside it so a stale
@@ -201,10 +204,21 @@ func printFooter(gitdir string, now int64) {
 // anything destructive.
 func printBaseLine(primary, gitdir string, now int64) {
 	base := baseBranchIn(primary)
-	if base == "" || !gitCOK(primary, "show-ref", "--verify", "--quiet", "refs/heads/"+base) {
+	if base == "" {
 		return
 	}
-	if !gitCOK(primary, "show-ref", "--verify", "--quiet", "refs/remotes/origin/"+base) {
+	haveOrigin := gitCOK(primary, "show-ref", "--verify", "--quiet", "refs/remotes/origin/"+base)
+	if !gitCOK(primary, "show-ref", "--verify", "--quiet", "refs/heads/"+base) {
+		// No local base means no local drift, but staying silent here would be
+		// the one case with no line at all — and it is usually a misconfigured
+		// base_branch, which breaks composing too. Say so only when origin has
+		// the branch; when neither side does, the repo is simply new.
+		if haveOrigin {
+			fmt.Printf(retarget("BASE: %s — no local '%s' branch (origin/%s exists) — bbs-ticket serve, switch and merge-base need one\n"), base, base, base)
+		}
+		return
+	}
+	if !haveOrigin {
 		fmt.Printf("BASE: %s — no origin/%s ref (no remote, or never fetched)\n", base, base)
 		return
 	}
@@ -229,7 +243,18 @@ func printBaseLine(primary, gitdir string, now int64) {
 	}
 	fmt.Printf("BASE: %s — %s ahead / %s behind origin/%s%s\n", base, ahead, behind, base, age)
 	if ahead != "0" {
-		fmt.Printf("  ↑ %s commit(s) exist only on local '%s' — tickets are cut from origin/%s, so new ones will not have them\n", ahead, base, base)
+		// A resolve error (invalid profile/mode) leaves mode empty; the
+		// branch-cutting wording is right for the default profile, so unknown
+		// falls through to it rather than suppressing the line.
+		mode := ""
+		if p, err := resolveGitFlow(primary); err == nil {
+			mode = p.Mode
+		}
+		if mode == "trunk" {
+			fmt.Printf("  ↑ %s commit(s) on local '%s' are not on origin/%s — mode: trunk cuts no branch, so tickets build on them; they are only unpushed\n", ahead, base, base)
+		} else {
+			fmt.Printf("  ↑ %s commit(s) exist only on local '%s' — tickets are cut from origin/%s, so new ones will not have them\n", ahead, base, base)
+		}
 	}
 	if behind != "0" {
 		fmt.Printf(retarget("  ↓ origin/%s moved on — bbs-ticket refresh (in a ticket) or bbs-ticket reset-base (on the primary)\n"), base)
