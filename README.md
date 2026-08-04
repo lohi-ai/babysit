@@ -198,6 +198,8 @@ There is one knob. The wizard asks a single question — **what does a mistake c
 | QA rigor | `smoke` — 3–5 cases | `standard` — 5–10 | `strict` — 8–12 |
 | `review-pr` effort | `low` | `medium` | `high` |
 
+Each profile also expects something of *you* — which branch to be on when a ticket starts, and what your local base is for. That contract, plus how to run tickets in parallel under each profile, is in **[docs/profiles.md](docs/profiles.md)**.
+
 **First time here, or not sure? Pick `startup`.** It's already what a repo with no `profile:` key resolves to, and it's the safe place to start on a repo you care about: a branch and a PR mean nothing lands on your base branch unreviewed, and QA hands the running app back to you in the browser. Changing profile later is one line.
 
 Rigor scales **breadth, not the bar**. A `PASS` means the same thing in all three: every applicable rubric dimension at B or better, and a fresh end-to-end run against the final code. A pet project runs fewer cases — it never runs zero, and it never passes on a C-grade dimension.
@@ -318,6 +320,7 @@ bbs ticket serve            # bare: compose every finished ticket (qa + review D
 ## Going deeper
 
 - **Routing internals & debugging** — Parse → Probe → Assign → Dispatch, `bbs autopilot explain`, `--dry-run`, `--replan` / `--force` escape hatches: [`.claude/skills/autopilot/SKILL.md`](.claude/skills/autopilot/SKILL.md).
+- **Profiles** — [`docs/profiles.md`](docs/profiles.md): what each profile expects of your base branch, and how to run tickets in parallel under each.
 - **Config schemas** — [`.claude/skills/references/git-flow.md`](.claude/skills/references/git-flow.md) and [`docs/qa-config.md`](docs/qa-config.md) for hand-authoring `.babysit/`.
 
 ## Skill index
