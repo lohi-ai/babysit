@@ -218,7 +218,9 @@ func printBaseLine(primary, gitdir string, now int64) {
 
 	age := ""
 	if fi, err := os.Stat(filepath.Join(gitdir, "FETCH_HEAD")); err == nil {
-		age = fmt.Sprintf(" (fetched %s ago)", roughAge(now-fi.ModTime().Unix()))
+		// FETCH_HEAD's mtime is the last fetch of anything, not of this branch
+		// specifically — hence "last fetch", which is the claim it supports.
+		age = fmt.Sprintf(" (last fetch %s ago)", roughAge(now-fi.ModTime().Unix()))
 	}
 
 	if behind == "0" && ahead == "0" {

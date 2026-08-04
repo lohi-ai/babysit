@@ -50,7 +50,7 @@ Only four commands touch local base — `merge-base`, `switch`, `reset-base`,
 stands, so drift is visible before it bites:
 
 ```
-BASE: main — 3 ahead / 12 behind origin/main (fetched 2h ago)
+BASE: main — 3 ahead / 12 behind origin/main (last fetch 2h ago)
   ↑ 3 commit(s) exist only on local 'main' — tickets are cut from origin/main, so new ones will not have them
   ↓ origin/main moved on — bbs ticket refresh (in a ticket) or bbs ticket reset-base (on the primary)
 ```
