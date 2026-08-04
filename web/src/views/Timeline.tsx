@@ -3,6 +3,7 @@ import type { Snapshot } from '../lib/data';
 import { DenseRow } from '../components/DenseRow';
 import { FiltersPopover, type FacetDef } from '../components/FiltersPopover';
 import { EmptyState } from '../components/EmptyState';
+import { ClearFiltersAction } from '../components/ClearFiltersAction';
 import { SectionHeader } from '../components/SectionHeader';
 import { TopBar } from '../components/TopBar';
 import { formatDate } from '../lib/format';
@@ -51,7 +52,11 @@ export function Timeline({ snapshot }: { snapshot: Snapshot }) {
       {timeline.length === 0 ? (
         <EmptyState title="No events" body="No timeline events in this project." />
       ) : filtered.length === 0 ? (
-        <EmptyState title="No results" body="No events match the active filters." />
+        <EmptyState
+          title="No results"
+          body="No events match the active filters."
+          action={<ClearFiltersAction />}
+        />
       ) : (
         <div className="space-y-3">
           {grouped.map(([day, events]) => (

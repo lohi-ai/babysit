@@ -6,6 +6,7 @@ import { PriorityDot } from '../components/PriorityDot';
 import { DenseRow } from '../components/DenseRow';
 import { FiltersPopover, type FacetDef } from '../components/FiltersPopover';
 import { EmptyState } from '../components/EmptyState';
+import { ClearFiltersAction } from '../components/ClearFiltersAction';
 import { SectionHeader } from '../components/SectionHeader';
 import { TopBar } from '../components/TopBar';
 import { WaitingOnYou } from '../components/WaitingOnYou';
@@ -186,7 +187,11 @@ export function TicketsList({ snapshot }: { snapshot: Snapshot }) {
       {tickets.length === 0 ? (
         <EmptyState title="No tickets" body="No tickets found in this project." />
       ) : filtered.length === 0 ? (
-        <EmptyState title="No results" body="No tickets match the active filters. Try clearing a chip." />
+        <EmptyState
+          title="No results"
+          body="No tickets match the active filters."
+          action={<ClearFiltersAction />}
+        />
       ) : flat ? (
         <div
           ref={containerRef}

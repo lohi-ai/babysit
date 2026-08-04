@@ -3,6 +3,7 @@ import type { Snapshot } from '../lib/data';
 import { DenseRow } from '../components/DenseRow';
 import { FiltersPopover, type FacetDef } from '../components/FiltersPopover';
 import { EmptyState } from '../components/EmptyState';
+import { ClearFiltersAction } from '../components/ClearFiltersAction';
 import { Tag } from '../components/Tag';
 import { TopBar } from '../components/TopBar';
 import { formatRelative, formatDuration } from '../lib/format';
@@ -70,7 +71,11 @@ export function SkillEvents({ snapshot }: { snapshot: Snapshot }) {
       {skillEvents.length === 0 ? (
         <EmptyState title="No skill events" body="No skill usage events have been logged yet." />
       ) : filtered.length === 0 ? (
-        <EmptyState title="No results" body="No events match the active filters." />
+        <EmptyState
+          title="No results"
+          body="No events match the active filters."
+          action={<ClearFiltersAction />}
+        />
       ) : (
         <div
           className="overflow-hidden"

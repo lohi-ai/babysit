@@ -3,6 +3,7 @@ import type { Snapshot } from '../lib/data';
 import { DenseRow } from '../components/DenseRow';
 import { FiltersPopover, type FacetDef } from '../components/FiltersPopover';
 import { EmptyState } from '../components/EmptyState';
+import { ClearFiltersAction } from '../components/ClearFiltersAction';
 import { Tag } from '../components/Tag';
 import { TopBar } from '../components/TopBar';
 import { formatRelative } from '../lib/format';
@@ -79,7 +80,11 @@ export function DecisionsFeed({ snapshot }: { snapshot: Snapshot }) {
       {decisions.length === 0 ? (
         <EmptyState title="No decisions" body="No auto-decisions have been logged yet." />
       ) : filtered.length === 0 ? (
-        <EmptyState title="No results" body="No decisions match the active filters." />
+        <EmptyState
+          title="No results"
+          body="No decisions match the active filters."
+          action={<ClearFiltersAction />}
+        />
       ) : (
         <div
           className="overflow-hidden"
