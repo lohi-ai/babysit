@@ -148,7 +148,8 @@ const ticketUsageText = `usage: bbs-ticket <subcommand> [args...]
 
 Subcommands:
   ensure            idempotent: no-op on ticket branch, else cut one + init
-                    mode trunk|branch|worktree (--mode > git-flow.yaml mode:):
+                    mode trunk|branch|worktree (--mode > the profile-derived
+                    mode; see bbs autopilot git-flow):
                     trunk = no cut; branch = in-place from clean base else
                     worktree divert; worktree = always divert, primary stays
                     on base; diverts print WORKTREE=<path>; developer role

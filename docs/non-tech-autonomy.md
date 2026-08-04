@@ -26,8 +26,8 @@ A non-technical user pointing autopilot at a fresh folder hit three walls:
 The Auto-Decision Framework classifies decisions as Mechanical, Taste, or
 User Challenge. The old gate treated branch policy as a User Challenge. It
 is actually **Mechanical**: the default shape is already documented in
-`references/git-flow.md` (`base_branch` from the remote, `branch_prefix:
-feat`, `mode: branch`), and every input is detectable from the repo —
+`references/git-flow.md` (`base_branch` from the remote, `profile: startup`,
+which derives `mode: branch`), and every input is detectable from the repo —
 `origin/HEAD` names the base, falling back to a local `main`/`master`, and
 `push` is only true when a remote exists to push to. A decision whose
 answer is fully derivable from the repo must be derived, not escalated

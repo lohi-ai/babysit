@@ -33,11 +33,15 @@ If none match and there is no ticket/requirement, stop with `NEEDS_CONTEXT`.
    TOP=$(git rev-parse --show-toplevel)
    BASE=$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's|^origin/||')
    [ -n "$BASE" ] || for b in main master; do git show-ref -q --verify "refs/heads/$b" && BASE=$b && break; done
-   git remote get-url origin >/dev/null 2>&1 && PUSH=true || PUSH=false
    mkdir -p "$TOP/.babysit"
-   printf 'base_branch: %s\nbranch_prefix: feat\npush: %s\nmode: branch\n' \
-     "${BASE:-main}" "$PUSH" > "$TOP/.babysit/git-flow.yaml"
+   printf 'profile: startup\nbase_branch: %s\n' "${BASE:-main}" \
+     > "$TOP/.babysit/git-flow.yaml"
+   # every profile presets push: true — a repo with no remote must say so
+   git remote get-url origin >/dev/null 2>&1 || echo 'push: false' >> "$TOP/.babysit/git-flow.yaml"
    ```
+   `startup` is the safe guess: branch per ticket, PR, standard rigor. The
+   profile is a speed↔quality call the human owns, so name what was seeded
+   and point at `/bbs:setup-project` to change it.
    Record the seeded defaults in the handoff and recommend
    `/bbs:setup-project` for the QA harness (`qa.yaml`, credentials) — that
    part is not guessable. `state_landing_doc=0` (no CLAUDE.md or AGENTS.md)

@@ -1,35 +1,62 @@
 # Git Flow Reference
-Just enough git policy to cut the right branch and know whether babysit may
-push after QA. Config lives in `.babysit/git-flow.yaml`:
+Just enough git policy to cut the right branch, know how rigorously to test
+it, and know whether babysit may push after QA. Config lives in
+`.babysit/git-flow.yaml` and is two keys:
 ```yaml
+profile: startup      # pet | startup | enterprise — everything below derives
 base_branch: main     # branch autopilot starts from and compares against
-branch_prefix: feat   # default branch type for new work
-push: true            # may autopilot push the QA-checked branch
-mode: branch          # trunk | branch | worktree — see below
-land: local           # local | pr — how a finished batch reaches human review;
-                      # default: local under mode: worktree, pr otherwise
+```
+Read the derived set — never re-parse the yaml — with:
+```bash
+eval "$(bbs autopilot git-flow)"
+# BBS_PROFILE BBS_BASE_BRANCH BBS_MODE BBS_LAND BBS_PUSH BBS_RIGOR BBS_REVIEW_EFFORT
 ```
 ## Profiles
-`setup-project` asks one question — *how does babysit work in this repo?* —
-and each answer presets the knobs (the yaml stays the source of truth). The
-axis is attended vs unattended, not team size.
+`setup-project` asks one question — *what does a mistake cost in this repo?* —
+because that, not team size or attendance, is what a git flow is really
+answering. **This table is the source of truth.**
 
-| Profile | `mode` | `land` | Shape |
-|---------|--------|--------|-------|
-| `trunk` — pair-programming, human watches every run | trunk | — | ride the current branch; no cuts, no PR ceremony |
-| `branch-pr` — background worker, one ticket at a time | branch | pr | cut per ticket, straight PR |
-| `worktree-review` — parallel tickets, composed local review | worktree | local | review the composed surface on local dev (`serve`), then `create-pr` |
-| `worktree-pr` — parallel tickets, straight PRs | worktree | pr | per-ticket PRs; browser-test any PR locally via `serve <ticket>` |
+| | **pet** | **startup** | **enterprise** |
+|---|---|---|---|
+| who | solo, hobby project | solo freelance / small team | team, enterprise codebase |
+| priority | ship now | release speed > code quality | code quality > release speed |
+| `mode` | `trunk` (work lands on base) | `branch` | `branch` |
+| `land` | `none` (no PR) | `pr` | `pr` |
+| `push` | `true` | `true` | `true` |
+| review happens | nowhere — the push is the release | **locally**, in the browser, author merges | **on GitHub**, someone else merges |
+| `review-pr` effort | `low` | `medium` | `high` |
+| QA rigor | `smoke` (3–5 cases) | `standard` (5–10) | `strict` (8–12) |
+| inner loop (edit → browser) | **0 steps** | **0 steps** | **0 steps** |
 
-`push: false` on a worktree profile = no PRs; deliver via `merge-base`, the
-human lands manually. **Switching**: re-run `/bbs:setup-project` (offers a
-profile switch when the yaml exists). `mode:` is read at branch-cut time, so
-a switch affects new tickets only. *Into* `worktree`: primary checkout must
-end clean on `base_branch` first. *Out of* `worktree`: finish or park
-in-flight worktrees (`bbs ticket board`), release any qa-lease.
-Legacy: `ticket_branch` aliases `mode` (`optional`≡`trunk`, `required`≡`branch`);
-`base_branch` fallback: `BBS_BASE_BRANCH` → `branches.develop` →
-`bbs config get base_branch` → `origin/HEAD` → `main`.
+Rigor scales *breadth* only: `PASS`/`FIXED` still require every applicable
+rubric dimension at B or better and `freshness=A` in all three tiers. A pet
+project runs fewer cases; it never runs zero, and it never passes on a
+C-grade dimension. See `../qa/SKILL.md § Rigor tiers`.
+
+**No profile pays the worktree tax.** `worktree` costs a commit +
+`merge-base` per test iteration and buys only parallelism — it lets N tickets
+share one dev server, it does not deepen testing. So all three profiles keep
+`branch`/`trunk`'s 0-step inner loop, and `mode: worktree` is what `foreman`
+requests per dispatch (`--mode=worktree`) or an explicit override.
+
+Any explicit `mode:` / `land:` / `push:` key in the yaml wins over the
+profile's preset. That is the escape hatch, not the normal shape — a knob
+written out by hand stops tracking its profile.
+**Switching**: re-run `/bbs:setup-project` (offers a profile switch when the
+yaml exists). `mode:` is read at branch-cut time, so a switch affects new
+tickets only. *Into* `worktree`: primary checkout must end clean on
+`base_branch` first. *Out of* `worktree`: finish or park in-flight worktrees
+(`bbs ticket board`), release any qa-lease.
+Legacy: the four pre-profile names still resolve — `trunk`→`pet`,
+`branch-pr`→`startup`, `worktree-pr`→`enterprise` + `mode: worktree`,
+`worktree-review`→ that plus `land: local`; `ticket_branch` aliases `mode`
+(`optional`≡`trunk`, `required`≡`branch`). `base_branch` fallback:
+`BBS_BASE_BRANCH` → `branches.develop` → `bbs config get base_branch` →
+`origin/HEAD` → `main`.
+Under `pet` there is no ticket branch, so the ticket's identity — and with it
+the push gate — rides `BABYSIT_TICKET`. `ensure` prints the `export` line;
+without it in the environment the pre-push hook resolves no ticket and
+defers, and the qa/review-pr verdicts stop gating anything.
 ## `mode:` — where tickets get their branch
 One-shot override: `--mode <m>` on `ensure` or the autopilot invocation.
 - **`trunk`** — never cuts; sessions ride the current branch, identity via
@@ -112,9 +139,13 @@ cross-repo ticket acquires one lease per repo, releases them all. Solo runs
 4. Approved → `serve --release` → `create-pr` per repo → comments via
    `fix-pr`.
 5. `board --pr` flags merged PRs; then `reset-base` and `set-status done`.
-## `land:` — composed local review vs straight PRs
-How a *finished batch* reaches the human (read by foreman and workflow
-handoffs). `land: local` (default under `mode: worktree`): compose the
+## `land:` — how finished work reaches the human
+Read by foreman, `create-pr`, and the workflow handoffs.
+`land: none` (the `pet` profile): there is no PR step — work lands on
+`base_branch` and the push *is* the release, so the qa + review-pr verdicts
+are the only gate before it. `create-pr` BLOCKs under this policy rather than
+opening a PR nobody wanted.
+`land: local` (default under `mode: worktree`): compose the
 surface first — bare `serve` under the review lease — human reviews the
 combined result on local dev, then per-ticket `create-pr` or one compose PR;
 with `push: false` the human lands manually. Not trunk mode: every ticket

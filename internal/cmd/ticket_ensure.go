@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"time"
 
@@ -118,27 +117,16 @@ func runEnsure(args []string) {
 		os.Exit(2)
 	}
 
-	// Git-flow mode: --mode > git-flow.yaml mode: > legacy ticket_branch >
-	// default "branch".
-	gfMode := modeFlag
-	top := gitOut("rev-parse", "--show-toplevel")
-	if gfMode == "" && top != "" {
-		gf := filepath.Join(top, ".babysit", "git-flow.yaml")
-		if b, err := os.ReadFile(gf); err == nil {
-			content := string(b)
-			gfMode = readGFKey(content, "mode")
-			if gfMode == "" {
-				switch readGFKey(content, "ticket_branch") {
-				case "optional":
-					gfMode = "trunk"
-				case "required":
-					gfMode = "branch"
-				}
-			}
-		}
+	// Git-flow mode: --mode > the repo's derived policy (gitflow.go owns the
+	// profile → mode derivation and the legacy ticket_branch alias).
+	policy, gfErr := resolveGitFlow("")
+	if gfErr != nil {
+		fmt.Fprintf(os.Stderr, "ensure: %v\n", gfErr)
+		os.Exit(2)
 	}
+	gfMode := modeFlag
 	if gfMode == "" {
-		gfMode = "branch"
+		gfMode = policy.Mode
 	}
 	switch gfMode {
 	case "trunk", "branch", "worktree":
@@ -190,7 +178,7 @@ func runEnsure(args []string) {
 		newBranch := fmt.Sprintf("%s/%s_%s", typ, newTicket, newSlug)
 
 		curBranch := gitOut("branch", "--show-current")
-		baseBranch = baseBranchIn("")
+		baseBranch = policy.BaseBranch
 		if gitOK("remote", "get-url", "origin") {
 			if !gitOK("fetch", "origin", baseBranch) {
 				fmt.Fprintf(os.Stderr, "ensure: warning — fetch failed, using the last-known origin/%s\n", baseBranch)
@@ -231,10 +219,13 @@ func runEnsure(args []string) {
 		} else {
 			if gfMode == "worktree" {
 				fmt.Fprintf(os.Stderr, "ensure: mode=worktree — cutting into a worktree (primary checkout stays on '%s')\n", curBranch)
-			} else if curBranch != baseBranch {
-				fmt.Fprintf(os.Stderr, "ensure: on '%s' (base is '%s') — diverting the cut to a worktree\n", curBranch, baseBranch)
 			} else {
-				fmt.Fprintf(os.Stderr, "ensure: '%s' has uncommitted changes — diverting the cut to a worktree\n", curBranch)
+				if curBranch != baseBranch {
+					fmt.Fprintf(os.Stderr, "ensure: on '%s' (base is '%s') — diverting the cut to a worktree\n", curBranch, baseBranch)
+				} else {
+					fmt.Fprintf(os.Stderr, "ensure: '%s' has uncommitted changes — diverting the cut to a worktree\n", curBranch)
+				}
+				divertWarning(curBranch, baseBranch)
 			}
 			if srcRef == "" {
 				fmt.Fprintf(os.Stderr, "ensure: base branch '%s' not found (local or origin) — cannot cut safely from '%s'.\n", baseBranch, curBranch)
@@ -395,24 +386,16 @@ func deriveSlug(raw string) string {
 	return strings.TrimRight(joined, "-")
 }
 
-var gfCommentLine = regexp.MustCompile(`^\s*#`)
-var gfCommentTail = regexp.MustCompile(`\s+#.*$`)
-
-// readGFKey ports the inline read_gf_key awk: first non-comment line beginning
-// `key:`, prefix + surrounding-quote + trailing-comment stripped.
-func readGFKey(content, key string) string {
-	prefix := key + ":"
-	for _, ln := range strings.Split(content, "\n") {
-		if gfCommentLine.MatchString(ln) {
-			continue
-		}
-		if strings.HasPrefix(ln, prefix) {
-			v := strings.TrimLeft(ln[len(prefix):], " \t")
-			if j := gfCommentTail.FindStringIndex(v); j != nil {
-				v = v[:j[0]]
-			}
-			return strings.Trim(v, `"'`)
-		}
+// divertWarning is printed when a `branch`-mode cut is forced into a worktree.
+// The divert is not free: the worktree inner loop costs a commit +
+// `merge-base` per test iteration, where cutting in place costs nothing. A dev
+// who never chose that tax should be told how to get back to the fast loop
+// rather than silently dropped into the slow one.
+func divertWarning(curBranch, baseBranch string) {
+	fmt.Fprintln(os.Stderr, "ensure: WARNING — the worktree loop costs a commit + 'bbs ticket merge-base' per test iteration.")
+	if curBranch != baseBranch {
+		fmt.Fprintf(os.Stderr, "ensure: to keep the 0-step loop: check out '%s' with a clean tree and re-run.\n", baseBranch)
+	} else {
+		fmt.Fprintf(os.Stderr, "ensure: to keep the 0-step loop: commit or stash on '%s' and re-run.\n", curBranch)
 	}
-	return ""
 }

@@ -50,7 +50,19 @@ mask() {
          -e 's/(since_epoch=)[0-9]+/\1EPOCH/g' \
          -e 's/[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z/TS/g' \
          -e "s#$wd#WORK#g" \
-         -e "s#$ROOT#ROOT#g"
+         -e "s#$ROOT#ROOT#g" \
+    | drop_intended_divergence
+}
+
+# Output the Go impl adds *on purpose*, after the port was frozen. The oracle
+# can never grow these lines, so comparing them would pin the Go side to bash
+# forever; dropping them keeps the rest of the diff honest. Every entry needs a
+# reason — an unexplained filter here is how a real regression hides.
+drop_intended_divergence() {
+  # bs-85spcpj3: a `branch`-mode cut diverted onto a worktree now says what
+  # the worktree inner loop costs and how to get the fast loop back.
+  grep -v '^ensure: WARNING — the worktree loop costs' \
+    | grep -v "^ensure: to keep the 0-step loop:"
 }
 
 # newrepo <dir> — a fresh git repo with one commit on main; deterministic SHA.
