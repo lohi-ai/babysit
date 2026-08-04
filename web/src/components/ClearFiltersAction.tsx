@@ -13,7 +13,7 @@ import { Button } from './Button';
 export function ClearFiltersAction() {
   const { dispatch } = useFilter();
   return (
-    <Button variant="secondary" size="sm" onClick={() => dispatch({ type: 'clear' })}>
+    <Button variant="secondary" onClick={() => dispatch({ type: 'clear' })}>
       Clear filters
     </Button>
   );
