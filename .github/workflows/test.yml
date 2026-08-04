@@ -1,0 +1,58 @@
+name: Test
+
+# Runs the suites that actually exercise behavior. Build.yml only proves the
+# CLI compiles on every target — it never ran a test, which is how two
+# differential suites stayed red for weeks without anyone noticing: nothing on
+# the push path executed them.
+#
+# No paths filter, deliberately. The shell suites cover git-flow moves, hooks,
+# and workspace layout, so a change to bin/, hooks/, or tests/ can break them
+# without touching a single .go file.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      # The suites invoke bin/bbs-<sub>, committed argv0 symlinks pointing at
+      # bin/bbs — a build artifact that is gitignored. Without this they all
+      # fail on a dangling symlink rather than on anything real.
+      - name: Build the multicall binary
+        run: go build -o bin/bbs ./cmd/bbs
+
+      # Several suites commit inside throwaway repos. A runner has no global
+      # identity, and git fails the commit rather than inventing one.
+      - name: Configure git identity
+        run: |
+          git config --global user.email ci@babysit.test
+          git config --global user.name  babysit-ci
+          git config --global init.defaultBranch main
+
+      - name: go test
+        run: go test ./...
+
+      - name: Shell suites
+        run: |
+          pass=0; fail=0; failed=()
+          for t in tests/test_*.sh; do
+            if out="$(bash "$t" 2>&1)"; then
+              pass=$((pass + 1)); printf 'PASS %s\n' "$t"
+            else
+              fail=$((fail + 1)); failed+=("$t")
+              printf 'FAIL %s\n' "$t"
+              printf '%s\n' "$out" | tail -30 | sed 's/^/     /'
+            fi
+          done
+          printf '\n%d passed, %d failed\n' "$pass" "$fail"
+          if [ "$fail" -gt 0 ]; then
+            printf 'failed: %s\n' "${failed[*]}"
+            exit 1
+          fi

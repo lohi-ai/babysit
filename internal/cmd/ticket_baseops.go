@@ -402,6 +402,12 @@ func runResetBase(args []string) {
 
 // resetBase performs the reset and returns the exit code so switch can invoke it
 // in-process the way bash calls `"$0" reset-base --quiet`.
+//
+// Its guards therefore fire for `switch` and `serve` too (serve shells out to
+// switch, whose stderr passes straight through). That is why the RECOMMENDATION
+// lines below say "then re-run" rather than naming reset-base: the operator ran
+// serve, and telling them to re-run a command they never invoked sends them
+// somewhere else entirely.
 func resetBase(args []string) int {
 	base, quiet := "", false
 	for i := 0; i < len(args); i++ {
@@ -431,13 +437,13 @@ func resetBase(args []string) int {
 	if primaryBranch != base {
 		fmt.Fprintln(os.Stderr, "STATUS: BLOCKED")
 		fmt.Fprintf(os.Stderr, "REASON: primary checkout %s is on '%s', not base '%s'.\n", primary, primaryBranch, base)
-		fmt.Fprintf(os.Stderr, "RECOMMENDATION: checkout '%s' there (or pass --base), then re-run reset-base.\n", base)
+		fmt.Fprintf(os.Stderr, "RECOMMENDATION: checkout '%s' there (or pass --base), then re-run.\n", base)
 		return 2
 	}
 	if gitCOut(primary, "status", "--porcelain") != "" {
 		fmt.Fprintln(os.Stderr, "STATUS: BLOCKED")
 		fmt.Fprintf(os.Stderr, "REASON: primary checkout %s has uncommitted changes — reset --hard would destroy them.\n", primary)
-		fmt.Fprintln(os.Stderr, "RECOMMENDATION: commit or stash them, then re-run reset-base.")
+		fmt.Fprintln(os.Stderr, "RECOMMENDATION: commit or stash them, then re-run.")
 		return 2
 	}
 	if !gitCOK(primary, "fetch", "origin", base) {
@@ -463,7 +469,7 @@ func resetBase(args []string) int {
 				fmt.Fprintln(os.Stderr, ol)
 			}
 		}
-		fmt.Fprintln(os.Stderr, "RECOMMENDATION: push them, or move them to a ticket branch, then re-run reset-base.")
+		fmt.Fprintln(os.Stderr, "RECOMMENDATION: push them, or move them to a ticket branch, then re-run.")
 		return 2
 	}
 	env := identity.Resolve()

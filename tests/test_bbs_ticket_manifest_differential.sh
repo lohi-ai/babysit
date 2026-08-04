@@ -23,6 +23,26 @@ command -v jq >/dev/null 2>&1 || { echo "SKIP: jq not installed"; exit 0; }
 [ -x "$GO_BIN" ] || { echo "FAIL: $GO_BIN not built (go build -o bin/bbs ./cmd/bbs)"; exit 1; }
 [ -f "$REF" ]    || { echo "FAIL: missing $REF"; exit 1; }
 
+# The oracle is frozen at the 2026-07-18 port, so index.json fields the schema
+# gained afterwards (ticket control state, approvals, design/prototype pointers)
+# are absent from it and a raw diff reports every later feature as a regression.
+# Project the candidate onto the key names the oracle uses anywhere: no field
+# the oracle knows about may diverge — in value or in absence — while additive
+# growth is tolerated and named rather than silently excused.
+project_onto_oracle() { # stdin = candidate JSON; $1 = oracle JSON file
+  jq -S --argjson keys "$(jq -c '[paths | .[-1] | select(type == "string")] | unique' "$1")" '
+    walk(if type == "object"
+         then with_entries(select(.key as $k | $keys | index($k)))
+         else . end)'
+}
+
+added_since_oracle() { # $1 = oracle JSON file, $2 = candidate JSON file
+  jq -r -n --slurpfile o "$1" --slurpfile c "$2" '
+    ([$c[0] | paths | .[-1] | select(type == "string")] | unique)
+    - ([$o[0] | paths | .[-1] | select(type == "string")] | unique)
+    | join(", ")'
+}
+
 PASS=0; FAIL=0; FAIL_NAMES=()
 ok()   { PASS=$((PASS + 1)); printf '  \033[0;32mok\033[0m  %s\n' "$1"; }
 fail() { FAIL=$((FAIL + 1)); FAIL_NAMES+=("$1"); printf '  \033[0;31mFAIL\033[0m  %s\n' "$1"; [ $# -gt 1 ] && printf '        %s\n' "$2"; }
@@ -119,7 +139,11 @@ cmp_artifacts() {
   local gdir="$ROOT/go-home/projects/gitsrc/tickets/$ticket"
 
   if [ -f "$bdir/index.json" ] && [ -f "$gdir/index.json" ]; then
-    if diff -u <(jq -S . "$bdir/index.json" | mask) <(jq -S . "$gdir/index.json" | mask) > "$ROOT/idx.$ticket.diff"; then
+    local new_keys; new_keys="$(added_since_oracle "$bdir/index.json" "$gdir/index.json")"
+    [ -n "$new_keys" ] && printf '  note  %s\n' "$ticket index.json: added since the oracle was frozen (not compared): $new_keys"
+    if diff -u <(jq -S . "$bdir/index.json" | mask) \
+               <(project_onto_oracle "$bdir/index.json" < "$gdir/index.json" | mask) \
+               > "$ROOT/idx.$ticket.diff"; then
       ok "$ticket index.json semantically identical (jq -S)"
     else
       fail "$ticket index.json diverged" "$(cat "$ROOT/idx.$ticket.diff")"

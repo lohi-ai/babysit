@@ -381,6 +381,56 @@ grep -q 'no upstream' "$T/g.out" || CMP_MSG="$CMP_MSG no-fallback-notice;"
 [ -f "$S2/just-upgraded-from" ] || CMP_MSG="$CMP_MSG no-marker;"
 report "upgrade-branch-without-upstream-pulls-origin-explicitly"
 
+# ── The checkout path must drive the plugin half too ───────────────────
+# Found by testing README's claims on 2026-08-04: `bbs upgrade` promises to
+# refresh both halves, but the checkout path pulled + relinked and returned,
+# never touching ~/.claude/plugins/cache/babysit. A machine with a checkout on
+# PATH *and* a marketplace plugin — the shape you get from `setup-skills` next
+# to `claude plugin install` — therefore ran a fresh CLI against skills frozen
+# at whatever the last `claude plugin update` left, with nothing said about it.
+# The three cases below pin each branch. Go side alone: the oracle predates the
+# plugin entirely.
+
+new_case; prep_clones "1.0.0\n" "2.0.0\n"
+HOME_MKT="$T/c$N/home"; mkdir -p "$HOME_MKT/.claude/plugins/cache/babysit"
+CMP_MSG=""; : > "$T/stub.log"
+( cd "$BD" && env -i PATH="$STUBS:$SANDPATH" HOME="$HOME_MKT" STUB_LOG="$T/stub.log" \
+    BABYSIT_DIR="$BD" BABYSIT_STATE_DIR="$S2" \
+    "$BD/bin/bbs-upgrade" >"$T/g.out" 2>"$T/g.err" ); grc=$?
+[ "$grc" = 0 ] || CMP_MSG="exit=$grc want 0 [$(cat "$T/g.err")];"
+grep -q 'Pulling latest' "$T/g.out" || CMP_MSG="$CMP_MSG did-not-pull;"
+grep -qx 'claude plugin marketplace update babysit' "$T/stub.log" || CMP_MSG="$CMP_MSG PLUGIN-HALF-SKIPPED;"
+grep -qx 'claude plugin update bbs@babysit' "$T/stub.log" || CMP_MSG="$CMP_MSG no-plugin-update;"
+grep -q 'Restart Claude Code' "$T/g.out" || CMP_MSG="$CMP_MSG no-restart-line;"
+report "upgrade-from-a-checkout-also-updates-an-installed-marketplace-plugin"
+
+# Present but not driveable: naming it is the whole point — silence here is
+# what let the skills half drift two releases behind the binary.
+new_case; prep_clones "1.0.0\n" "2.0.0\n"
+CMP_MSG=""
+( cd "$BD" && env -i PATH="$SANDPATH" HOME="$HOME_MKT" \
+    BABYSIT_DIR="$BD" BABYSIT_STATE_DIR="$S2" \
+    "$BD/bin/bbs-upgrade" >"$T/g.out" 2>"$T/g.err" ); grc=$?
+[ "$grc" = 0 ] || CMP_MSG="exit=$grc want 0 [$(cat "$T/g.err")];"
+grep -q 'skills half is still stale' "$T/g.err" || CMP_MSG="$CMP_MSG SILENT-ABOUT-STALE-SKILLS;"
+grep -q 'claude plugin marketplace update babysit' "$T/g.err" || CMP_MSG="$CMP_MSG no-manual-hint;"
+report "upgrade-from-a-checkout-names-a-plugin-it-cannot-drive"
+
+# No marketplace plugin: a skills-dir install is loaded in place and the relink
+# above already refreshed it. Nothing to say, and saying something would send
+# the operator looking for a copy step that does not exist.
+new_case; prep_clones "1.0.0\n" "2.0.0\n"
+HOME_NOMKT="$T/c$N/home"; mkdir -p "$HOME_NOMKT/.claude"
+CMP_MSG=""; : > "$T/stub.log"
+( cd "$BD" && env -i PATH="$STUBS:$SANDPATH" HOME="$HOME_NOMKT" STUB_LOG="$T/stub.log" \
+    BABYSIT_DIR="$BD" BABYSIT_STATE_DIR="$S2" \
+    "$BD/bin/bbs-upgrade" >"$T/g.out" 2>"$T/g.err" ); grc=$?
+[ "$grc" = 0 ] || CMP_MSG="exit=$grc want 0 [$(cat "$T/g.err")];"
+[ -s "$T/stub.log" ] && CMP_MSG="$CMP_MSG ran-claude-with-no-plugin[$(cat "$T/stub.log")];"
+grep -q 'skills half is still stale' "$T/g.err" && CMP_MSG="$CMP_MSG false-stale-warning;"
+grep -q 'Restart Claude Code' "$T/g.out" && CMP_MSG="$CMP_MSG restart-line-with-nothing-updated;"
+report "upgrade-from-a-checkout-stays-quiet-with-no-marketplace-plugin"
+
 # ── Deliberate divergence from the oracle ──────────────────────────────
 # The bash treated --help as junk and upgraded anyway. The port intercepts it:
 # --help is the one flag whose entire purpose is "tell me what this does

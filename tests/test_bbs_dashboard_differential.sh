@@ -113,13 +113,47 @@ run_impl() {
     | jq -S 'del(.meta.generated_at)'
 }
 
+# The oracle is frozen at the 2026-07-18 port. Every field the schema gained
+# afterwards (dashboard control plane, approvals, design/prototype pointers) is
+# absent from it, so a raw diff reports each later feature as a regression and
+# the suite fails permanently — which is exactly what happened.
+#
+# Project the candidate onto the key names the oracle uses *anywhere*, and the
+# differential keeps the property it was built for — no field the oracle knows
+# about may diverge, in value or in absence — while tolerating additive growth.
+# Matching by name rather than by path is deliberate: a name the oracle never
+# uses at any depth is new by definition, and a name it does use stays compared
+# at every depth.
+project_onto_oracle() { # stdin = candidate JSON; $1 = oracle JSON file
+  jq -S --argjson keys "$(jq -c '[paths | .[-1] | select(type == "string")] | unique' "$1")" '
+    walk(if type == "object"
+         then with_entries(select(.key as $k | $keys | index($k)))
+         else . end)'
+}
+
+# Names dropped by the projection — printed, never silent, so schema growth is
+# visible in the run instead of being quietly excused.
+added_since_oracle() { # $1 = oracle JSON file, $2 = candidate JSON file
+  jq -r -n --slurpfile o "$1" --slurpfile c "$2" '
+    ([$c[0] | paths | .[-1] | select(type == "string")] | unique)
+    - ([$o[0] | paths | .[-1] | select(type == "string")] | unique)
+    | join(", ")'
+}
+
 BASH_REPO="$WORK/repo-bash"
 GO_REPO="$WORK/repo-go"
 run_impl "bash $ORACLE" "$BASH_REPO" >/dev/null 2>&1 || true   # warm mkdir
 BABYSIT_STATE_DIR="$STATE" BABYSIT_DASHBOARD_REPO="$BASH_REPO" \
   bash "$ORACLE" --no-open >/dev/null 2>"$BASH_REPO/err.txt"
-BASH_JSON="$(sed -e 's/^window\.__BBS_DATA__ = //' -e 's/;$//' "$BASH_REPO/web/dist/data.js" | jq -S 'del(.meta.generated_at)')"
-GO_JSON="$(run_impl "$GO" "$GO_REPO")"
+sed -e 's/^window\.__BBS_DATA__ = //' -e 's/;$//' "$BASH_REPO/web/dist/data.js" \
+  | jq -S 'del(.meta.generated_at)' > "$WORK/bash.json"
+run_impl "$GO" "$GO_REPO" > "$WORK/go.raw.json"
+
+NEW_KEYS="$(added_since_oracle "$WORK/bash.json" "$WORK/go.raw.json")"
+[ -n "$NEW_KEYS" ] && echo "note added since the oracle was frozen (not compared): $NEW_KEYS"
+
+BASH_JSON="$(cat "$WORK/bash.json")"
+GO_JSON="$(project_onto_oracle "$WORK/bash.json" < "$WORK/go.raw.json")"
 
 FAILS=0
 if [ "$BASH_JSON" = "$GO_JSON" ]; then

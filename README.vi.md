@@ -291,7 +291,7 @@ Mỗi khi một stage xong, ticket có thêm một dòng `Next:` — đúng ngh�
 /bbs:autopilot                       # resume — nối lại từ checkpoint của branch hiện tại
 ```
 
-Cả bề mặt chỉ có vậy. Các flag (`--stop-after=`, `--replan`, `--dry-run`, `--workflow=<name> --force`) mở rộng thêm; không có token động từ nào cả.
+Cả bề mặt chỉ có vậy. Hai flag mở rộng thêm — `--stop-after=requirement|plan` để dừng ở checkpoint sớm hơn, và `--mode=worktree` để chạy riêng ticket này trong worktree của nó. Không có token động từ nào cả.
 
 ### Làm nhiều ticket song song (mode `worktree`)
 
@@ -319,7 +319,7 @@ bbs ticket serve            # để trống: gộp mọi ticket đã xong (qa + 
 
 ## Đào sâu hơn
 
-- **Ruột routing & debug** — Parse → Probe → Assign → Dispatch, `bbs autopilot explain`, `--dry-run`, các lối thoát `--replan` / `--force`: [`.claude/skills/autopilot/SKILL.md`](.claude/skills/autopilot/SKILL.md).
+- **Ruột routing & debug** — init gieo những gì, vòng lặp `/goal` khôi phục từ checkpoint ra sao, và skill nào giữ cửa nào: [`.claude/skills/autopilot/SKILL.md`](.claude/skills/autopilot/SKILL.md). Muốn xem trạng thái mà một lần chạy sẽ route theo mà không chạy thật: `bbs autopilot explain` (thêm `--details` để ra ma trận prereq của workflow).
 - **Profile** — [`docs/profiles.md`](docs/profiles.md): mỗi profile đòi hỏi gì ở base branch của bạn, và cách chạy ticket song song trong từng profile.
 - **Schema config** — [`.claude/skills/references/git-flow.md`](.claude/skills/references/git-flow.md) và [`docs/qa-config.md`](docs/qa-config.md) để tự viết tay `.babysit/`.
 
@@ -361,7 +361,7 @@ Config ngày-2 (`bbs config`), telemetry (JSONL đổ vào `~/.babysit/analytics
 bbs upgrade
 ```
 
-babysit gồm hai nửa do hai công cụ khác nhau quản — CLI qua brew và plugin của Claude Code — và `bbs upgrade` chạy nửa nào máy này có, đồng thời nêu tên nửa nào nó không với tới được. Nếu cài từ checkout thì nó pull rồi chạy lại `setup-skills`.
+babysit gồm hai nửa do hai công cụ khác nhau quản — CLI qua brew và plugin của Claude Code — và `bbs upgrade` chạy nửa nào máy này có, đồng thời nêu tên nửa nào nó không với tới được. Nếu cài từ checkout thì nó pull rồi chạy lại `setup-skills` cho nửa CLI, sau đó vẫn cập nhật plugin marketplace nếu máy có cài: checkout nằm trên `PATH` và plugin trong `~/.claude/plugins/cache/` là hai bản sao khác nhau, và bản Claude Code nạp chính là plugin đã cài.
 
 ## Gỡ cài
 

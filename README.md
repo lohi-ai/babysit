@@ -291,7 +291,7 @@ When a stage finishes, the ticket gets a `Next:` line — literally what to do n
 /bbs:autopilot                       # resume — picks up from the current branch's checkpoint
 ```
 
-That's the whole surface. Flags (`--stop-after=`, `--replan`, `--dry-run`, `--workflow=<name> --force`) extend it; verb tokens don't exist.
+That's the whole surface. Two flags extend it — `--stop-after=requirement|plan` to stop at an earlier checkpoint, and `--mode=worktree` to run this one ticket in its own worktree. Verb tokens don't exist.
 
 ### Working tickets in parallel (worktree mode)
 
@@ -319,7 +319,7 @@ bbs ticket serve            # bare: compose every finished ticket (qa + review D
 
 ## Going deeper
 
-- **Routing internals & debugging** — Parse → Probe → Assign → Dispatch, `bbs autopilot explain`, `--dry-run`, `--replan` / `--force` escape hatches: [`.claude/skills/autopilot/SKILL.md`](.claude/skills/autopilot/SKILL.md).
+- **Routing internals & debugging** — what init seeds, how the `/goal` loop resumes from a checkpoint, and which step skill owns each gate: [`.claude/skills/autopilot/SKILL.md`](.claude/skills/autopilot/SKILL.md). To see the state a run would route on without running it: `bbs autopilot explain` (add `--details` for the workflow prereq matrix).
 - **Profiles** — [`docs/profiles.md`](docs/profiles.md): what each profile expects of your base branch, and how to run tickets in parallel under each.
 - **Config schemas** — [`.claude/skills/references/git-flow.md`](.claude/skills/references/git-flow.md) and [`docs/qa-config.md`](docs/qa-config.md) for hand-authoring `.babysit/`.
 
@@ -361,7 +361,7 @@ Day-2 config (`bbs config`), telemetry (JSONL to `~/.babysit/analytics/`, local-
 bbs upgrade
 ```
 
-babysit ships as two halves that different tools own — the brew CLI and the Claude Code plugin — and `bbs upgrade` drives whichever ones this machine has, naming any it can't reach. From a checkout it pulls and re-runs `setup-skills` instead.
+babysit ships as two halves that different tools own — the brew CLI and the Claude Code plugin — and `bbs upgrade` drives whichever ones this machine has, naming any it can't reach. From a checkout it pulls and re-runs `setup-skills` for the CLI half, then still updates the marketplace plugin if one is installed: a checkout on your `PATH` and a plugin in `~/.claude/plugins/cache/` are two different copies, and the installed plugin is the one Claude Code loads.
 
 ## Uninstall
 

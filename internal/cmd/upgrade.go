@@ -106,6 +106,28 @@ func runUpgrade(args []string) error {
 		os.Exit(setupExitCode(err))
 	}
 
+	// The pull + relink above refreshed the checkout and the skills-dir symlinks
+	// that point at it. It did NOT touch ~/.claude/plugins/cache/babysit — a
+	// marketplace plugin is a copy, and an installed marketplace plugin wins the
+	// name collision over the skills-dir shape. So a machine with both (checkout
+	// on PATH, plugin installed from GitHub) runs a fresh CLI against whatever
+	// skills the last `claude plugin update` left behind, and the old code path
+	// did not even mention it. Silence there is what strands skills versions
+	// behind the binary, so drive that half here too — and name it when it is
+	// present but not driveable from this process.
+	pluginDone := false
+	switch driveable, ok := upgradePlugin(); {
+	case ok:
+		pluginDone = true
+	case driveable:
+		fmt.Fprintln(os.Stderr, "  The CLI upgraded, but the plugin half did not — re-run the command above.")
+	default:
+		if pluginCached() {
+			fmt.Fprintln(os.Stderr, "A marketplace plugin is installed but `claude` is not on PATH — the skills half is still stale.")
+			fmt.Fprintln(os.Stderr, hintSkills())
+		}
+	}
+
 	newVersion := readVersion(versionFile)
 	if oldVersion != "" && oldVersion != newVersion {
 		if err := os.WriteFile(markerFile, []byte(oldVersion+"\n"), 0o644); err != nil {
@@ -129,6 +151,9 @@ func runUpgrade(args []string) error {
 		suffix = fmt.Sprintf(": %s → %s", oldVersion, newVersion)
 	}
 	fmt.Printf("✓ babysit upgraded%s\n", suffix)
+	if pluginDone {
+		fmt.Println("  Restart Claude Code — plugin changes only apply on restart.")
+	}
 	return nil
 }
 
@@ -197,19 +222,11 @@ func upgradeExternal(babysit string) error {
 		manual = append(manual, hintCLI(babysit))
 	}
 
-	switch {
-	case pluginCached() && hasCmd("claude"):
-		fmt.Println("→ Updating the babysit plugin (claude)...")
-		err := runVisible("claude", "plugin", "marketplace", "update", "babysit")
-		if err == nil {
-			err = runVisible("claude", "plugin", "update", "bbs@babysit")
-		}
-		if err != nil {
-			fmt.Fprintln(os.Stderr, "claude plugin update failed — see the output above")
-			failed = true
-		} else {
-			done = append(done, "skills")
-		}
+	switch driveable, ok := upgradePlugin(); {
+	case ok:
+		done = append(done, "skills")
+	case driveable:
+		failed = true
 	default:
 		manual = append(manual, hintSkills())
 	}
@@ -238,6 +255,30 @@ func hintCLI(babysit string) string {
 		out += "   (or re-download from https://github.com/lohi-ai/babysit/releases)"
 	}
 	return out
+}
+
+// upgradePlugin drives the Claude Code marketplace plugin half — the *copy*
+// under ~/.claude/plugins/cache that `claude plugin install` made.
+//
+// driveable reports whether this machine has that half and the `claude` command
+// to update it; ok reports whether the update actually succeeded. Callers need
+// both, because "no marketplace plugin here" and "the update failed" are
+// different outcomes: the first is named as manual work, the second is a
+// failure.
+func upgradePlugin() (driveable, ok bool) {
+	if !pluginCached() || !hasCmd("claude") {
+		return false, false
+	}
+	fmt.Println("→ Updating the babysit plugin (claude)...")
+	err := runVisible("claude", "plugin", "marketplace", "update", "babysit")
+	if err == nil {
+		err = runVisible("claude", "plugin", "update", "bbs@babysit")
+	}
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "claude plugin update failed — see the output above")
+		return true, false
+	}
+	return true, true
 }
 
 // hintSkills names the command that refreshes the skill pack for the plugin
