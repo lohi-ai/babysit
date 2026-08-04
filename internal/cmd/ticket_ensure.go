@@ -386,7 +386,6 @@ func deriveSlug(raw string) string {
 	return strings.TrimRight(joined, "-")
 }
 
-
 // divertWarning is printed when a `branch`-mode cut is forced into a worktree.
 // The divert is not free: the worktree inner loop costs a commit +
 // `merge-base` per test iteration, where cutting in place costs nothing. A dev

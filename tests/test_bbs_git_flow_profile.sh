@@ -16,6 +16,7 @@
 #   pet-ensure-rides-main                  profile: pet → no cut
 #   enterprise-ensure-cuts-in-place        profile: enterprise + clean base → in-place cut
 #   dirty-tree-divert-warns-about-loop     branch mode + dirty → warns, doesn't cut silently
+#   eval-of-the-resolver-is-injection-safe yaml values cannot execute under eval
 #   skills-consume-the-derived-policy      qa/create-pr/review-pr/setup-project read it
 
 set -u
@@ -63,14 +64,20 @@ gf() {
   return $rc
 }
 
-# expect_gf <name> <yaml> <expected BBS_* line>...
+# Expectations are written as bare KEY=value and compared against the emitted
+# KEY='value' — the output is consumed by `eval`, so every value ships
+# single-quoted (see printGitFlow). Building the quotes here rather than in each
+# expectation means a regression that stopped quoting fails every scenario.
+quoted() { printf "%s='%s'" "${1%%=*}" "${1#*=}"; }
+
+# expect_gf <name> <yaml> <expected BBS_KEY=value>...
 expect_gf() {
   local name="$1" yaml="$2"; shift 2
   local out; out="$(gf "$yaml")" || { fail "$name" "git-flow exited non-zero"; return; }
   local want
   for want in "$@"; do
-    printf '%s\n' "$out" | grep -qx -- "$want" || {
-      fail "$name" "missing '$want' in: $(printf '%s' "$out" | tr '\n' ' ')"; return; }
+    printf '%s\n' "$out" | grep -qx -- "$(quoted "$want")" || {
+      fail "$name" "missing '$(quoted "$want")' in: $(printf '%s' "$out" | tr '\n' ' ')"; return; }
   done
   ok "$name"
 }
@@ -94,8 +101,8 @@ check_legacy() { # <yaml profile> <expected line>...
   local out; out="$(gf "profile: $p")" || { legacy_ok=0; return; }
   local want
   for want in "$@"; do
-    printf '%s\n' "$out" | grep -qx -- "$want" || {
-      echo "        legacy '$p': missing '$want'"; legacy_ok=0; }
+    printf '%s\n' "$out" | grep -qx -- "$(quoted "$want")" || {
+      echo "        legacy '$p': missing '$(quoted "$want")'"; legacy_ok=0; }
   done
 }
 check_legacy trunk           BBS_PROFILE=pet        BBS_MODE=trunk    BBS_RIGOR=smoke
@@ -184,6 +191,37 @@ T="$(mktemp -d)"
   grep -q "commit or stash" "$T/err" \
     || { echo "no recovery hint: $(cat "$T/err")"; exit 1; }
 ) && ok "dirty-tree-divert-warns-about-loop" || fail "dirty-tree-divert-warns-about-loop"
+rm -rf "$T"
+
+# ── eval-of-the-resolver-is-injection-safe ────────────────────────────
+# Every skill now reads policy with `eval "$(bbs autopilot git-flow)"`, and
+# git-flow.yaml is a committed file in a repo babysit clones. An unquoted value
+# is therefore arbitrary shell running as the user.
+T="$(mktemp -d)"
+(
+  export HOME="$T/home"; mkdir -p "$HOME"
+  build_repo "$T"
+  cd "$T/repo"
+  set_git_flow "profile: startup
+base_branch: main; touch $T/PWNED-SEMICOLON"
+  eval "$("$BBS_BIN" autopilot git-flow)" 2>/dev/null
+  [ -e "$T/PWNED-SEMICOLON" ] && { echo "a ';' in base_branch executed under eval"; exit 1; }
+  [ "$BBS_BASE_BRANCH" = "main; touch $T/PWNED-SEMICOLON" ] \
+    || { echo "value did not survive quoting: '$BBS_BASE_BRANCH'"; exit 1; }
+
+  set_git_flow "profile: startup
+base_branch: \$(touch $T/PWNED-SUBST)main"
+  eval "$("$BBS_BIN" autopilot git-flow)" 2>/dev/null
+  [ -e "$T/PWNED-SUBST" ] && { echo "a \$( ) in base_branch executed under eval"; exit 1; }
+
+  # a literal single quote must not break the eval either
+  set_git_flow "profile: startup
+base_branch: it's-main"
+  eval "$("$BBS_BIN" autopilot git-flow)" 2>/dev/null \
+    || { echo "a quote in the value broke the eval"; exit 1; }
+  [ "$BBS_BASE_BRANCH" = "it's-main" ] || { echo "quote mangled: '$BBS_BASE_BRANCH'"; exit 1; }
+  exit 0
+) && ok "eval-of-the-resolver-is-injection-safe" || fail "eval-of-the-resolver-is-injection-safe"
 rm -rf "$T"
 
 # ── skills-consume-the-derived-policy ─────────────────────────────────

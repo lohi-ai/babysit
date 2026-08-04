@@ -91,9 +91,11 @@ T="$(mktemp -d)"
   # the seed is only useful if the resolver reads it back as the shape the
   # gate promised: a branch per ticket, standard rigor, no push without a remote
   gf="$("$SCRIPT_DIR/bin/bbs" autopilot git-flow)" || { echo "git-flow rejected the seed"; exit 1; }
-  printf '%s\n' "$gf" | grep -qx 'BBS_MODE=branch'   || { echo "seed does not derive mode=branch: $gf"; exit 1; }
-  printf '%s\n' "$gf" | grep -qx 'BBS_RIGOR=standard' || { echo "seed does not derive standard rigor: $gf"; exit 1; }
-  printf '%s\n' "$gf" | grep -qx 'BBS_PUSH=false'    || { echo "seed does not derive push=false: $gf"; exit 1; }
+  # read it the way a skill does — the output is a shell fragment, not a table
+  eval "$gf"
+  [ "$BBS_MODE" = branch ]     || { echo "seed does not derive mode=branch: $gf"; exit 1; }
+  [ "$BBS_RIGOR" = standard ]  || { echo "seed does not derive standard rigor: $gf"; exit 1; }
+  [ "$BBS_PUSH" = false ]      || { echo "seed does not derive push=false: $gf"; exit 1; }
 ) && ok "bootstrap-seed-block-executes" || fail "bootstrap-seed-block-executes"
 rm -rf "$T"
 

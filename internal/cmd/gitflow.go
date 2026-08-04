@@ -134,19 +134,30 @@ func gitFlowFrom(content, base string) (gitFlowPolicy, error) {
 
 // printGitFlow backs `bbs autopilot git-flow`: shell-eval-able BBS_* lines, so
 // a skill reads policy with one `eval` instead of its own yaml fallbacks.
+//
+// Every value is single-quoted. The consumer contract is `eval "$(bbs autopilot
+// git-flow)"`, so an unquoted value is arbitrary shell: `base_branch: main;
+// rm -rf ~` is a committed file in a repo babysit clones and reads. The other
+// keys are enum-validated, but quoting them too keeps one rule to remember.
 func printGitFlow() {
 	p, err := resolveGitFlow("")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "git-flow: %v\n", err)
 		os.Exit(2)
 	}
-	fmt.Printf("BBS_PROFILE=%s\n", p.Profile)
-	fmt.Printf("BBS_BASE_BRANCH=%s\n", p.BaseBranch)
-	fmt.Printf("BBS_MODE=%s\n", p.Mode)
-	fmt.Printf("BBS_LAND=%s\n", p.Land)
-	fmt.Printf("BBS_PUSH=%s\n", p.Push)
-	fmt.Printf("BBS_RIGOR=%s\n", p.Rigor)
-	fmt.Printf("BBS_REVIEW_EFFORT=%s\n", p.ReviewEffort)
+	fmt.Printf("BBS_PROFILE=%s\n", shq(p.Profile))
+	fmt.Printf("BBS_BASE_BRANCH=%s\n", shq(p.BaseBranch))
+	fmt.Printf("BBS_MODE=%s\n", shq(p.Mode))
+	fmt.Printf("BBS_LAND=%s\n", shq(p.Land))
+	fmt.Printf("BBS_PUSH=%s\n", shq(p.Push))
+	fmt.Printf("BBS_RIGOR=%s\n", shq(p.Rigor))
+	fmt.Printf("BBS_REVIEW_EFFORT=%s\n", shq(p.ReviewEffort))
+}
+
+// shq single-quotes s for `eval`. Inside single quotes the shell expands
+// nothing, so the only character needing care is the quote itself.
+func shq(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // ─── yaml scalars ────────────────────────────────────────────────────────────
