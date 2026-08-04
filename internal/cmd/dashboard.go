@@ -181,9 +181,18 @@ func runDashboard(args []string) error {
 		}
 	}
 
-	version := "unknown"
-	if b, err := os.ReadFile(filepath.Join(repoRoot, "VERSION")); err == nil {
-		version = strings.TrimSpace(string(b))
+	// The version the nav shows is the running binary's, not "whatever repo the
+	// server happened to be launched next to". repoRoot is the executable's
+	// parent, which on a brew install is the Cellar prefix and has no VERSION
+	// file — so reading it first is what printed `vunknown` in the nav on every
+	// install that isn't a git checkout. resolveVersion covers both real cases
+	// (ldflags for brew, the checkout's VERSION file for setup-skills); the
+	// repoRoot read stays as the fallback for a BABYSIT_DASHBOARD_REPO override.
+	version := resolveVersion()
+	if version == "unknown" {
+		if b, err := os.ReadFile(filepath.Join(repoRoot, "VERSION")); err == nil {
+			version = strings.TrimSpace(string(b))
+		}
 	}
 
 	// ── mode ──

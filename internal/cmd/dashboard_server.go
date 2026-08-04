@@ -60,6 +60,8 @@ func (s *dashServer) mux() *http.ServeMux {
 	m.HandleFunc("GET /api/snapshot", s.handleSnapshot)
 	m.HandleFunc("POST /api/tickets", s.handleCreateTicket)
 	m.HandleFunc("POST /api/tickets/{project}/{ticket}/assign", s.handleAssign)
+	m.HandleFunc("POST /api/tickets/{project}/{ticket}/status", s.handleSetStatus)
+	m.HandleFunc("DELETE /api/tickets/{project}/{ticket}", s.handleDeleteTicket)
 	m.HandleFunc("POST /api/tickets/{project}/{ticket}/control", s.handleControl)
 	m.HandleFunc("POST /api/tickets/{project}/{ticket}/approval", s.handleApproval)
 	m.HandleFunc("POST /api/tickets/{project}/{ticket}/approval/comment", s.handleApprovalComment)
@@ -248,6 +250,97 @@ func (s *dashServer) handleAssign(w http.ResponseWriter, r *http.Request) {
 		resp["wake_detail"] = wake.detail
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+type statusReq struct {
+	Status string `json:"status"`
+}
+
+// handleSetStatus moves a ticket along the lifecycle ladder by hand. It is the
+// same write `bbs ticket set-status` makes, validated against the same enum —
+// including the rungs a reconcile would otherwise recompute, because a human
+// correcting a mis-derived status is exactly what this is for.
+//
+// No wake: unlike pause, a status edit does not ask the assignee to stop what it
+// is doing, and it re-reads the ticket on its next tick anyway.
+func (s *dashServer) handleSetStatus(w http.ResponseWriter, r *http.Request) {
+	if !s.guard(w, r) {
+		return
+	}
+	var req statusReq
+	if !decode(w, r, &req) {
+		return
+	}
+	if !statusEnum[req.Status] {
+		writeErr(w, http.StatusBadRequest, fmt.Sprintf(
+			"invalid status %q — valid: %s", req.Status, statusValid))
+		return
+	}
+	st, err := s.ticketStore(r.PathValue("project"), r.PathValue("ticket"))
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := statusSet(st, req.Status, actorRole()); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{
+		"ticket": st.Env.Ticket, "status": req.Status,
+	})
+}
+
+// handleDeleteTicket moves the ticket's directory to <stateDir>/trash/<project>/
+// rather than unlinking it. A ticket dir is the entire record of the work —
+// requirement, plan, handoffs, verdicts, evidence — and this is the first thing
+// in babysit that removes one, so the destructive version of it is not worth
+// shipping for the sake of skipping a rename. Compose only scans
+// projects/<slug>/tickets, so a trashed ticket is gone from the dashboard while
+// still being recoverable by hand.
+//
+// Branches and worktrees are deliberately untouched: they live in the repo, not
+// in babysit state, and reaching into a checkout to delete a branch from a
+// dashboard button is a blast radius this does not want.
+func (s *dashServer) handleDeleteTicket(w http.ResponseWriter, r *http.Request) {
+	if !s.guard(w, r) {
+		return
+	}
+	st, err := s.ticketStore(r.PathValue("project"), r.PathValue("ticket"))
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	dest, err := trashTicket(s.stateDir, r.PathValue("project"), st)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{
+		"deleted": st.Env.Ticket, "trash": dest,
+	})
+}
+
+// trashTicket renames the ticket home under the lock, so a mutation already in
+// flight finishes before the directory moves out from under it. The release
+// afterwards targets the old path and is a no-op; the lock that travelled with
+// the directory is dropped from the copy, or a restored ticket would look held
+// by a writer that exited hours ago.
+func trashTicket(stateDir, project string, st *ticket.Store) (string, error) {
+	dest := filepath.Join(stateDir, "trash", project,
+		st.Env.Ticket+"-"+time.Now().UTC().Format("20060102T150405Z"))
+	err := withLock(st, func() error {
+		if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+			return err
+		}
+		if err := os.Rename(st.Home(), dest); err != nil {
+			return err
+		}
+		return os.RemoveAll(filepath.Join(dest, ".index.lock"))
+	})
+	if err != nil {
+		return "", err
+	}
+	return dest, nil
 }
 
 type controlReq struct {

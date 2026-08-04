@@ -130,6 +130,27 @@ var statusEnum = map[string]bool{
 	"cancelled": true, "duplicate": true,
 }
 
+// statusValid names the rungs, in ladder order, for the messages both callers
+// print. Derived from statusEnum would lose the order that makes it readable.
+const statusValid = "triage backlog planned decomposed in_progress in_review blocked done cancelled duplicate"
+
+// statusSet is the locked write behind set-status, shared by the CLI verb and
+// the dashboard's POST handler so the history row and the lock are identical
+// whichever one moved the ticket.
+func statusSet(st *ticket.Store, status, actor string) error {
+	return withLock(st, func() error {
+		doc := loadForMutate(st)
+		old := doc.Get("status")
+		doc.Set("status", status)
+		if err := ticket.WriteDoc(st.IndexPath(), doc); err != nil {
+			return err
+		}
+		st.HistoryAppendExtra("status_changed", actor,
+			fmt.Sprintf(`{"from":"%s","to":"%s"}`, old, status))
+		return nil
+	})
+}
+
 func runSetStatus(args []string) {
 	env := identity.Resolve()
 	needTicket(env)
@@ -139,21 +160,14 @@ func runSetStatus(args []string) {
 	}
 	if !statusEnum[status] {
 		fmt.Fprintf(os.Stderr, "set-status: invalid status '%s'\n", status)
-		fmt.Fprintln(os.Stderr, "valid: triage backlog planned decomposed in_progress in_review blocked done cancelled duplicate")
+		fmt.Fprintln(os.Stderr, "valid: "+statusValid)
 		os.Exit(2)
 	}
 	st := ticket.New(env)
-	mutateLocked(st, func() error {
-		doc := loadForMutate(st)
-		old := doc.Get("status")
-		doc.Set("status", status)
-		if err := ticket.WriteDoc(st.IndexPath(), doc); err != nil {
-			return err
-		}
-		st.HistoryAppendExtra("status_changed", actorRole(),
-			fmt.Sprintf(`{"from":"%s","to":"%s"}`, old, status))
-		return nil
-	})
+	if err := statusSet(st, status, actorRole()); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
 	os.Exit(0)
 }
 

@@ -33,6 +33,25 @@ const MORE_ITEMS = [
 
 type NavItem = (typeof PRIMARY_ITEMS)[number] | (typeof MORE_ITEMS)[number];
 
+// `<screen> | <workspace>` in the browser tab. The workspace half is the
+// ProjectSwitcher's own label rather than a second vocabulary for the same
+// thing, so a tab and the nav it belongs to never disagree — and with several
+// dashboards open on different projects the tab strip is the only place that
+// distinction is visible at all.
+function screenLabel(route: string): string {
+  const ticket = /^#\/tickets\/([^/?#]+)/.exec(route);
+  if (ticket) return decodeURIComponent(ticket[1]);
+  if (route === '#/' || route === '#' || route === '') return 'Home';
+  const item = [...PRIMARY_ITEMS, ...MORE_ITEMS].find(i => i.hash === route);
+  return item ? item.label : 'Not found';
+}
+
+function useDocumentTitle(route: string, workspace: string) {
+  useEffect(() => {
+    document.title = `${screenLabel(route)} | ${workspace}`;
+  }, [route, workspace]);
+}
+
 export function Layout({
   meta,
   snapshot,
@@ -80,6 +99,12 @@ export function Layout({
   }, [insideMore]);
 
   const filter = useFilterOptional();
+  // Same label the switcher renders. No provider yet means the first paint of
+  // the loading screen, where there is no project scope to name.
+  useDocumentTitle(
+    activeRoute,
+    !filter || filter.state.project === 'all' ? 'All projects' : filter.state.project,
+  );
   const projectParam =
     filter && filter.state.project !== 'all' && filter.state.project
       ? `project=${encodeURIComponent(filter.state.project)}`
@@ -229,7 +254,12 @@ export function Layout({
               {meta.active_project && (
                 <div className="font-medium truncate" style={{ color: 'var(--text-nav)' }}>{meta.active_project}</div>
               )}
-              {meta.babysit_version && <div>v{meta.babysit_version}</div>}
+              {/* `unknown` is the server saying it could not resolve its own
+                  version — prefixing it with `v` made that read as a version
+                  string called "unknown". */}
+              {meta.babysit_version && (
+                <div>{meta.babysit_version === 'unknown' ? 'version unknown' : `v${meta.babysit_version}`}</div>
+              )}
               <div>snapshot {formatDate(meta.generated_at || meta.snapshot_at)}</div>
             </div>
           )}

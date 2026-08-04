@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Flag, Circle } from 'lucide-react';
 import { foremanLive, type Snapshot, type TicketStatus, type TicketSummary } from '../lib/data';
 import { StatusArc } from '../components/StatusArc';
@@ -21,7 +21,7 @@ import { ControlChip } from '../components/ControlChip';
 import { ErrorBox } from '../components/ErrorBox';
 import { Field, inputStyle } from '../components/Field';
 import { Modal } from '../components/Modal';
-import { assignTicket, createTicket } from '../lib/api';
+import { assignTicket, createTicket, deleteTicket, setTicketStatus } from '../lib/api';
 import { gateProps, useControlPlane, useMutation } from '../contexts/ControlContext';
 
 const ALL_STATUSES: TicketStatus[] = [
@@ -30,12 +30,19 @@ const ALL_STATUSES: TicketStatus[] = [
   'done', 'cancelled', 'duplicate', 'unknown',
 ];
 
-// id | title | priority dot | status arc | foreman | phase | updated
-const COLUMNS = '100px 1fr 24px 24px 90px 90px 90px';
-// Below 768px only the four columns that identify a ticket survive. The
-// control chip lives inside the title cell precisely so it is still there
-// after this collapse — a paused ticket must never look active on a phone.
-const COLUMNS_NARROW = '80px 1fr 24px 24px';
+// `unknown` is what the composer reports for a ticket whose index.json has no
+// status — it is a reading, not a rung, and the server's enum refuses it. So it
+// filters but cannot be assigned.
+const SETTABLE_STATUSES = ALL_STATUSES.filter(s => s !== 'unknown');
+
+// select | id | title | priority dot | status arc | foreman | phase | updated
+const COLUMNS = '28px 100px 1fr 24px 24px 90px 90px 90px';
+// Below 768px only the four columns that identify a ticket survive, plus the
+// checkbox — bulk-editing from a phone is the case where reaching every row
+// individually is most painful. The control chip lives inside the title cell
+// precisely so it is still there after this collapse — a paused ticket must
+// never look active on a phone.
+const COLUMNS_NARROW = '28px 80px 1fr 24px 24px';
 
 function isFlatMode(): boolean {
   // Read ?group=flat from the URL hash query string.
@@ -94,6 +101,54 @@ export function TicketsList({ snapshot }: { snapshot: Snapshot }) {
 
   const groups = useMemo(() => groupTickets(filtered), [filtered]);
 
+  // Every mutation endpoint is scoped by project slug and this list can be
+  // showing `all`, so the owning slug is looked up per ticket — the same
+  // resolution the detail view does for its single ticket.
+  const projectOf = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const [slug, p] of Object.entries(snapshot.projects)) {
+      for (const t of p.tickets) m.set(t.id, slug);
+    }
+    return m;
+  }, [snapshot]);
+
+  const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
+  const bulk = useBulk();
+
+  // A selection the human cannot see is one they cannot check before acting on
+  // it — so ids that a filter change, or a delete, took off the list are dropped
+  // rather than silently carried into the next bulk action.
+  useEffect(() => {
+    setSelected(prev => {
+      if (prev.size === 0) return prev;
+      const visible = new Set(filtered.map(t => t.id));
+      const next = new Set([...prev].filter(id => visible.has(id)));
+      return next.size === prev.size ? prev : next;
+    });
+  }, [filtered]);
+
+  const toggle = useCallback((id: string) => {
+    setSelected(prev => {
+      const next = new Set(prev);
+      if (!next.delete(id)) next.add(id);
+      return next;
+    });
+  }, []);
+
+  // The header checkbox scopes to its own table, which in grouped mode is one
+  // status bucket — "select every blocked ticket" is the selection you actually
+  // want, and it is the one the grouping already put in front of you.
+  const toggleMany = useCallback((ids: string[], on: boolean) => {
+    setSelected(prev => {
+      const next = new Set(prev);
+      for (const id of ids) {
+        if (on) next.add(id);
+        else next.delete(id);
+      }
+      return next;
+    });
+  }, []);
+
   const hasFilters =
     state.status.length > 0 || state.phase.length > 0 ||
     state.foreman.length > 0 || state.control.length > 0;
@@ -142,8 +197,27 @@ export function TicketsList({ snapshot }: { snapshot: Snapshot }) {
             backgroundColor: 'var(--surface-bg)',
           }}
         >
-          <ListHeader columns={columns} narrow={narrow} />
-          {filtered.map(t => <TicketRow key={t.id} t={t} columns={columns} narrow={narrow} />)}
+          <ListHeader
+            columns={columns}
+            narrow={narrow}
+            ids={filtered.map(t => t.id)}
+            selected={selected}
+            onToggleMany={toggleMany}
+            canMutate={canMutate}
+            reason={reason}
+          />
+          {filtered.map(t => (
+            <TicketRow
+              key={t.id}
+              t={t}
+              columns={columns}
+              narrow={narrow}
+              checked={selected.has(t.id)}
+              onToggle={toggle}
+              canMutate={canMutate}
+              reason={reason}
+            />
+          ))}
         </div>
       ) : (
         <div ref={containerRef} className="space-y-3">
@@ -162,8 +236,27 @@ export function TicketsList({ snapshot }: { snapshot: Snapshot }) {
                   backgroundColor: 'var(--surface-bg)',
                 }}
               >
-                <ListHeader columns={columns} narrow={narrow} />
-                {g.tickets.map(t => <TicketRow key={t.id} t={t} columns={columns} narrow={narrow} />)}
+                <ListHeader
+                  columns={columns}
+                  narrow={narrow}
+                  ids={g.tickets.map(t => t.id)}
+                  selected={selected}
+                  onToggleMany={toggleMany}
+                  canMutate={canMutate}
+                  reason={reason}
+                />
+                {g.tickets.map(t => (
+                  <TicketRow
+                    key={t.id}
+                    t={t}
+                    columns={columns}
+                    narrow={narrow}
+                    checked={selected.has(t.id)}
+                    onToggle={toggle}
+                    canMutate={canMutate}
+                    reason={reason}
+                  />
+                ))}
               </div>
             </SectionHeader>
           ))}
@@ -189,13 +282,248 @@ export function TicketsList({ snapshot }: { snapshot: Snapshot }) {
         foremen={(snapshot.foremen ?? []).filter(f => foremanLive(f)).map(f => f.id)}
         canMutate={canMutate}
       />
+      <SelectionBar
+        ids={[...selected]}
+        projectOf={projectOf}
+        foremen={(snapshot.foremen ?? []).filter(f => foremanLive(f)).map(f => f.id)}
+        bulk={bulk}
+        onClear={() => setSelected(new Set())}
+      />
     </>
   );
 }
 
-function ListHeader({ columns, narrow }: { columns: string; narrow: boolean }) {
+interface BulkState {
+  run: (ids: string[], each: (id: string) => Promise<unknown>, verb: string) => Promise<void>;
+  /** "3 of 12" while applying; '' when idle. */
+  progress: string;
+  /** Per-ticket failures from the last run. */
+  failures: { id: string; error: string }[];
+}
+
+/**
+ * One bulk action = N per-ticket calls. There is no bulk endpoint on purpose:
+ * partial failure is the normal case (one ticket paused by another tab, one
+ * assignee that no longer exists), and a server-side loop would have to invent
+ * its own protocol for reporting which of the twelve did not apply.
+ */
+function useBulk(): BulkState {
+  const { refresh, announce } = useControlPlane();
+  const [progress, setProgress] = useState('');
+  const [failures, setFailures] = useState<{ id: string; error: string }[]>([]);
+
+  const run = useCallback(
+    async (ids: string[], each: (id: string) => Promise<unknown>, verb: string) => {
+      setFailures([]);
+      const failed: { id: string; error: string }[] = [];
+      // Sequential, not Promise.all: each of these takes a per-ticket lock and
+      // appends to history, and a burst of parallel writes would spend its time
+      // contending for locks it is about to release anyway.
+      for (let i = 0; i < ids.length; i++) {
+        setProgress(`${i + 1} of ${ids.length}`);
+        try {
+          await each(ids[i]);
+        } catch (e: unknown) {
+          failed.push({ id: ids[i], error: e instanceof Error ? e.message : String(e) });
+        }
+      }
+      setProgress('');
+      setFailures(failed);
+      // Unconditional: a run that failed on the ninth ticket still moved the
+      // first eight, and the list has to show that.
+      refresh();
+      const done = ids.length - failed.length;
+      announce(
+        failed.length === 0
+          ? `${ids.length} ticket${ids.length === 1 ? '' : 's'} ${verb}`
+          : `${done} of ${ids.length} ${verb}, ${failed.length} failed`,
+      );
+    },
+    [refresh, announce],
+  );
+
+  return { run, progress, failures };
+}
+
+/**
+ * The bulk action bar. Floats over the list while anything is selected — the
+ * actions have to stay reachable from the bottom of a long list, and a bar that
+ * pushed the layout would move the rows out from under the pointer that is
+ * still selecting them.
+ */
+function SelectionBar({
+  ids,
+  projectOf,
+  foremen,
+  bulk,
+  onClear,
+}: {
+  ids: string[];
+  projectOf: Map<string, string>;
+  foremen: string[];
+  bulk: BulkState;
+  onClear: () => void;
+}) {
+  const { canMutate, reason } = useControlPlane();
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const busy = bulk.progress !== '';
+
+  // Nothing selected and nothing to report from the last run.
+  if (ids.length === 0 && bulk.failures.length === 0) return null;
+
+  // Guaranteed by projectOf being built from the same snapshot the rows are.
+  const slug = (id: string) => projectOf.get(id) ?? '';
+
+  const applyStatus = (status: string) =>
+    bulk.run(ids, id => setTicketStatus(slug(id), id, status), `moved to ${status}`);
+
+  const applyAssignee = (foreman: string) =>
+    bulk.run(ids, id => assignTicket(slug(id), id, foreman), foreman ? `assigned to ${foreman}` : 'unassigned');
+
+  const applyDelete = async () => {
+    setConfirmDelete(false);
+    await bulk.run(ids, id => deleteTicket(slug(id), id), 'deleted');
+    onClear();
+  };
+
+  return (
+    <>
+      <div
+        className="fixed left-0 right-0 flex justify-center px-4 z-40"
+        style={{ bottom: 16, pointerEvents: 'none' }}
+      >
+        <div
+          className="flex flex-wrap items-center gap-2 px-3 py-2"
+          style={{
+            pointerEvents: 'auto',
+            maxWidth: '100%',
+            backgroundColor: 'var(--surface-elevated)',
+            border: '1px solid var(--border-emphasis)',
+            borderRadius: 'var(--radius-lg)',
+            boxShadow: 'var(--shadow-popover)',
+          }}
+        >
+          <span className="text-xs font-medium whitespace-nowrap" style={{ color: 'var(--text-primary)' }}>
+            {busy ? `Applying ${bulk.progress}…` : `${ids.length} selected`}
+          </span>
+
+          {/* Both selects act on change and reset to their placeholder, so the
+              control never claims to display a shared value the selection does
+              not actually have. */}
+          <select
+            aria-label="Set status"
+            style={{ ...inputStyle, width: 'auto', fontSize: 12 }}
+            value=""
+            disabled={busy || !canMutate || ids.length === 0}
+            title={reason || undefined}
+            onChange={e => { if (e.target.value) applyStatus(e.target.value); e.target.value = ''; }}
+          >
+            <option value="">Status…</option>
+            {SETTABLE_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
+          </select>
+
+          <select
+            aria-label="Set assignee"
+            style={{ ...inputStyle, width: 'auto', fontSize: 12 }}
+            value=""
+            disabled={busy || !canMutate || ids.length === 0}
+            title={reason || undefined}
+            onChange={e => { if (e.target.value) applyAssignee(e.target.value === '__none__' ? '' : e.target.value); e.target.value = ''; }}
+          >
+            <option value="">Assign…</option>
+            <option value="__none__">Unassigned</option>
+            {foremen.map(f => <option key={f} value={f}>{f}</option>)}
+          </select>
+
+          {/* Plain button + a confirm that carries the weight — the same shape
+              Retire uses, rather than a fourth Button variant for one caller. */}
+          <Button
+            disabled={busy || !canMutate || ids.length === 0}
+            {...gateProps(reason)}
+            onClick={() => setConfirmDelete(true)}
+          >
+            Delete
+          </Button>
+          <Button onClick={onClear} disabled={busy}>Clear</Button>
+        </div>
+      </div>
+
+      {/* Failures outlive the bar's busy state: the whole point is to say which
+          of the twelve did not apply, after the other eleven already did. */}
+      {bulk.failures.length > 0 && (
+        <div className="fixed left-0 right-0 flex justify-center px-4 z-40" style={{ bottom: 68 }}>
+          <div style={{ maxWidth: 560 }}>
+            <ErrorBox
+              title={`${bulk.failures.length} ticket${bulk.failures.length === 1 ? '' : 's'} could not be changed`}
+              body={bulk.failures.map(f => `${f.id}: ${f.error}`).join('\n')}
+            />
+          </div>
+        </div>
+      )}
+
+      <Modal
+        open={confirmDelete}
+        onClose={() => setConfirmDelete(false)}
+        title={`Delete ${ids.length} ticket${ids.length === 1 ? '' : 's'}?`}
+        actions={
+          <>
+            <Button size="lg" onClick={() => setConfirmDelete(false)}>Cancel</Button>
+            <Button size="lg" variant="primary" onClick={applyDelete}>
+              Delete {ids.length}
+            </Button>
+          </>
+        }
+      >
+        <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>
+          Each ticket's folder — requirement, plan, handoffs, verdicts, evidence —
+          moves to <code className="font-mono text-xs">~/.babysit/trash/</code>. It
+          leaves the dashboard but stays on disk, so this is recoverable by hand.
+        </p>
+        <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>
+          Git branches and worktrees are <strong>not</strong> touched.
+        </p>
+        <p className="font-mono text-xs" style={{ color: 'var(--text-muted)' }}>
+          {ids.join(' ')}
+        </p>
+      </Modal>
+    </>
+  );
+}
+
+function ListHeader({
+  columns,
+  narrow,
+  ids,
+  selected,
+  onToggleMany,
+  canMutate,
+  reason,
+}: {
+  columns: string;
+  narrow: boolean;
+  ids: string[];
+  selected: ReadonlySet<string>;
+  onToggleMany: (ids: string[], on: boolean) => void;
+  canMutate: boolean;
+  reason: string;
+}) {
+  const mine = ids.filter(id => selected.has(id)).length;
+  const all = ids.length > 0 && mine === ids.length;
   return (
     <DenseRow columns={columns} header>
+      <span className="flex items-center justify-center">
+        <input
+          type="checkbox"
+          checked={all}
+          // Some-but-not-all reads as a dash, so the box says "partly selected"
+          // instead of "empty" while half the bucket is picked.
+          ref={el => { if (el) el.indeterminate = mine > 0 && !all; }}
+          disabled={!canMutate}
+          title={reason || undefined}
+          aria-label={all ? 'Deselect all' : 'Select all'}
+          onChange={e => onToggleMany(ids, e.target.checked)}
+        />
+      </span>
       <HeaderCell>ID</HeaderCell>
       <HeaderCell>Title</HeaderCell>
       <HeaderCell aria-label="Priority">
@@ -223,15 +551,44 @@ function HeaderCell({ children, ...rest }: { children: React.ReactNode; 'aria-la
   );
 }
 
-function TicketRow({ t, columns, narrow }: { t: TicketSummary; columns: string; narrow: boolean }) {
+function TicketRow({
+  t,
+  columns,
+  narrow,
+  checked,
+  onToggle,
+  canMutate,
+  reason,
+}: {
+  t: TicketSummary;
+  columns: string;
+  narrow: boolean;
+  checked: boolean;
+  onToggle: (id: string) => void;
+  canMutate: boolean;
+  reason: string;
+}) {
   const priority = derivePriority(t);
   return (
     <DenseRow
       columns={columns}
       tabIndex={0}
       role="row"
+      selected={checked}
       onClick={() => { window.location.hash = `#/tickets/${t.id}`; }}
     >
+      {/* The row navigates on click, so the checkbox has to stop the event or
+          picking a ticket would leave the list for its detail page. */}
+      <span className="flex items-center justify-center" onClick={e => e.stopPropagation()}>
+        <input
+          type="checkbox"
+          checked={checked}
+          disabled={!canMutate}
+          title={reason || undefined}
+          aria-label={`Select ${t.id}`}
+          onChange={() => onToggle(t.id)}
+        />
+      </span>
       <span className="px-3 min-w-0">
         <a
           href={`#/tickets/${t.id}`}

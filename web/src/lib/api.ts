@@ -11,10 +11,14 @@ export interface ApiError extends Error {
 }
 
 async function post<T>(path: string, body: unknown): Promise<T> {
+  return send<T>('POST', path, body);
+}
+
+async function send<T>(method: string, path: string, body?: unknown): Promise<T> {
   const res = await fetch(path, {
-    method: 'POST',
+    method,
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body ?? {}),
+    body: method === 'DELETE' ? undefined : JSON.stringify(body ?? {}),
   });
   // The server answers every failure with {"error": "..."} — a plain status
   // code tells the human nothing about which precondition they missed.
@@ -55,6 +59,28 @@ export interface AssignResult {
 /** An empty `foreman` unassigns. */
 export function assignTicket(project: string, ticket: string, foreman: string) {
   return post<AssignResult>(`/api/tickets/${project}/${ticket}/assign`, { foreman });
+}
+
+export interface StatusResult {
+  ticket: string;
+  status: string;
+}
+
+/** `status` must be one of the ten lifecycle rungs; the server 400s otherwise. */
+export function setTicketStatus(project: string, ticket: string, status: string) {
+  return post<StatusResult>(`/api/tickets/${project}/${ticket}/status`, { status });
+}
+
+export interface DeleteResult {
+  deleted: string;
+  /** Where the record went — the ticket dir is moved, not unlinked. */
+  trash: string;
+}
+
+/** Moves the ticket's directory to `~/.babysit/trash/<project>/`. Branches and
+ *  worktrees in the repo are untouched. */
+export function deleteTicket(project: string, ticket: string) {
+  return send<DeleteResult>('DELETE', `/api/tickets/${project}/${ticket}`);
 }
 
 export type ControlAction = 'pause' | 'cancel' | 'resume' | 'restore';

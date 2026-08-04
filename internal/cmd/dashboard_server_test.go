@@ -37,6 +37,13 @@ func post(t *testing.T, s *dashServer, path, body string) *httptest.ResponseReco
 	return w
 }
 
+func send(t *testing.T, s *dashServer, method, path string) *httptest.ResponseRecorder {
+	t.Helper()
+	w := httptest.NewRecorder()
+	s.mux().ServeHTTP(w, httptest.NewRequest(method, path, nil))
+	return w
+}
+
 func readIndex(t *testing.T, home string) map[string]interface{} {
 	t.Helper()
 	b, err := os.ReadFile(filepath.Join(home, "index.json"))
@@ -343,6 +350,107 @@ func TestSameOriginMutationIsAllowed(t *testing.T) {
 
 	if w.Code != 200 {
 		t.Fatalf("same-origin POST refused: %d %s", w.Code, w.Body)
+	}
+}
+
+// The status edit is the same write as the CLI's set-status, so it has to leave
+// the same trail: a human correcting a rung by hand is exactly the change you
+// want to find in history when the ladder later disagrees with the work.
+func TestSetStatusWritesTheRungAndLogsTheChange(t *testing.T) {
+	s, home := sandboxServer(t)
+	w := post(t, s, "/api/tickets/proj/bs-aaaa1111/status", `{"status":"in_review"}`)
+	if w.Code != 200 {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	if got := readIndex(t, home)["status"]; got != "in_review" {
+		t.Errorf("status = %v", got)
+	}
+	hist, err := os.ReadFile(filepath.Join(home, "history.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(hist), `"status_changed"`) ||
+		!strings.Contains(string(hist), `"from":"planned"`) {
+		t.Errorf("history does not record the move: %s", hist)
+	}
+}
+
+// The enum is the whole contract of this endpoint — a free-text status would
+// land a rung no filter, group, or reconcile knows about.
+func TestSetStatusRejectsARungOutsideTheEnum(t *testing.T) {
+	s, home := sandboxServer(t)
+	w := post(t, s, "/api/tickets/proj/bs-aaaa1111/status", `{"status":"almost_done"}`)
+	if w.Code != 400 {
+		t.Fatalf("invalid status accepted: %d %s", w.Code, w.Body)
+	}
+	// The message has to name the alternatives, or the caller is left guessing.
+	if !strings.Contains(w.Body.String(), "in_progress") {
+		t.Errorf("rejection does not list the valid rungs: %s", w.Body)
+	}
+	if got := readIndex(t, home)["status"]; got != "planned" {
+		t.Errorf("status was written anyway: %v", got)
+	}
+}
+
+// Delete is a move, not an unlink: the record has to survive somewhere while
+// disappearing from the dashboard. Both halves are the feature.
+func TestDeleteTrashesTheRecordAndDropsItFromTheSnapshot(t *testing.T) {
+	s, home := sandboxServer(t)
+	if err := os.WriteFile(filepath.Join(home, "requirement.md"), []byte("# keep me\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	w := send(t, s, "DELETE", "/api/tickets/proj/bs-aaaa1111")
+	if w.Code != 200 {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	var resp map[string]string
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := os.Stat(home); err == nil {
+		t.Error("the ticket home is still in projects/")
+	}
+	// The whole directory travelled, not just index.json.
+	if b, err := os.ReadFile(filepath.Join(resp["trash"], "requirement.md")); err != nil || string(b) != "# keep me\n" {
+		t.Errorf("requirement.md did not survive the move: %v %q", err, b)
+	}
+	// A lock that travelled with the directory would make a restored ticket look
+	// held by a writer that exited hours ago.
+	if _, err := os.Stat(filepath.Join(resp["trash"], ".index.lock")); err == nil {
+		t.Error(".index.lock was left in the trashed copy")
+	}
+
+	// The claim that matters to the human: it is gone from the list.
+	snap := httptest.NewRecorder()
+	s.mux().ServeHTTP(snap, httptest.NewRequest("GET", "/api/snapshot", nil))
+	if strings.Contains(snap.Body.String(), "bs-aaaa1111") {
+		t.Errorf("trashed ticket is still composed into the snapshot: %s", snap.Body)
+	}
+}
+
+// Delete is the one irreversible-looking verb on this API, so the two guards
+// that stop an accident have to hold on it too.
+func TestDeleteIsGuardedLikeEveryOtherMutation(t *testing.T) {
+	s, home := sandboxServer(t)
+
+	r := httptest.NewRequest("DELETE", "/api/tickets/proj/bs-aaaa1111", nil)
+	r.Header.Set("Origin", "https://evil.example")
+	w := httptest.NewRecorder()
+	s.mux().ServeHTTP(w, r)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("cross-origin delete: want 403, got %d %s", w.Code, w.Body)
+	}
+	if _, err := os.Stat(home); err != nil {
+		t.Fatalf("the ticket was deleted anyway: %v", err)
+	}
+
+	if w := send(t, s, "DELETE", "/api/tickets/proj/..%2f..%2fvictim"); w.Code != 400 && w.Code != 404 {
+		t.Errorf("traversing delete: status %d %s", w.Code, w.Body)
+	}
+	if w := send(t, s, "DELETE", "/api/tickets/proj/bs-nope0000"); w.Code != 400 {
+		t.Errorf("delete of an unknown ticket: want 400, got %d %s", w.Code, w.Body)
 	}
 }
 

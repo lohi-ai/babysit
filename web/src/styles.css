@@ -264,6 +264,12 @@ h1 { letter-spacing: var(--tracking-display); }
   outline: 2px solid var(--focus-ring);
   outline-offset: -1px;
 }
+/* Multi-select tint. Declared after :hover deliberately — same specificity, so
+   source order is what keeps a selected row reading as selected while the
+   pointer is over it. */
+.dense-row--body[data-selected] {
+  background-color: var(--accent-bg-subtle);
+}
 .dense-row--header {
   background-color: var(--surface-elevated);
   border-bottom: 1px solid var(--border-emphasis);
