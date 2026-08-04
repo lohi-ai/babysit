@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Home as HomeIcon, Activity, HardHat, Inbox, Workflow, Zap, Calendar, BarChart3, ChevronDown, ChevronRight, MoreHorizontal } from 'lucide-react';
+import { Home as HomeIcon, HardHat, Inbox, Workflow, Zap, Calendar, BarChart3, ChevronDown, ChevronRight, MoreHorizontal } from 'lucide-react';
 import type { Meta, Snapshot } from '../lib/data';
 import { formatDate } from '../lib/format';
 import { ProjectSwitcher } from './ProjectSwitcher';
@@ -12,7 +12,7 @@ import { useFilterOptional } from '../contexts/FilterContext';
 import { pendingApprovals } from './WaitingOnYou';
 
 // Two lists, not one: the dashboard is for watching work, so the routes you act
-// on stay in the nav and the five reference views fold behind a disclosure.
+// on stay in the nav and the four reference views fold behind a disclosure.
 // Foremen is in the first list because it is a control surface, not a report —
 // it is where a foreman gets spawned, and a stale one is only visible from
 // there. Nothing is unreachable — `G <key>` still routes to every one of them
@@ -25,7 +25,6 @@ const PRIMARY_ITEMS = [
 ] as const;
 
 const MORE_ITEMS = [
-  { hash: '#/live',          label: 'Live',         kbd: 'L', Icon: Activity },
   { hash: '#/decisions',     label: 'Decisions',    kbd: 'D', Icon: Workflow },
   { hash: '#/skill-events',  label: 'Skill events', kbd: 'S', Icon: Zap },
   { hash: '#/timeline',      label: 'Timeline',     kbd: 'M', Icon: Calendar },

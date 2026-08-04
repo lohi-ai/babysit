@@ -6,7 +6,6 @@ import type { Snapshot } from '../lib/data';
 // Static views registry
 const STATIC_VIEWS: PaletteItem[] = [
   { id: 'home',         label: 'Home',         kind: 'view', route: '#/' },
-  { id: 'live',         label: 'Live',          kind: 'view', route: '#/live' },
   { id: 'foremen',      label: 'Foremen',       kind: 'view', route: '#/foremen' },
   { id: 'tickets',      label: 'Tickets',       kind: 'view', route: '#/tickets' },
   { id: 'decisions',    label: 'Decisions',     kind: 'view', route: '#/decisions' },
