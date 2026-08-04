@@ -15,28 +15,28 @@
 class Bbs < Formula
   desc "Babysit CLI — Go multicall for config, env, slug, ticket, and more"
   homepage "https://github.com/lohi-ai/babysit"
-  version "1.69.1"
+  version "1.69.2"
   license "MIT"
 
   on_macos do
     on_arm do
       url "https://github.com/lohi-ai/babysit/releases/download/v#{version}/bbs_#{version}_darwin_arm64.tar.gz"
-      sha256 "100801d3f5e62b661ffb7ef122fc692d5a48ece9da45cbd8e762b287e87d8ef5"
+      sha256 "d98d92a5e789c69ed3fab108c5b60dfc3720dfde53d8b9b55d1b314492be0d22"
     end
     on_intel do
       url "https://github.com/lohi-ai/babysit/releases/download/v#{version}/bbs_#{version}_darwin_amd64.tar.gz"
-      sha256 "20010d762a2aac7919250df8440214c1059c4db001ebef683d0e5c3606947220"
+      sha256 "c2803cbed35d2975785417a430d64ea2786161ea9613069041657e15ce754943"
     end
   end
 
   on_linux do
     on_arm do
       url "https://github.com/lohi-ai/babysit/releases/download/v#{version}/bbs_#{version}_linux_arm64.tar.gz"
-      sha256 "4cdda77be4a26415e3ddff30561166f22d961c0d830ce0b2241fce5a161bcf4f"
+      sha256 "414b645399b399fc4b05ef1f1c985e0bc7e032ac461324cd2d8bb038036b5544"
     end
     on_intel do
       url "https://github.com/lohi-ai/babysit/releases/download/v#{version}/bbs_#{version}_linux_amd64.tar.gz"
-      sha256 "045c6ce289d7f98c40a63402761949af95fe52a0e0c189cc5da8c79c341345b5"
+      sha256 "da29638bb775858bcdb0a44c73117902babb2810838700c710c325599261bffb"
     end
   end
 
