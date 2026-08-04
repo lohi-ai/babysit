@@ -168,6 +168,25 @@ T="$(mktemp -d)"
   printf '%s\n' "$out" | grep -q "exist only on local 'main'" \
     || { echo "expected the cut-from-origin sub-line: $out"; exit 1; }
 
+  # mode: trunk cuts no branch, so the ahead line must NOT claim new tickets
+  # will miss the work — under trunk they are built on top of it.
+  printf 'profile: pet\nbase_branch: main\n' > .babysit/git-flow.yaml
+  out="$("$BBS_TICKET_BIN" board)"
+  printf '%s\n' "$out" | grep -q "mode: trunk cuts no branch" \
+    || { echo "expected the trunk-worded ahead line: $out"; exit 1; }
+  printf '%s\n' "$out" | grep -q "new ones will not have them" \
+    && { echo "branch-cutting wording leaked into trunk mode: $out"; exit 1; }
+  printf 'mode: worktree\nbase_branch: main\n' > .babysit/git-flow.yaml
+
+  # base_branch names a branch that exists on origin but not locally: the line
+  # must say so rather than vanishing (the one case that used to print nothing).
+  git push -q origin main:develop
+  git fetch -q origin
+  printf 'profile: startup\nbase_branch: develop\n' > .babysit/git-flow.yaml
+  "$BBS_TICKET_BIN" board | grep -q "^BASE: develop — no local 'develop' branch" \
+    || { echo "expected the missing-local-base line: $("$BBS_TICKET_BIN" board)"; exit 1; }
+  printf 'mode: worktree\nbase_branch: main\n' > .babysit/git-flow.yaml
+
   # A repo with no remote must say so rather than printing a bogus count.
   git init -q "$T/solo"
   (
