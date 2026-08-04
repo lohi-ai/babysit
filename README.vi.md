@@ -198,6 +198,8 @@ Chỉ có một cái núm. Wizard hỏi đúng một câu — **ở repo này, s
 | độ gắt QA | `smoke` — 3–5 ca | `standard` — 5–10 | `strict` — 8–12 |
 | effort `review-pr` | `low` | `medium` | `high` |
 
+**Lần đầu dùng, hoặc chưa chắc? Chọn `startup`.** Đây vốn đã là thứ mà một repo không có key `profile:` tự suy ra, và là chỗ bắt đầu an toàn với một repo bạn còn quý: có branch và có PR nghĩa là không thứ gì lọt lên base branch mà chưa ai xem, còn QA thì giao lại cho bạn app đang chạy ngay trong browser. Đổi profile sau này chỉ tốn một dòng.
+
 Độ gắt chỉ nới **bề rộng, không hạ cái ngưỡng**. Một `PASS` mang đúng một nghĩa ở cả ba mức: mọi chiều rubric áp dụng được phải từ B trở lên, và phải có một lượt chạy end-to-end tươi trên đúng code cuối cùng. Dự án nghiệp dư chạy ít ca hơn — chứ không phải không chạy ca nào, và cũng không bao giờ pass với một chiều điểm C.
 
 Tự tay đặt `mode:`, `land:`, hay `push:` sẽ đè lên preset của profile. Đó là cửa thoát hiểm, không phải hình dạng thường ngày — một cái núm viết tay là một cái núm thôi bám theo profile của nó.
