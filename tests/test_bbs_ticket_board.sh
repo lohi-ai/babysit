@@ -14,6 +14,10 @@
 #   board-status-filter       done ticket hidden by default, shown with --all
 #   board-sibling-unresolved  sibling with unset RELATED_* env → "path
 #                             unresolved" sub-row, main row intact, rc 0
+#   board-base-drift          BASE line: matches origin after push; ahead after
+#                             merge-base lands a ticket on local base, with the
+#                             "cut from origin" sub-line; "no origin ref" when
+#                             the repo has no remote
 
 set -u
 SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
@@ -141,6 +145,41 @@ T="$(mktemp -d)"
   printf '%s\n' "$out" | grep -q "be:bs-ghost000 (ghost-api) — path unresolved" \
     || { echo "expected unresolved sub-row: $out"; exit 1; }
 ) && ok "board-sibling-unresolved" || fail "board-sibling-unresolved"
+rm -rf "$T"
+
+# ── board-base-drift ──────────────────────────────────────────────────
+T="$(mktemp -d)"
+(
+  export PATH="$SCRIPT_DIR/bin:$PATH"
+  export HOME="$T/home"; mkdir -p "$HOME"
+  export AGENT_ROLE=mayor
+  build_two_tickets "$T" || { echo "fixture failed"; exit 1; }
+
+  # main was pushed by the fixture and nothing has landed on it yet.
+  "$BBS_TICKET_BIN" board | grep -q "^BASE: main — matches origin/main" \
+    || { echo "expected in-sync BASE line: $("$BBS_TICKET_BIN" board)"; exit 1; }
+
+  # merge-base lands A on local main only — exactly the drift a ticket cut
+  # from origin/main would miss.
+  ( cd "$WT_A" && "$BBS_TICKET_BIN" merge-base >/dev/null 2>&1 ) || { echo "merge-base A failed"; exit 1; }
+  out="$("$BBS_TICKET_BIN" board)"
+  printf '%s\n' "$out" | grep -qE "^BASE: main — [1-9][0-9]* ahead / 0 behind origin/main" \
+    || { echo "expected ahead BASE line: $out"; exit 1; }
+  printf '%s\n' "$out" | grep -q "exist only on local 'main'" \
+    || { echo "expected the cut-from-origin sub-line: $out"; exit 1; }
+
+  # A repo with no remote must say so rather than printing a bogus count.
+  git init -q "$T/solo"
+  (
+    cd "$T/solo"
+    git -c user.email=t@t -c user.name=t commit --allow-empty -q -m init
+    git branch -M main
+  )
+  cd "$T/solo"
+  "$BBS_TICKET_BIN" ensure --slug-hint solo --type feat >/dev/null 2>&1 || { echo "solo ensure failed"; exit 1; }
+  "$BBS_TICKET_BIN" board | grep -q "^BASE: main — no origin/main ref" \
+    || { echo "expected no-origin BASE line: $("$BBS_TICKET_BIN" board)"; exit 1; }
+) && ok "board-base-drift" || fail "board-base-drift"
 rm -rf "$T"
 
 echo

@@ -46,6 +46,20 @@ bbs ticket refresh          # fetch + merge origin/<base>; BLOCKs on dirty tree 
 Only four commands touch local base — `merge-base`, `switch`, `reset-base`,
 `serve` — and none of them writes to a ticket branch.
 
+`bbs ticket board` closes the footer with where your local base actually
+stands, so drift is visible before it bites:
+
+```
+BASE: main — 3 ahead / 12 behind origin/main (fetched 2h ago)
+  ↑ 3 commit(s) exist only on local 'main' — tickets are cut from origin/main, so new ones will not have them
+  ↓ origin/main moved on — bbs ticket refresh (in a ticket) or bbs ticket reset-base (on the primary)
+```
+
+It never blocks — a diverged base is normal mid-flight. The `↑` line is the
+one worth acting on: those commits are invisible to every ticket cut after
+them. Board doesn't fetch, so the numbers are as fresh as the age in
+parentheses.
+
 ### So what does a ticket branch get cut from?
 
 **`origin/<base>`, never your local one** — and `pet` doesn't cut at all:
