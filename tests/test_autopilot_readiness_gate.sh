@@ -89,11 +89,14 @@ T="$(mktemp -d)"
   grep -qx 'profile: startup' "$cfg" || { echo "profile != startup"; exit 1; }
   grep -qx 'push: false' "$cfg"     || { echo "push != false without a remote"; exit 1; }
   # the seed is only useful if the resolver reads it back as the shape the
-  # gate promised: a branch per ticket, standard rigor, no push without a remote
+  # gate promised: a branch per ticket, standard rigor, no push without a remote.
+  # branch + pr must both be present — a bootstrap is one ticket, so it opts out
+  # of startup's worktree default, and `mode: branch` alone would not resolve.
   gf="$("$SCRIPT_DIR/bin/bbs" autopilot git-flow)" || { echo "git-flow rejected the seed"; exit 1; }
   # read it the way a skill does — the output is a shell fragment, not a table
   eval "$gf"
   [ "$BBS_MODE" = branch ]     || { echo "seed does not derive mode=branch: $gf"; exit 1; }
+  [ "$BBS_LAND" = pr ]         || { echo "seed does not derive land=pr: $gf"; exit 1; }
   [ "$BBS_RIGOR" = standard ]  || { echo "seed does not derive standard rigor: $gf"; exit 1; }
   [ "$BBS_PUSH" = false ]      || { echo "seed does not derive push=false: $gf"; exit 1; }
 ) && ok "bootstrap-seed-block-executes" || fail "bootstrap-seed-block-executes"

@@ -16,14 +16,23 @@ import (
 //
 //	profile        pet            startup        enterprise
 //	priority       ship now       speed > qual   quality > speed
-//	mode           trunk          branch         branch
-//	land           none           pr             pr
+//	mode           trunk          worktree       worktree
+//	land           none           local          local
 //	rigor          smoke          standard       strict
 //	review effort  low            medium         high
 //
-// No profile defaults to `worktree`: it costs 3-4 steps per test iteration and
-// buys only parallelism, so it is what `foreman` requests (`--mode=worktree`)
-// or an explicit `mode:` key, never a profile preset.
+// `startup` and `enterprise` default to `worktree` because parallel tickets are
+// the normal shape and the two halves are one decision: worktrees keep the
+// primary checkout pinned to `base_branch`, which is the only state in which
+// `serve` can compose a finished batch for review — `land: local`'s
+// human-QA-before-PR checkpoint. Under `mode: branch` the first ticket cuts in
+// place, the primary leaves base, and every compose BLOCKs. The cost is real
+// (a commit + `merge-base` per test iteration instead of edit-and-refresh); a
+// repo that runs one ticket at a time buys the 0-step loop back with an
+// explicit `mode: branch` + `land: pr`.
+//
+// `pet` stays on `trunk`: it answers "mistakes are cheap, no ceremony", and
+// separable parallel tickets is the request that means a repo has outgrown it.
 
 type gitFlowPolicy struct {
 	Profile      string // pet | startup | enterprise
@@ -37,16 +46,17 @@ type gitFlowPolicy struct {
 
 var gitFlowProfiles = map[string]gitFlowPolicy{
 	"pet":        {Mode: "trunk", Land: "none", Push: "true", Rigor: "smoke", ReviewEffort: "low"},
-	"startup":    {Mode: "branch", Land: "pr", Push: "true", Rigor: "standard", ReviewEffort: "medium"},
-	"enterprise": {Mode: "branch", Land: "pr", Push: "true", Rigor: "strict", ReviewEffort: "high"},
+	"startup":    {Mode: "worktree", Land: "local", Push: "true", Rigor: "standard", ReviewEffort: "medium"},
+	"enterprise": {Mode: "worktree", Land: "local", Push: "true", Rigor: "strict", ReviewEffort: "high"},
 }
 
 // gitFlowAliases keeps repos configured with the four pre-profile names
-// working. mode/land here count as explicitly set, so the worktree default
-// below does not second-guess `worktree-pr`.
+// working. Each pins the mode/land its name literally promises rather than
+// inheriting the profile's preset — `branch-pr` means branch + PR whatever
+// `startup` derives today.
 var gitFlowAliases = map[string]struct{ profile, mode, land string }{
-	"trunk":           {"pet", "", ""},
-	"branch-pr":       {"startup", "", ""},
+	"trunk":           {"pet", "trunk", "none"},
+	"branch-pr":       {"startup", "branch", "pr"},
 	"worktree-pr":     {"enterprise", "worktree", "pr"},
 	"worktree-review": {"enterprise", "worktree", "local"},
 }
@@ -100,18 +110,12 @@ func gitFlowFrom(content, base string) (gitFlowPolicy, error) {
 			p.Mode = "branch"
 		}
 	}
-	land := gfScalar(content, "land")
-	if land != "" {
-		p.Land = land
+	landSet := gfScalar(content, "land")
+	if landSet != "" {
+		p.Land = landSet
 	}
 	if v := gfScalar(content, "push"); v != "" {
 		p.Push = v
-	}
-	// A worktree repo composes its batch locally unless it says otherwise —
-	// the pre-profile default, kept so a bare `mode: worktree` still means
-	// `land: local`.
-	if p.Mode == "worktree" && land == "" && aliasLand == "" {
-		p.Land = "local"
 	}
 
 	switch p.Mode {
@@ -128,6 +132,23 @@ func gitFlowFrom(content, base string) (gitFlowPolicy, error) {
 	case "true", "false":
 	default:
 		return p, fmt.Errorf("invalid push '%s' in .babysit/git-flow.yaml (true|false)", p.Push)
+	}
+	// `branch` + `local` reads as configured and can never run: the first
+	// ticket cuts in place, the primary leaves base_branch, and every compose
+	// BLOCKs with "primary checkout is on 'feat/…', not base".
+	//
+	// A lone `mode: branch` — the solo-loop opt-out, and every repo configured
+	// before `land: local` became a preset — means "one ticket at a time", and
+	// the landing that shape has always implied is a PR per ticket. Derive it
+	// rather than making a file that used to resolve stop resolving. Only a
+	// human who wrote *both* halves gets the error, because there the two keys
+	// contradict each other and guessing which one was meant would be wrong.
+	if p.Mode == "branch" && p.Land == "local" {
+		if landSet == "" {
+			p.Land = "pr"
+		} else {
+			return p, fmt.Errorf("incoherent .babysit/git-flow.yaml: mode 'branch' with land 'local' — a branch cut in place takes the primary checkout off '%s', so nothing can compose there. Use 'land: pr' for per-ticket PRs, or drop 'mode: branch' to keep the profile's worktree default", p.BaseBranch)
+		}
 	}
 	return p, nil
 }

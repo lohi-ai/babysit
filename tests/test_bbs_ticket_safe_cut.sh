@@ -36,13 +36,24 @@ fail() { FAIL=$((FAIL + 1)); FAIL_NAMES+=("$1"); printf '  \033[0;31mFAIL\033[0m
 
 # Fresh single-repo fixture: main pushed to a bare origin, cwd = the clone.
 # Prints the repo path; caller cd's there inside a subshell.
+#
+# The fixture pins `mode: branch` + `land: pr` — the solo-loop opt-out — because
+# the safe-cut gate is what decides *whether* an in-place cut is safe, and that
+# question only exists in branch mode. Under the profile default (`worktree`)
+# every cut diverts unconditionally, which is a different codepath with its own
+# coverage in test_bbs_git_flow_profile.sh. The config is committed, not just
+# written: an untracked file would make the tree dirty and every clean-base
+# scenario would divert for the wrong reason.
 build_repo() {
   local t="$1"
   git init -q --bare "$t/remote.git"
   git init -q "$t/repo"
   (
     cd "$t/repo"
-    git -c user.email=t@t -c user.name=t commit --allow-empty -q -m init
+    mkdir -p .babysit
+    printf 'profile: startup\nmode: branch\nland: pr\n' > .babysit/git-flow.yaml
+    git add .babysit/git-flow.yaml
+    git -c user.email=t@t -c user.name=t commit -q -m init
     git branch -M main
     git remote add origin "$t/remote.git"
     git push -q origin main

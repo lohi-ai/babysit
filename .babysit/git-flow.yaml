@@ -1,4 +1,3 @@
 # See .claude/skills/references/git-flow.md § Profiles.
-profile: enterprise   # pet | startup | enterprise
+profile: pet          # pet | startup | enterprise
 base_branch: main
-land: local           # override: this repo composes its batch on local dev

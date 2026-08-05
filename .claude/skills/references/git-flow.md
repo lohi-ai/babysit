@@ -20,36 +20,55 @@ answering. **This table is the source of truth.**
 |---|---|---|---|
 | who | solo, hobby project | solo freelance / small team | team, enterprise codebase |
 | priority | ship now | release speed > code quality | code quality > release speed |
-| `mode` | `trunk` (work lands on base) | `branch` | `branch` |
-| `land` | `none` (no PR) | `pr` | `pr` |
+| branches | `main` | `develop` + `main` | `develop` + `staging` + `main` |
+| `base_branch` | `main` | `develop` | `develop` |
+| `mode` | `trunk` (work lands on base) | `worktree` | `worktree` |
+| `land` | `none` (no PR) | `local` | `local` |
 | `push` | `true` | `true` | `true` |
-| review happens | nowhere — the push is the release | **locally**, in the browser, author merges | **on GitHub**, someone else merges |
+| review happens | nowhere — the push is the release | **locally**, in the browser, author merges | locally **and** on GitHub, someone else merges |
 | `review-pr` effort | `low` | `medium` | `high` |
 | QA rigor | `smoke` (3–5 cases) | `standard` (5–10) | `strict` (8–12) |
-| inner loop (edit → browser) | **0 steps** | **0 steps** | **0 steps** |
+| inner loop (edit → browser) | **0 steps** | commit + `merge-base` | commit + `merge-base` |
 
 Rigor scales *breadth* only: `PASS`/`FIXED` still require every applicable
 rubric dimension at B or better and `freshness=A` in all three tiers. A pet
 project runs fewer cases; it never runs zero, and it never passes on a
 C-grade dimension. See `../qa/SKILL.md § Rigor tiers`.
 
-**No profile pays the worktree tax.** `worktree` costs a commit +
-`merge-base` per test iteration and buys only parallelism — it lets N tickets
-share one dev server, it does not deepen testing. So all three profiles keep
-`branch`/`trunk`'s 0-step inner loop, and `mode: worktree` is what `foreman`
-requests per dispatch (`--mode=worktree`) or an explicit override.
+**`startup`/`enterprise` pay the worktree tax by default, because parallel
+tickets are the normal shape.** `worktree` costs a commit + `merge-base` per
+test iteration where cutting in place costs nothing; what it buys is a primary
+checkout permanently pinned to `base_branch`, which is the *only* state in
+which `serve` can compose a finished batch. `mode: worktree` and `land: local`
+are therefore one decision, not two: the human-QA-before-PR checkpoint needs
+both. `pet` keeps `trunk` — it answers "mistakes are cheap, no ceremony", and
+wanting separable parallel tickets is the sign a repo has outgrown it.
 
-Any explicit `mode:` / `land:` / `push:` key in the yaml wins over the
-profile's preset. That is the escape hatch, not the normal shape — a knob
+**Solo-loop opt-out**: a repo that runs one ticket at a time buys the 0-step
+loop back with `mode: branch`, which derives `land: pr` — the landing a cut in
+place has always implied. Only writing `land: local` *next to* it is an error:
+that pair reads as configured and can never run, since the first cut takes the
+primary off base and every compose BLOCKs. Any explicit `mode:` / `land:` / `push:` key
+wins over the preset; that's the escape hatch, not the normal shape — a knob
 written out by hand stops tracking its profile.
+
+**`base_branch` and the release path.** `pet` ships off `main`. `startup` and
+`enterprise` set `base_branch: develop` so *integrated* and *shipped* are two
+events: tickets fork `origin/develop` and PR back into it, and `main` stays
+releasable. Promotion — `develop` → (`staging`) → `main`, tag, deploy — is
+never babysit's: `create-pr` targets `base_branch` and stops, the way it also
+refuses to merge. Hotfix off production with a one-shot
+`BBS_BASE_BRANCH=main`, then back-merge into `develop`.
 **Switching**: re-run `/bbs:setup-project` (offers a profile switch when the
 yaml exists). `mode:` is read at branch-cut time, so a switch affects new
 tickets only. *Into* `worktree`: primary checkout must end clean on
 `base_branch` first. *Out of* `worktree`: finish or park in-flight worktrees
 (`bbs ticket board`), release any qa-lease.
-Legacy: the four pre-profile names still resolve — `trunk`→`pet`,
-`branch-pr`→`startup`, `worktree-pr`→`enterprise` + `mode: worktree`,
-`worktree-review`→ that plus `land: local`; `ticket_branch` aliases `mode`
+Legacy: the four pre-profile names still resolve, each pinning the shape its
+name promises rather than tracking the profile — `trunk`→`pet`,
+`branch-pr`→`startup` + `mode: branch`/`land: pr`, `worktree-pr`→`enterprise`
++ `land: pr`, `worktree-review`→ that plus `land: local`; `ticket_branch`
+aliases `mode`
 (`optional`≡`trunk`, `required`≡`branch`). `base_branch` fallback:
 `BBS_BASE_BRANCH` → `branches.develop` → `bbs config get base_branch` →
 `origin/HEAD` → `main`.
@@ -62,9 +81,10 @@ One-shot override: `--mode <m>` on `ensure` or the autopilot invocation.
 - **`trunk`** — never cuts; sessions ride the current branch, identity via
   `BABYSIT_TICKET` env + `manifest.yaml` (re-attach: `bbs ticket session
   attach`). Escape hatches: `--no-branch` / `--cut-branch`.
-- **`branch`** (default) — cuts `feat/<id>_<slug>` in place when safe,
-  diverts to a worktree when not.
-- **`worktree`** — `ensure` always diverts; the primary checkout stays
+- **`branch`** — cuts `feat/<id>_<slug>` in place when safe, diverts to a
+  worktree when not. The solo-loop opt-out; derives `land: pr`.
+- **`worktree`** (default under `startup`/`enterprise`) — `ensure` always
+  diverts; the primary checkout stays
   pinned to `base_branch` as the shared test surface (node_modules + dev
   server live only there); `merge-base` lands each ticket there for QA.
 ## Ticket branches: cut from and refresh against `origin/<base>`
@@ -152,11 +172,17 @@ Read by foreman, `create-pr`, and the workflow handoffs.
 `base_branch` and the push *is* the release, so the qa + review-pr verdicts
 are the only gate before it. `create-pr` BLOCKs under this policy rather than
 opening a PR nobody wanted.
-`land: local` (default under `mode: worktree`): compose the
-surface first — bare `serve` under the review lease — human reviews the
-combined result on local dev, then per-ticket `create-pr` or one compose PR;
-with `push: false` the human lands manually. Not trunk mode: every ticket
-was built and QA'd in isolation before touching the surface. `land: pr`:
+`land: local` (the `startup`/`enterprise` default, and the human-QA
+checkpoint): compose the surface first — bare `serve` under the review lease —
+human reviews the combined result on local dev, then per-ticket `create-pr` or
+one compose PR; with `push: false` the human lands manually. **`land: local`
+requires `mode: worktree`** — under `mode: branch` the first ticket cuts its
+branch in place, the primary leaves `base_branch`, and every compose BLOCKs
+with *"primary checkout is on 'feat/…', not base"*. Written out, that pair is a
+resolve-time error rather than a config that reads fine and never runs (a lone
+`mode: branch` isn't the mistake — it derives `land: pr`). Not trunk mode:
+every ticket was built and QA'd in isolation before touching the surface.
+`land: pr`:
 straight per-ticket `create-pr`. That skips the composed *checkpoint*, not
 local review — for UI work the PR diff is not enough: `serve <ticket>` →
 browser-test → `serve --release` before approving.

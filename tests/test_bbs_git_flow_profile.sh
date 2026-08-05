@@ -8,13 +8,14 @@
 #
 # Scenarios:
 #   profile-pet-derives-trunk-smoke        profile: pet → trunk/none/smoke/low
-#   profile-startup-derives-branch         profile: startup → branch/pr/standard/medium
-#   profile-enterprise-derives-strict      profile: enterprise → branch/pr/strict/high
+#   profile-startup-derives-worktree       profile: startup → worktree/local/standard/medium
+#   profile-enterprise-derives-strict      profile: enterprise → worktree/local/strict/high
 #   legacy-profile-names-resolve           the four pre-profile names still map
 #   explicit-key-overrides-profile         mode:/land:/push: beat the preset
 #   invalid-profile-exits-2                profile: hobby → exit 2, named
+#   branch-with-land-local-exits-2         lone mode: branch → land pr; the pair → exit 2
 #   pet-ensure-rides-main                  profile: pet → no cut
-#   enterprise-ensure-cuts-in-place        profile: enterprise + clean base → in-place cut
+#   enterprise-ensure-diverts-to-worktree  profile: enterprise → worktree, primary stays on base
 #   dirty-tree-divert-warns-about-loop     branch mode + dirty → warns, doesn't cut silently
 #   eval-of-the-resolver-is-injection-safe yaml values cannot execute under eval
 #   skills-consume-the-derived-policy      qa/create-pr/review-pr/setup-project read it
@@ -86,12 +87,12 @@ expect_gf "profile-pet-derives-trunk-smoke" "profile: pet" \
   BBS_PROFILE=pet BBS_MODE=trunk BBS_LAND=none BBS_PUSH=true \
   BBS_RIGOR=smoke BBS_REVIEW_EFFORT=low BBS_BASE_BRANCH=main
 
-expect_gf "profile-startup-derives-branch" "profile: startup" \
-  BBS_PROFILE=startup BBS_MODE=branch BBS_LAND=pr \
+expect_gf "profile-startup-derives-worktree" "profile: startup" \
+  BBS_PROFILE=startup BBS_MODE=worktree BBS_LAND=local \
   BBS_RIGOR=standard BBS_REVIEW_EFFORT=medium
 
 expect_gf "profile-enterprise-derives-strict" "profile: enterprise" \
-  BBS_PROFILE=enterprise BBS_MODE=branch BBS_LAND=pr \
+  BBS_PROFILE=enterprise BBS_MODE=worktree BBS_LAND=local \
   BBS_RIGOR=strict BBS_REVIEW_EFFORT=high
 
 # ── legacy-profile-names-resolve ──────────────────────────────────────
@@ -128,6 +129,30 @@ T="$(mktemp -d)"
 ) && ok "invalid-profile-exits-2" || fail "invalid-profile-exits-2"
 rm -rf "$T"
 
+# ── branch-with-land-local-exits-2 ────────────────────────────────────
+# `mode: branch` + `land: local` reads as configured and can never run: the
+# cut takes the primary off base, so nothing composes there. Written by hand it
+# has to fail at resolve time, not at the first compose hours later — but a
+# lone `mode: branch` (the solo opt-out, and every pre-preset repo) is not that
+# mistake and must still resolve, to the PR landing branch mode implies.
+T="$(mktemp -d)"
+(
+  export HOME="$T/home"; mkdir -p "$HOME"
+  build_repo "$T"
+  cd "$T/repo"
+
+  set_git_flow "$(printf 'profile: startup\nmode: branch')"
+  eval "$("$BBS_BIN" autopilot git-flow)" || { echo "lone mode: branch failed to resolve"; exit 1; }
+  [ "$BBS_MODE" = branch ] && [ "$BBS_LAND" = pr ] \
+    || { echo "lone mode: branch derived $BBS_MODE/$BBS_LAND, want branch/pr"; exit 1; }
+
+  set_git_flow "$(printf 'profile: startup\nmode: branch\nland: local')"
+  "$BBS_BIN" autopilot git-flow >/dev/null 2>"$T/err"; rc=$?
+  [ "$rc" -eq 2 ] || { echo "expected rc=2, got $rc"; exit 1; }
+  grep -q "land: pr" "$T/err" || { echo "error does not name the fix: $(cat "$T/err")"; exit 1; }
+) && ok "branch-with-land-local-exits-2" || fail "branch-with-land-local-exits-2"
+rm -rf "$T"
+
 # ── pet-ensure-rides-main ─────────────────────────────────────────────
 T="$(mktemp -d)"
 (
@@ -147,9 +172,10 @@ T="$(mktemp -d)"
 ) && ok "pet-ensure-rides-main" || fail "pet-ensure-rides-main"
 rm -rf "$T"
 
-# ── enterprise-ensure-cuts-in-place ───────────────────────────────────
-# The point of dropping worktree from the profiles: enterprise gets the same
-# 0-step inner loop as everyone else.
+# ── enterprise-ensure-diverts-to-worktree ─────────────────────────────
+# The whole point of the worktree preset: the primary checkout never leaves
+# base_branch, because that is the only state in which a batch can be composed
+# there for review.
 T="$(mktemp -d)"
 (
   export PATH="$SCRIPT_DIR/bin:$PATH"
@@ -162,17 +188,18 @@ T="$(mktemp -d)"
   out="$("$BBS_TICKET_BIN" ensure --slug-hint ent-a --type feat 2>"$T/err")" || {
     echo "ensure failed: $(cat "$T/err")"; exit 1; }
   printf '%s\n' "$out" | grep -q '^WORKTREE=' \
-    && { echo "enterprise diverted to a worktree; out: $out"; exit 1; }
-  case "$(git branch --show-current)" in
-    feat/bs-*_ent-a) : ;;
-    *) echo "expected an in-place cut, got '$(git branch --show-current)'"; exit 1 ;;
-  esac
-) && ok "enterprise-ensure-cuts-in-place" || fail "enterprise-ensure-cuts-in-place"
+    || { echo "expected a worktree cut; out: $out"; exit 1; }
+  [ "$(git branch --show-current)" = "main" ] \
+    || { echo "primary left base: $(git branch --show-current)"; exit 1; }
+) && ok "enterprise-ensure-diverts-to-worktree" || fail "enterprise-ensure-diverts-to-worktree"
 rm -rf "$T"
 
 # ── dirty-tree-divert-warns-about-loop ────────────────────────────────
-# The divert still happens (it is the safe thing), but it must say what it
-# costs and how to get the fast loop back.
+# Only reachable from the solo-loop opt-out (`mode: branch` + `land: pr`),
+# which is the one shape that still cuts in place. The divert still happens
+# (it is the safe thing), but it must say what it costs and how to get the
+# fast loop back — a repo under the worktree preset chose that tax knowingly
+# and gets an informational line instead.
 T="$(mktemp -d)"
 (
   export PATH="$SCRIPT_DIR/bin:$PATH"
@@ -180,7 +207,7 @@ T="$(mktemp -d)"
   export AGENT_ROLE=mayor
   build_repo "$T"
   cd "$T/repo"
-  set_git_flow "profile: startup"
+  set_git_flow "$(printf 'profile: startup\nmode: branch\nland: pr')"
   echo "uncommitted" > dirty.txt
 
   out="$("$BBS_TICKET_BIN" ensure --slug-hint dirty-a --type feat 2>"$T/err")" || {

@@ -16,9 +16,11 @@ bbs autopilot git-flow      # prints BBS_PROFILE / BBS_MODE / BBS_LAND / BBS_RIG
 
 | | `pet` | `startup` | `enterprise` |
 |---|---|---|---|
-| branch per ticket | no | `feat/<id>_<slug>` | `feat/<id>_<slug>` |
-| how work lands | push **is** the release | PR, author merges | PR, someone else merges |
-| review happens | nowhere | locally, in the browser | on GitHub |
+| long-lived branches | `main` | `develop` + `main` | `develop` + `staging` + `main` |
+| branch per ticket | no | `feat/<id>_<slug>`, in a worktree | `feat/<id>_<slug>`, in a worktree |
+| how work lands | push **is** the release | PR into `develop`, author merges | PR into `develop`, someone else merges |
+| human QA before the PR | compose on local `main` | compose on local `develop` | compose on local `develop` |
+| review happens | nowhere | locally, in the browser | locally **and** on GitHub |
 | QA rigor | smoke, 3–5 cases | standard, 5–10 | strict, 8–12 |
 
 Rigor scales *breadth only*. `PASS` means the same in all three: every
@@ -28,6 +30,82 @@ final code. A pet project runs fewer cases — never zero.
 **The rest of this doc is about the part that isn't in the table: what each
 profile expects *you* to do with your base branch.** Get that wrong and the
 gates quietly stop working.
+
+---
+
+## The branch topology each profile assumes
+
+`base_branch` is the one thing the profile can't derive for you — it depends on
+how you release. Set it to match the shape below.
+
+### `pet` — one branch
+
+```
+main ────────●────●────●──────►   push is the release
+```
+
+```yaml
+profile: pet
+base_branch: main
+```
+
+### `startup` — `develop` integrates, `main` releases
+
+```
+feat/bs-a ──┐
+feat/bs-b ──┼──► develop ───────────────►   PRs land here
+feat/bs-c ──┘        │
+                     └──► main ──►  tagged release
+```
+
+```yaml
+profile: startup
+base_branch: develop
+```
+
+Why not just `main`: with `base_branch: main`, merging the PR **is** shipping,
+so your local QA is the only gate that ever runs. `develop` splits *integrated*
+from *shipped* into two events — a bad merge is contained on an integration
+branch, and `main` stays releasable. That is the whole return on the extra hop.
+
+If you deploy on every merge and have no separate release moment, `develop`
+is ceremony — set `base_branch: main` and know that you've made local QA the
+last gate.
+
+### `enterprise` — a deployed integration environment in the middle
+
+```
+feat/bs-a ──┐
+feat/bs-b ──┼──► develop ──► staging ──► main
+feat/bs-c ──┘     (CI)      (deployed QA)  (tagged release)
+```
+
+```yaml
+profile: enterprise
+base_branch: develop
+```
+
+Two review venues answering different questions: the local compose is
+**product** QA (does it work?), the GitHub PR on `develop` is **code** review
+by someone else. `staging` is where the integrated result gets QA'd as a
+deployment rather than as a checkout.
+
+### Promotion is never babysit's job
+
+`create-pr` targets `base_branch` and stops — the same reason it never merges.
+Every promotion above it is yours or CI's:
+
+```bash
+git switch main && git merge --ff-only develop && git tag v1.2.0 && git push --follow-tags
+```
+
+The one exception is a hotfix, which forks production directly instead of
+waiting behind everything on `develop`:
+
+```bash
+BBS_BASE_BRANCH=main bbs ticket ensure --slug-hint hotfix-thing --type hotfix
+# …fix, QA, PR into main, then back-merge main into develop
+```
 
 ---
 
@@ -74,8 +152,8 @@ only thing wrong is that it isn't pushed. The line words itself per mode.
 | `enterprise` | `origin/<base>`, fetched first |
 
 `ensure` fetches `origin/<base>` before cutting, then forks from the
-remote-tracking ref with `--no-track`. Both the in-place cut and the worktree
-divert use the same source, so a diverted ticket is not second-class:
+remote-tracking ref with `--no-track`. The worktree cut and the in-place cut
+(the solo-loop opt-out) use the same source, so neither is second-class:
 
 ```
 ensure: worktree ready at …/bs-xxxxxxxx_probe (branch feat/bs-xxxxxxxx_probe off origin/main)
@@ -139,74 +217,109 @@ anything with users.
 
 ### Parallel under `pet`
 
-Several sessions in one folder, one dev server testing everything at once.
-That's the appeal, and it's also the limit: all changes interleave on the base
-branch, so you **cannot review one ticket in isolation, drop a bad one, or open
-per-ticket PRs**. It's all or nothing.
+`pet` is the one profile that does **not** default to worktrees, and that is
+the trade: several sessions in one folder, one dev server testing everything at
+once, no ceremony — but all changes interleave on the base branch, so you
+**cannot review one ticket in isolation, drop a bad one, or attribute a
+regression**. It's all or nothing.
 
-If you want separable parallel work, dispatch worktrees (see below) — the
-profile doesn't prevent it. But at that point `startup` is the better fit.
+Wanting separable parallel tickets is usually the sign a repo has outgrown
+`pet` — `startup` is then the better answer, and it's a one-line switch. If you
+want them anyway, write **both** keys:
+
+```yaml
+profile: pet
+base_branch: main
+mode: worktree        # tickets get their own checkout
+land: none            # …but there is still no PR step
+```
+
+Tickets fork `origin/main` into worktrees, `bbs ticket serve` composes the
+finished ones onto local `main` for QA, and you push `main` yourself. Write
+`mode: worktree` alone and you keep `land: none` — nothing silently promotes a
+`pet` repo into a PR flow.
 
 ---
 
-## `startup` — start each ticket from a clean base
+## `startup` — the primary checkout stays on base, forever
 
-Mode `branch`. The rule is a single line:
+Mode `worktree`, land `local`. The rule is a single line:
 
-> **Be on `base_branch`, with a clean tree, when a ticket starts.**
+> **The primary checkout never leaves `base_branch`. Every ticket lives in a
+> worktree.**
 
-That is the exact condition for cutting `feat/<id>_<slug>` *in place*. If the
-tree is dirty or you're on another branch, `ensure` doesn't fail — it
-**diverts to a worktree** and tells you so:
+Those two keys are one decision, not two. Tickets need somewhere to live that
+isn't the primary; the primary needs to stay on base because that is the only
+state in which a finished batch can be composed there for review. Take either
+half away and the other stops working — which is why writing `mode: branch`
+*next to* `land: local` is a resolve-time error rather than a config that reads
+fine and BLOCKs hours later.
+
+`ensure` says where the ticket went:
 
 ```
-ensure: 'main' has uncommitted changes — diverting the cut to a worktree
-ensure: WARNING — the worktree loop costs a commit + 'bbs ticket merge-base' per test iteration.
-ensure: to keep the 0-step loop: commit or stash on 'main' and re-run.
+ensure: mode=worktree — cutting into a worktree (primary checkout stays on 'develop')
+WORKTREE=/…/.babysit/worktrees/bs-xxxxxxxx_thing
 ```
 
-The divert is a safety net, not a failure — but it silently moves you onto the
-expensive inner loop. If you wanted the fast one, commit or stash first.
+### The daily loop
 
-After the cut you're on the ticket branch and your base is untouched. Land with
-a PR per ticket (`land: pr`).
+```bash
+/bbs:foreman                      # or: /bbs:autopilot "<requirement>" per ticket
+# …workers implement + QA in their own worktrees…
 
-For UI work, review in a browser before approving — a PR diff doesn't show you
-a rendered page. How you get there depends on where the ticket lives:
+bbs ticket board                  # who's finished, who holds the lease
+bbs ticket serve                  # compose every finished ticket onto local develop
+# …browse the combined result: this is the human-QA checkpoint…
+bbs ticket serve --release
+/bbs:create-pr <ticket>           # one PR per ticket, targeting develop
+```
 
-- **Cut in place** (the normal case): your dev server is *already* serving the
-  ticket branch, because the primary checkout is on it. That's the 0-step inner
-  loop — just look at it. Don't reach for `serve` here; it would BLOCK, since
-  `serve` requires the primary to be on `base_branch`.
-- **Diverted to a worktree**: the primary is still on base, so compose it:
-  ```bash
-  bbs ticket serve <ticket>
-  # …look at it…
-  bbs ticket serve --release
-  ```
+`serve <t1> <t2>` composes exactly the tickets you name — the payoff over
+`pet`-style parallel is that you can leave a bad one out and each still lands
+as its own clean PR.
 
-## `enterprise` — same git contract, different endgame
+### ⚠️ What it costs
 
-Branch mechanics are **identical to `startup`**: same clean-base rule, same
-in-place cut, same divert. Two things change:
+The inner loop is no longer 0-step. Every test iteration is **commit +
+`bbs ticket merge-base`**, not edit-and-refresh, because the code you're
+testing lives in a worktree and the dev server serves the primary.
 
-1. **Review moves to GitHub** and someone else merges. Your local surface stops
-   being the review venue.
-2. **Strict QA releases the surface before handing off** — evidence travels in
+If you genuinely run one ticket at a time, buy the fast loop back with one key:
+
+```yaml
+profile: startup
+base_branch: develop
+mode: branch          # cut feat/… in place when the tree is clean;
+                      # derives land: pr — there is nothing to compose
+```
+
+Then the clean-base rule applies instead: be on `base_branch` with a clean tree
+when a ticket starts, or `ensure` diverts to a worktree anyway and warns you
+about the loop you just bought.
+
+## `enterprise` — same git contract, one more environment
+
+Branch mechanics are **identical to `startup`**: worktree per ticket, primary
+pinned to `develop`, compose to review. Three things change:
+
+1. **A second review venue.** The local compose is product QA; the PR on
+   `develop` is code review, and someone else merges it.
+2. **`staging` sits between `develop` and `main`** — the integrated result gets
+   QA'd as a deployment, not just as a checkout.
+3. **Strict QA releases the surface before handing off** — evidence travels in
    the PR body instead. Under `smoke`/`standard`, QA *leaves the app running*
    and puts the URL in the handoff; under `strict` it does not. Don't expect to
    find the app still up after a QA run.
-
-Everything in the parallel section below applies unchanged.
 
 ---
 
 ## Running tickets in parallel
 
-**No profile turns worktrees on.** They cost a commit plus a `merge-base` per
-test iteration and buy exactly one thing — letting N tickets share one dev
-server. Parallelism is requested *per dispatch*, on top of whatever profile you
-have. Your profile keeps deciding rigor.
+**Under `startup` and `enterprise` this is the default shape** — the profile
+already turned worktrees on, so there is nothing to request. Under `pet` you
+opt in with the two keys above, or dispatch `--mode=worktree` per ticket
+without touching config.
 
 ### The one rule
 
@@ -225,7 +338,8 @@ REASON: primary checkout … is on 'feat/…', not base 'main'.
 Needs [cmux](https://cmux.com) as a hard dependency. Hand it several
 independent requests; it opens one visible worker per ticket, each in its own
 cmux workspace running autopilot end to end, and requests `--mode=worktree`
-per dispatch:
+per dispatch — so it works the same way on a `pet` repo that never configured
+it:
 
 ```
 /bbs:foreman
@@ -237,14 +351,17 @@ tickets onto your local base so you review the batch together.
 ### Option B — dispatch them yourself
 
 ```bash
-/bbs:autopilot --mode=worktree "<requirement>"     # once per ticket
+/bbs:autopilot "<requirement>"     # once per ticket
 ```
 
 or, to create the worktree without starting work:
 
 ```bash
-bbs ticket ensure --mode=worktree --slug-hint <slug>
+bbs ticket ensure --slug-hint <slug>
 ```
+
+Add `--mode=worktree` to either only on a repo whose config doesn't already
+say so (`pet`, or a solo-loop opt-out).
 
 ### Then: compose, review, ship
 
@@ -254,10 +371,6 @@ bbs ticket serve                  # compose ALL finished tickets (qa + review-pr
 bbs ticket serve <t1> <t2>        # …or exactly the ones you name
 bbs ticket serve --release        # hand the surface back
 ```
-
-`serve <t1> <t2>` is the payoff over `pet`-style parallel: you compose exactly
-the tickets you trust, leave a bad one out, and each still lands as its own
-clean PR.
 
 Supporting commands:
 
@@ -290,14 +403,32 @@ rewrites only `profile:`.
 `mode:` is read at branch-cut time, so **a switch affects new tickets only**;
 anything already in flight keeps the shape it was cut with.
 
-- **Into worktree work** — the primary must end clean on `base_branch` first.
+- **Into worktree work** (`pet` → `startup`/`enterprise`, or the opt-out back to
+  the default) — the primary must end clean on `base_branch` first.
 - **Out of it** — finish or park in-flight worktrees (`bbs ticket board`) and
   release any qa-lease.
 
+Changing `base_branch` to `develop` on a repo that doesn't have one: create and
+push it from `main` **before** the switch, or the first `ensure` finds no
+`origin/develop` and forks from your local base instead.
+
+```bash
+git switch -c develop main && git push -u origin develop
+```
+
 Setting `mode:`, `land:`, or `push:` by hand overrides the profile's preset.
 That's the escape hatch, not the normal shape — a knob written out by hand
-stops tracking its profile, and the combination may not be coherent (`mode:
-trunk` with `land: pr` cuts no branch, so there is nothing for a PR to come
-from).
+stops tracking its profile, and the combination may not be coherent. One
+written-out pair is rejected outright:
+
+```
+git-flow: incoherent .babysit/git-flow.yaml: mode 'branch' with land 'local' —
+a branch cut in place takes the primary checkout off 'develop', so nothing can
+compose there. Use 'land: pr' for per-ticket PRs, or drop 'mode: branch' to
+keep the profile's worktree default
+```
+
+Others are merely useless and are left alone (`mode: trunk` with `land: pr`
+cuts no branch, so there is nothing for a PR to come from).
 
 Full schema and the derivation table: [`.claude/skills/references/git-flow.md`](../.claude/skills/references/git-flow.md).

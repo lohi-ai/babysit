@@ -34,14 +34,20 @@ If none match and there is no ticket/requirement, stop with `NEEDS_CONTEXT`.
    BASE=$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's|^origin/||')
    [ -n "$BASE" ] || for b in main master; do git show-ref -q --verify "refs/heads/$b" && BASE=$b && break; done
    mkdir -p "$TOP/.babysit"
-   printf 'profile: startup\nbase_branch: %s\n' "${BASE:-main}" \
+   printf 'profile: startup\nbase_branch: %s\nmode: branch\nland: pr\n' "${BASE:-main}" \
      > "$TOP/.babysit/git-flow.yaml"
    # every profile presets push: true — a repo with no remote must say so
    git remote get-url origin >/dev/null 2>&1 || echo 'push: false' >> "$TOP/.babysit/git-flow.yaml"
    ```
-   `startup` is the safe guess: branch per ticket, PR, standard rigor. The
+   `startup` is the safe guess: standard rigor, nothing lands unreviewed. The
+   `mode`/`land` pair is the solo-loop opt-out, written explicitly because a
+   bootstrap is by definition one ticket in a repo nobody has configured —
+   `startup`'s worktree default would drop a first-time run into the
+   commit + `merge-base` loop it never asked for. Both keys or neither:
+   `mode: branch` alone leaves `land: local` and fails to resolve. The
    profile is a speed↔quality call the human owns, so name what was seeded
-   and point at `/bbs:setup-project` to change it.
+   and point at `/bbs:setup-project` to change it — including dropping this
+   pair once they run tickets in parallel.
    Record the seeded defaults in the handoff and recommend
    `/bbs:setup-project` for the QA harness (`qa.yaml`, credentials) — that
    part is not guessable. `state_landing_doc=0` (no CLAUDE.md or AGENTS.md)
