@@ -1,5 +1,7 @@
 # Working with profiles
 
+English | [Tiếng Việt](profiles.vi.md)
+
 One knob in `.babysit/git-flow.yaml` decides branch mechanics *and* QA rigor:
 
 ```yaml
@@ -26,6 +28,14 @@ bbs autopilot git-flow      # prints BBS_PROFILE / BBS_MODE / BBS_LAND / BBS_RIG
 Rigor scales *breadth only*. `PASS` means the same in all three: every
 applicable rubric dimension at B or better and a fresh end-to-end run on the
 final code. A pet project runs fewer cases — never zero.
+
+**A repo with no `profile:` key resolves to `pet`.** Nobody configured it, so
+it behaves like plain git: work rides the branch you are already standing on,
+nothing is cut, nothing is composed. Every branch, worktree and review venue in
+the table above is something a repo asks for by running `setup-project`. An
+explicit `mode:`/`land:`/`push:`/`ticket_branch:` key still wins over the
+preset, so a config written before profiles existed keeps the shape it spelled
+out.
 
 **The rest of this doc is about the part that isn't in the table: what each
 profile expects *you* to do with your base branch.** Get that wrong and the
