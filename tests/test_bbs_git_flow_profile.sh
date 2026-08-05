@@ -8,6 +8,7 @@
 #
 # Scenarios:
 #   profile-pet-derives-trunk-smoke        profile: pet → trunk/none/smoke/low
+#   unconfigured-repo-derives-pet          no profile: key → pet, like plain git
 #   profile-startup-derives-worktree       profile: startup → worktree/local/standard/medium
 #   profile-enterprise-derives-strict      profile: enterprise → worktree/local/strict/high
 #   legacy-profile-names-resolve           the four pre-profile names still map
@@ -86,6 +87,10 @@ expect_gf() {
 expect_gf "profile-pet-derives-trunk-smoke" "profile: pet" \
   BBS_PROFILE=pet BBS_MODE=trunk BBS_LAND=none BBS_PUSH=true \
   BBS_RIGOR=smoke BBS_REVIEW_EFFORT=low BBS_BASE_BRANCH=main
+
+expect_gf "unconfigured-repo-derives-pet" "base_branch: main" \
+  BBS_PROFILE=pet BBS_MODE=trunk BBS_LAND=none BBS_PUSH=true \
+  BBS_RIGOR=smoke BBS_REVIEW_EFFORT=low
 
 expect_gf "profile-startup-derives-worktree" "profile: startup" \
   BBS_PROFILE=startup BBS_MODE=worktree BBS_LAND=local \

@@ -33,6 +33,8 @@ import (
 //
 // `pet` stays on `trunk`: it answers "mistakes are cheap, no ceremony", and
 // separable parallel tickets is the request that means a repo has outgrown it.
+// It is also what an unconfigured repo resolves to — no config should read as
+// no ceremony, the same as running plain git in a repo nobody set up.
 
 type gitFlowPolicy struct {
 	Profile      string // pet | startup | enterprise
@@ -80,9 +82,13 @@ func gitFlowFrom(content, base string) (gitFlowPolicy, error) {
 	name := gfScalar(content, "profile")
 	aliasMode, aliasLand := "", ""
 	if name == "" {
-		// Repos predating `profile:` keep today's shape: cut a branch, open a
-		// PR, standard rigor. Their explicit keys still win below.
-		name = "startup"
+		// Unconfigured means "behave like a plain git repo": work lands on the
+		// branch the user is already standing on, nothing is cut, nothing is
+		// composed. That is `pet`. A repo earns branches, worktrees and review
+		// venues by asking for them in setup-project — never by default.
+		// Explicit keys still win below, so a pre-`profile:` config that spells
+		// out `mode:`/`land:`/`ticket_branch:` keeps the shape it wrote down.
+		name = "pet"
 	} else if a, ok := gitFlowAliases[name]; ok {
 		name, aliasMode, aliasLand = a.profile, a.mode, a.land
 	}

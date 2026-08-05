@@ -30,6 +30,13 @@ answering. **This table is the source of truth.**
 | QA rigor | `smoke` (3–5 cases) | `standard` (5–10) | `strict` (8–12) |
 | inner loop (edit → browser) | **0 steps** | commit + `merge-base` | commit + `merge-base` |
 
+**A repo with no `profile:` key resolves to `pet`.** No config reads as no
+ceremony: work rides the branch the user is already standing on, exactly as it
+would in a repo nobody set up. Branches, worktrees and review venues are things
+a repo asks for by running `setup-project` — never things it gets by default.
+Any explicit `mode:`/`land:`/`push:`/`ticket_branch:` key still wins, so a
+pre-`profile:` config keeps whatever shape it wrote down.
+
 Rigor scales *breadth* only: `PASS`/`FIXED` still require every applicable
 rubric dimension at B or better and `freshness=A` in all three tiers. A pet
 project runs fewer cases; it never runs zero, and it never passes on a

@@ -26,9 +26,10 @@ func TestGitFlowFrom(t *testing.T) {
 			gitFlowPolicy{"enterprise", "main", "worktree", "local", "true", "strict", "high"},
 		},
 		{
-			// No profile key resolves to startup, presets and all.
-			"no-profile-defaults-to-startup", "base_branch: main\n",
-			gitFlowPolicy{"startup", "main", "worktree", "local", "true", "standard", "medium"},
+			// No profile key means nobody configured this repo, so it behaves
+			// like plain git: work rides the current branch, nothing is cut.
+			"no-profile-defaults-to-pet", "base_branch: main\n",
+			gitFlowPolicy{"pet", "main", "trunk", "none", "true", "smoke", "low"},
 		},
 		{
 			"legacy-trunk", "profile: trunk\n",
@@ -82,12 +83,15 @@ func TestGitFlowFrom(t *testing.T) {
 			gitFlowPolicy{"enterprise", "main", "branch", "pr", "true", "strict", "high"},
 		},
 		{
+			// An unconfigured repo that still writes `mode: branch` keeps the
+			// key it wrote and `pet`'s landing: the branch is cut, and the push
+			// is still the release. Nothing promotes it to a PR flow.
 			"lone-mode-branch-no-profile", "base_branch: main\nmode: branch\n",
-			gitFlowPolicy{"startup", "main", "branch", "pr", "true", "standard", "medium"},
+			gitFlowPolicy{"pet", "main", "branch", "none", "true", "smoke", "low"},
 		},
 		{
 			"legacy-ticket-branch-optional", "ticket_branch: optional\n",
-			gitFlowPolicy{"startup", "main", "trunk", "local", "true", "standard", "medium"},
+			gitFlowPolicy{"pet", "main", "trunk", "none", "true", "smoke", "low"},
 		},
 		{
 			"legacy-ticket-branch-required", "profile: pet\nticket_branch: required\n",
