@@ -390,8 +390,45 @@ Supporting commands:
 | `bbs ticket switch <t…>` | run **from the primary** — resets to base, then merges exactly the named tickets |
 | `bbs ticket reset-base` | after PRs merge upstream, snap local base back to `origin/<base>` |
 | `bbs ticket qa-lease` | one QA session at a time on the shared surface; others BLOCK naming the owner |
+| `bbs ticket land <t…>` | merge finished tickets into local base and **keep** the merge (see below) |
 
 All of them refuse loudly rather than losing work.
+
+### `auto_land` — let finished tickets merge themselves
+
+`serve` is a *look*, not a landing: it resets base and re-composes from
+scratch each time, so nothing it puts there survives the next `reset-base`.
+`land` is the opposite — a `--no-ff` merge into local base that stays.
+
+A repo can ask for that to happen by itself:
+
+```yaml
+# .babysit/git-flow.yaml
+profile: startup
+auto_land: true
+```
+
+Now foreman merges each ticket into local base as its worker finishes, instead
+of leaving a pile of branches for you to compose. You review the base branch —
+which is already running on the dev server — and push it.
+
+It is off in every profile and opt-in per repo, because it is the one key that
+moves your base branch while you are asleep. The guards that make that
+survivable:
+
+- **qa + review-pr must both be `DONE`**, per ticket, with no `--force` flag to
+  reach for. Unverified work does not land, ever.
+- **The whole batch is checked before any of it merges** — a blocked third
+  ticket doesn't leave the first two on a base you never asked for.
+- **It takes the QA lease**, so it can't move base under a running QA session.
+- **It never pushes.** Base ends up ahead of origin and the push stays yours.
+- **Re-running is a no-op** (`LANDED=0 … already on main`).
+
+Two things to know. Don't run `serve` after landing: `serve` calls
+`reset-base`, which snaps base to origin and discards the merges — the ticket
+branches keep the work, but your review surface vanishes. And `auto_land: true`
+alongside `land: pr` is refused at resolve time: a PR *is* the landing venue, so
+merging locally behind it would land the work the PR was supposed to gate.
 
 ### The QA loop, when tickets live in worktrees
 

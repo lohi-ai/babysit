@@ -239,6 +239,20 @@ while true; do
 done
 ```
 
+### You may be the one being watched
+
+The human can arm `bbs foreman watch` against you. It fingerprints your pane and,
+when the last lines have not changed for a while, types a plain message into it
+— `check status` by default. So an out-of-nowhere "check status" with no
+question attached is most likely the watchdog reporting that you went quiet, not
+the human asking for something new.
+
+Treat it as a bare `/bbs:foreman`: reconcile from disk (`inbox`, `board`,
+`cmux workspace list`), re-arm a monitor per live worker, report the board,
+carry on. It is idempotent by design, so answering it costs one reconcile and
+proves you are alive. If you were genuinely blocked, say what on and who you are
+waiting for — silence is what summoned it.
+
 ## Driving a worker's terminal
 
 - **Multi-line paste** (the `/goal` block) — clear first (input may hold a
@@ -413,7 +427,37 @@ assignment. QA across workers
 serializes on `bbs ticket qa-lease` — workers handle that themselves;
 `board` shows who holds it.
 
+**Auto-land, if the repo asked for it.** Read the policy, don't assume it:
+
+```bash
+eval "$(bbs autopilot git-flow)"
+[ "$BBS_AUTO_LAND" = true ] && bbs ticket land "$TICKET"
+```
+
+`auto_land: true` in `.babysit/git-flow.yaml` is off in every profile and opt-in
+per repo, so most batches still end at the human's `serve`. Where it *is* on,
+land each ticket as it finishes rather than in a batch at the end: a worker whose
+branch is already on base frees the next one from merging around it. `land`
+re-checks qa + review-pr on disk itself and BLOCKs rather than merging
+unverified work, so calling it on a ticket you believe is done is safe — a
+BLOCK means your read of the verdicts was wrong, and is a row to report, not a
+thing to work around. It never pushes: base ends up ahead of origin and the
+human still owns the push.
+
+Report a landing on the ticket's row (`LANDED: <branch> → <base>`). If a land
+conflicts, that ticket stays unlanded and the batch continues — relay the
+conflict to its worker as feedback (merge `origin/<base>` in the worktree,
+resolve, commit) and re-run `land` for it after.
+
 Batch done → `eval "$(bbs autopilot git-flow)"` and branch on `$BBS_LAND`.
+
+**`$BBS_AUTO_LAND=true` short-circuits this**: the finished tickets are already
+merged into local `$BBS_BASE_BRANCH`, so the base branch *is* the composed
+surface and the dev server already serves it. Do **not** run `serve` after
+landing — it calls `reset-base`, which resets base to origin and discards every
+merge (the ticket branches keep the work, but the human's review surface
+vanishes mid-look). The NEXT is: review the running base, then push it.
+
 `local` → `bbs ticket serve` (bare) composes every finished ticket on the
 shared dev server for combined review; ticket branches stay the source of
 truth, `reset-base` discards the pile. The aggregate NEXT offers

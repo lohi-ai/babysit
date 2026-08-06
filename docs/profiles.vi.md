@@ -394,8 +394,45 @@ Các lệnh phụ trợ:
 | `bbs ticket switch <t…>` | chạy **từ checkout chính** — reset về base, rồi merge đúng các ticket được gọi tên |
 | `bbs ticket reset-base` | sau khi PR merge lên upstream, kéo base ở máy về lại `origin/<base>` |
 | `bbs ticket qa-lease` | mỗi lúc chỉ một session QA trên bề mặt dùng chung; session khác BLOCK và nêu tên chủ đang giữ |
+| `bbs ticket land <t…>` | merge ticket đã xong vào base ở máy và **giữ** cái merge đó (xem bên dưới) |
 
 Cả đám đều từ chối lớn tiếng chứ không làm mất việc.
+
+### `auto_land` — để ticket xong việc tự merge
+
+`serve` là một cái *nhìn*, không phải một lần đáp: nó reset base rồi gộp lại từ
+đầu mỗi lần, nên chẳng có gì nó đặt lên đó sống sót qua `reset-base` kế tiếp.
+`land` thì ngược lại — một merge `--no-ff` vào base ở máy và nó ở lại.
+
+Repo có thể xin cho việc đó tự xảy ra:
+
+```yaml
+# .babysit/git-flow.yaml
+profile: startup
+auto_land: true
+```
+
+Giờ foreman merge từng ticket vào base ở máy ngay khi worker của nó xong, thay
+vì để lại một đống branch cho bạn tự gộp. Bạn review branch base — cái đang chạy
+sẵn trên dev server — rồi push.
+
+Nó tắt trong mọi profile và phải bật thủ công theo từng repo, vì đây là cái key
+duy nhất làm branch base của bạn dịch chuyển trong lúc bạn đang ngủ. Mấy cái
+chốt khiến chuyện đó sống được:
+
+- **qa và review-pr đều phải `DONE`**, theo từng ticket, không có cờ `--force`
+  nào để với tới. Việc chưa verify thì không bao giờ được land.
+- **Cả lô được kiểm trước khi có cái nào merge** — ticket thứ ba bị chặn không
+  để lại hai cái đầu trên một base bạn không hề yêu cầu.
+- **Nó giữ QA lease**, nên không thể dịch base dưới chân một session QA đang chạy.
+- **Nó không bao giờ push.** Base nằm trước origin và lần push vẫn là của bạn.
+- **Chạy lại là no-op** (`LANDED=0 … already on main`).
+
+Hai điều cần biết. Đừng chạy `serve` sau khi land: `serve` gọi `reset-base`, kéo
+base về origin và vứt mấy cái merge đi — branch ticket vẫn giữ việc, nhưng bề
+mặt review của bạn biến mất. Và `auto_land: true` đi cùng `land: pr` bị từ chối
+ngay lúc resolve: PR *chính là* chỗ đáp, nên merge ở máy sau lưng nó là land
+đúng phần việc mà PR sinh ra để chặn.
 
 ### Vòng lặp QA khi ticket sống trong worktree
 

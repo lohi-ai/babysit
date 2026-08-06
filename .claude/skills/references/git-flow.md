@@ -24,6 +24,7 @@ answering. **This table is the source of truth.**
 | `base_branch` | `main` | `develop` | `develop` |
 | `mode` | `trunk` (work lands on base) | `worktree` | `worktree` |
 | `land` | `none` (no PR) | `local` | `local` |
+| `auto_land` | `false` | `false` | `false` |
 | `push` | `true` | `true` | `true` |
 | review happens | nowhere — the push is the release | **locally**, in the browser, author merges | locally **and** on GitHub, someone else merges |
 | `review-pr` effort | `low` | `medium` | `high` |
@@ -193,3 +194,19 @@ every ticket was built and QA'd in isolation before touching the surface.
 straight per-ticket `create-pr`. That skips the composed *checkpoint*, not
 local review — for UI work the PR diff is not enough: `serve <ticket>` →
 browser-test → `serve --release` before approving.
+## `auto_land:` — let a finished ticket merge itself into local base
+Off in every profile, opt-in per repo, because it is the one key that moves
+`base_branch` with nobody watching. With `auto_land: true`, foreman runs
+`bbs ticket land <ticket>` as each worker finishes: a `--no-ff` merge into the
+LOCAL base that is **kept**, unlike `switch`/`serve`, which reset first and
+treat the composition as scratch.
+`land` gates on qa + review-pr `DONE` per ticket with no override flag, takes
+the surface lease, checks every ticket in the batch before merging any of them,
+and never pushes. Re-running it is a no-op (`LANDED=0 … already on <base>`).
+Two consequences to hold onto. **`serve` after landing is wrong** — it calls
+`reset-base`, which resets base to origin and discards the merges (the ticket
+branches keep the work, but the review surface disappears); under `auto_land`
+the base branch *is* the composed surface, so review it directly and push.
+And **`auto_land: true` with `land: pr` is a resolve-time error**: a PR is the
+landing venue, so merging into local base behind it would land exactly the work
+the profile said a PR must gate.

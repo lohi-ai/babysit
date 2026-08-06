@@ -96,6 +96,15 @@ expect_gf "profile-startup-derives-worktree" "profile: startup" \
   BBS_PROFILE=startup BBS_MODE=worktree BBS_LAND=local \
   BBS_RIGOR=standard BBS_REVIEW_EFFORT=medium
 
+# auto_land is off in every preset and opt-in per repo: it is the one key that
+# moves the local base with nobody watching.
+expect_gf "auto-land-is-off-by-default" "profile: enterprise" \
+  BBS_AUTO_LAND=false
+
+expect_gf "auto-land-opt-in-is-exported" "profile: startup
+auto_land: true" \
+  BBS_PROFILE=startup BBS_LAND=local BBS_AUTO_LAND=true
+
 expect_gf "profile-enterprise-derives-strict" "profile: enterprise" \
   BBS_PROFILE=enterprise BBS_MODE=worktree BBS_LAND=local \
   BBS_RIGOR=strict BBS_REVIEW_EFFORT=high
@@ -156,6 +165,28 @@ T="$(mktemp -d)"
   [ "$rc" -eq 2 ] || { echo "expected rc=2, got $rc"; exit 1; }
   grep -q "land: pr" "$T/err" || { echo "error does not name the fix: $(cat "$T/err")"; exit 1; }
 ) && ok "branch-with-land-local-exits-2" || fail "branch-with-land-local-exits-2"
+rm -rf "$T"
+
+# ── auto-land-with-land-pr-exits-2 ────────────────────────────────────
+# A PR is the landing venue. Auto-merging into local base behind it would land
+# work the profile said a PR must gate, so the pair has to fail at resolve time
+# rather than at the first worker that finishes overnight.
+T="$(mktemp -d)"
+(
+  export HOME="$T/home"; mkdir -p "$HOME"
+  build_repo "$T"
+  cd "$T/repo"
+
+  set_git_flow "$(printf 'profile: startup\nland: pr\nauto_land: true')"
+  "$BBS_BIN" autopilot git-flow >/dev/null 2>"$T/err"; rc=$?
+  [ "$rc" -eq 2 ] || { echo "expected rc=2, got $rc"; exit 1; }
+  grep -q "auto_land" "$T/err" || { echo "error does not name the key: $(cat "$T/err")"; exit 1; }
+
+  # …and the same pair reached through a legacy alias, which pins land: pr.
+  set_git_flow "$(printf 'profile: worktree-pr\nauto_land: true')"
+  "$BBS_BIN" autopilot git-flow >/dev/null 2>&1; rc=$?
+  [ "$rc" -eq 2 ] || { echo "alias path: expected rc=2, got $rc"; exit 1; }
+) && ok "auto-land-with-land-pr-exits-2" || fail "auto-land-with-land-pr-exits-2"
 rm -rf "$T"
 
 # ── pet-ensure-rides-main ─────────────────────────────────────────────

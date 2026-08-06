@@ -1126,6 +1126,172 @@ func siblingSourceName(r *workspace.Resolver) string {
 	return "any workspace (this repo has no .babysit/config.yaml)"
 }
 
+// ─── land ────────────────────────────────────────────────────────────────────
+
+func runLand(args []string) { os.Exit(landTickets(args)) }
+
+// landTickets merges finished ticket branches into the LOCAL base branch and
+// keeps the merge. It is the deliberate opposite of `switch`, which resets the
+// base first and treats the composition as scratch: land is what a repo running
+// `land: local` (or `land: none`, where the base branch is the only venue there
+// is) does when review is over and the work should stay.
+//
+// Three things make it safe enough to run unattended behind `auto_land: true`:
+//
+//   - It gates on the same verdicts `serve` gates on — qa AND review-pr DONE,
+//     per ticket, with no override flag. Landing unverified work is the whole
+//     hazard, and a `--force` here would be the thing every stuck run reaches
+//     for. A human who genuinely wants it has `git merge` one line away.
+//   - It takes the surface lease, because moving local base races every
+//     merge-base/switch/reset-base in flight.
+//   - It never resets, never force-updates and never pushes. The worst outcome
+//     of a wrong land is a merge commit on a local branch, recoverable from the
+//     ticket branch that still holds every commit.
+//
+// The interaction worth knowing: a later `reset-base` (or the `serve` that
+// calls it) hard-resets base to origin and DISCARDS these merges. That is not a
+// bug in either — the ticket branches still hold the work, and the stray-commit
+// guard stays quiet precisely because they do — but it means a landed base is
+// only durable once pushed. Hence the closing note on stdout.
+func landTickets(args []string) int {
+	base := ""
+	var tickets []string
+	for i := 0; i < len(args); i++ {
+		switch {
+		case args[i] == "--base":
+			base, i = valueAt(args, i), i+1
+		case strings.HasPrefix(args[i], "-"):
+			fmt.Fprintf(os.Stderr, "land: unknown flag '%s'\n", args[i])
+			return 2
+		default:
+			tickets = append(tickets, args[i])
+		}
+	}
+	if !haveGit() {
+		fmt.Fprintln(os.Stderr, "land: git not found")
+		return 2
+	}
+	if !insideWorkTree() {
+		fmt.Fprintln(os.Stderr, "land: not in a git work tree")
+		return 2
+	}
+	env := identity.Resolve()
+	if len(tickets) == 0 {
+		if env.Ticket == "" {
+			fmt.Fprintln(os.Stderr, retarget("usage: bbs-ticket land <ticket> [<ticket>...] [--base BRANCH]"))
+			return 2
+		}
+		tickets = []string{env.Ticket}
+	}
+	primary := gitPrimary()
+	if primary == "" {
+		primary = gitOut("rev-parse", "--show-toplevel")
+	}
+	if base == "" {
+		base = baseBranchIn(primary)
+	}
+
+	// Resolve branches and verdicts for EVERY ticket before merging any of them:
+	// a batch that lands two tickets and then blocks on the third's missing QA
+	// leaves a base nobody asked for.
+	type row struct{ ticket, branch string }
+	var rows []row
+	for _, t := range tickets {
+		b := ""
+		for _, ln := range strings.Split(gitOut("for-each-ref", "--format=%(refname:short)", "refs/heads/*/"+t+"_*"), "\n") {
+			if ln != "" {
+				b = ln
+				break
+			}
+		}
+		if b == "" {
+			fmt.Fprintln(os.Stderr, "STATUS: BLOCKED")
+			fmt.Fprintf(os.Stderr, "REASON: no local branch matches '*/%s_*' — unknown ticket or branch never cut.\n", t)
+			fmt.Fprintln(os.Stderr, retarget("RECOMMENDATION: check the id (bbs-ticket session list), or run ensure for it first."))
+			return 2
+		}
+		var missing []string
+		for _, skill := range []string{"qa", "review-pr"} {
+			if !serveVerdictOK(primary, t, skill) {
+				missing = append(missing, skill)
+			}
+		}
+		if len(missing) > 0 {
+			fmt.Fprintln(os.Stderr, "STATUS: BLOCKED")
+			fmt.Fprintf(os.Stderr, "REASON: %s is not finished — %s verdict is not DONE, and land never merges unverified work.\n", t, strings.Join(missing, " + "))
+			fmt.Fprintf(os.Stderr, "RECOMMENDATION: finish the ticket (see bbs-ticket board), then re-run; to compose it for review without landing, use 'bbs-ticket serve %s'.\n", t)
+			return 2
+		}
+		rows = append(rows, row{t, b})
+	}
+
+	gitdir := gitCOut(primary, "rev-parse", "--absolute-git-dir")
+	release, ok := surfaceAcquire(gitdir, "land", env.Ticket)
+	if !ok {
+		return 2
+	}
+	defer release()
+
+	// The same two guards reset-base applies, for the same reasons: a primary
+	// that wandered off base would land onto whatever it is standing on, and a
+	// dirty tree turns a conflicted merge into an unrecoverable mess.
+	if pb := gitCOut(primary, "branch", "--show-current"); pb != base {
+		fmt.Fprintln(os.Stderr, "STATUS: BLOCKED")
+		fmt.Fprintf(os.Stderr, "REASON: primary checkout %s is on '%s', not base '%s' — landing there would merge into the wrong branch.\n", primary, pb, base)
+		fmt.Fprintf(os.Stderr, "RECOMMENDATION: checkout '%s' there (or pass --base), then re-run.\n", base)
+		return 2
+	}
+	if gitCOut(primary, "status", "--porcelain") != "" {
+		fmt.Fprintln(os.Stderr, "STATUS: BLOCKED")
+		fmt.Fprintf(os.Stderr, "REASON: primary checkout %s has uncommitted changes — a merge would mix them into the landing.\n", primary)
+		fmt.Fprintln(os.Stderr, "RECOMMENDATION: commit or stash them, then re-run.")
+		return 2
+	}
+
+	landed, already := 0, 0
+	for _, r := range rows {
+		// An already-landed ticket is the normal state on a re-run (a foreman
+		// re-reconciling its batch, a resumed session): report it and move on
+		// rather than minting an empty merge commit per pass.
+		if gitCOK(primary, "merge-base", "--is-ancestor", r.branch, "HEAD") {
+			fmt.Printf("LANDED=0 %s %s (already on %s)\n", r.ticket, r.branch, base)
+			already++
+			continue
+		}
+		// --no-ff so the ticket stays one identifiable unit on base even when it
+		// could fast-forward, which is what makes a landing reviewable after the
+		// fact and revertable as a whole.
+		if ok, said := gitCRun(primary, "merge", "--no-ff", "--no-edit", r.branch); !ok {
+			conflicted, detail := mergeFailure(primary, said)
+			gitCOK(primary, "merge", "--abort")
+			fmt.Fprintln(os.Stderr, "STATUS: BLOCKED")
+			if !conflicted {
+				fmt.Fprintf(os.Stderr, "REASON: could not merge '%s' onto '%s' — no files conflicted; git said: %s\n", r.branch, base, detail)
+				fmt.Fprintln(os.Stderr, "RECOMMENDATION: fix what git reported (commonly an unset user.email/user.name, or a leftover index.lock), then re-run.")
+			} else {
+				fmt.Fprintf(os.Stderr, "REASON: merge conflict landing '%s' on '%s' in %s — that merge aborted; tickets landed earlier in this run stay on '%s'.\n", r.branch, base, detail, base)
+				fmt.Fprintf(os.Stderr, "RECOMMENDATION: in that ticket's worktree, merge 'origin/%s' in (never local '%s'), resolve, commit, re-run land.\n", base, base)
+			}
+			return 2
+		}
+		landed++
+		fmt.Printf("LANDED=1 %s %s\n", r.ticket, r.branch)
+		storeForTicket(env, r.ticket).HistoryAppendExtra("land", actorRole(),
+			fmt.Sprintf(`{"base":"%s","branch":"%s"}`, base, r.branch))
+	}
+
+	head := gitCOut(primary, "rev-parse", "HEAD")
+	fmt.Printf("BASE=%s\n", base)
+	fmt.Printf("PRIMARY=%s\n", primary)
+	fmt.Printf("HEAD=%s\n", head)
+	fmt.Printf("LANDED=%d ALREADY=%d\n", landed, already)
+	if landed > 0 {
+		fmt.Fprintf(os.Stderr, "land: '%s' is now ahead of origin — push it. A later reset-base (or serve, which calls it)\n", base)
+		fmt.Fprintf(os.Stderr, "  resets '%s' to origin and would discard these merges; the ticket branches keep the work either way.\n", base)
+	}
+	return 0
+}
+
 // ─── qa-lease ────────────────────────────────────────────────────────────────
 
 func runQALease(args []string) {

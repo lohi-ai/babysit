@@ -105,6 +105,8 @@ func newTicketCmd() *cobra.Command {
 				runSwitch(args[1:])
 			case "serve":
 				runServe(args[1:])
+			case "land":
+				runLand(args[1:])
 			case "qa-lease":
 				runQALease(args[1:])
 			case "add-handoff":
@@ -212,6 +214,12 @@ Subcommands:
                                  here and in each sibling repo; bare = every
                                  finished ticket (qa + review-pr DONE); re-run
                                  after each fix; serve --release frees leases
+  land [<ticket>...] [--base BRANCH]
+                                 merge finished ticket branches into the LOCAL
+                                 base and KEEP the merge (--no-ff); gates on qa
+                                 + review-pr DONE, no override; never pushes.
+                                 Opt in per repo with auto_land: true so a
+                                 foreman lands a worker as it finishes
   board [--all] [--pr]           read-only ticket board: status, branch, qa/
                                  review verdicts, session, PR, qa-lease, serving
   path <kind> [selectors] --read|--write   resolve a ticket file path (canonical → legacy)

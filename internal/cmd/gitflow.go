@@ -18,8 +18,14 @@ import (
 //	priority       ship now       speed > qual   quality > speed
 //	mode           trunk          worktree       worktree
 //	land           none           local          local
+//	auto_land      false          false          false
 //	rigor          smoke          standard       strict
 //	review effort  low            medium         high
+//
+// `auto_land` is off in every profile and is opt-in per repo, deliberately: it
+// is the one key that moves the local base branch with nobody watching, and a
+// preset that turned itself on for a whole profile would land work in repos
+// whose owner only ever asked for parallel tickets.
 //
 // `startup` and `enterprise` default to `worktree` because parallel tickets are
 // the normal shape and the two halves are one decision: worktrees keep the
@@ -41,15 +47,16 @@ type gitFlowPolicy struct {
 	BaseBranch   string
 	Mode         string // trunk | branch | worktree
 	Land         string // none | local | pr
+	AutoLand     string // true | false
 	Push         string // true | false
 	Rigor        string // smoke | standard | strict
 	ReviewEffort string // low | medium | high
 }
 
 var gitFlowProfiles = map[string]gitFlowPolicy{
-	"pet":        {Mode: "trunk", Land: "none", Push: "true", Rigor: "smoke", ReviewEffort: "low"},
-	"startup":    {Mode: "worktree", Land: "local", Push: "true", Rigor: "standard", ReviewEffort: "medium"},
-	"enterprise": {Mode: "worktree", Land: "local", Push: "true", Rigor: "strict", ReviewEffort: "high"},
+	"pet":        {Mode: "trunk", Land: "none", AutoLand: "false", Push: "true", Rigor: "smoke", ReviewEffort: "low"},
+	"startup":    {Mode: "worktree", Land: "local", AutoLand: "false", Push: "true", Rigor: "standard", ReviewEffort: "medium"},
+	"enterprise": {Mode: "worktree", Land: "local", AutoLand: "false", Push: "true", Rigor: "strict", ReviewEffort: "high"},
 }
 
 // gitFlowAliases keeps repos configured with the four pre-profile names
@@ -123,6 +130,9 @@ func gitFlowFrom(content, base string) (gitFlowPolicy, error) {
 	if v := gfScalar(content, "push"); v != "" {
 		p.Push = v
 	}
+	if v := gfScalar(content, "auto_land"); v != "" {
+		p.AutoLand = v
+	}
 
 	switch p.Mode {
 	case "trunk", "branch", "worktree":
@@ -138,6 +148,18 @@ func gitFlowFrom(content, base string) (gitFlowPolicy, error) {
 	case "true", "false":
 	default:
 		return p, fmt.Errorf("invalid push '%s' in .babysit/git-flow.yaml (true|false)", p.Push)
+	}
+	switch p.AutoLand {
+	case "true", "false":
+	default:
+		return p, fmt.Errorf("invalid auto_land '%s' in .babysit/git-flow.yaml (true|false)", p.AutoLand)
+	}
+	// `pr` names a landing venue that is not this machine. Auto-merging into the
+	// local base under it would land work the profile said a PR must gate, so the
+	// two keys cannot both be honoured and guessing which was meant would be
+	// wrong. `none` and `local` both end on the base branch, so both accept it.
+	if p.AutoLand == "true" && p.Land == "pr" {
+		return p, fmt.Errorf("incoherent .babysit/git-flow.yaml: auto_land 'true' with land 'pr' — a PR is the landing venue, so nothing may merge into local '%s' behind it. Use 'land: local' to review composed work on this machine, or drop auto_land", p.BaseBranch)
 	}
 	// `branch` + `local` reads as configured and can never run: the first
 	// ticket cuts in place, the primary leaves base_branch, and every compose
@@ -176,6 +198,7 @@ func printGitFlow() {
 	fmt.Printf("BBS_BASE_BRANCH=%s\n", shq(p.BaseBranch))
 	fmt.Printf("BBS_MODE=%s\n", shq(p.Mode))
 	fmt.Printf("BBS_LAND=%s\n", shq(p.Land))
+	fmt.Printf("BBS_AUTO_LAND=%s\n", shq(p.AutoLand))
 	fmt.Printf("BBS_PUSH=%s\n", shq(p.Push))
 	fmt.Printf("BBS_RIGOR=%s\n", shq(p.Rigor))
 	fmt.Printf("BBS_REVIEW_EFFORT=%s\n", shq(p.ReviewEffort))

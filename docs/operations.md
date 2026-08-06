@@ -108,6 +108,53 @@ done
 
 The `Lint Workflows` GitHub Action runs on pushes and PRs that touch workflow `.md` files. See `.github/workflows/lint-workflows.yml`.
 
+## Watching a foreman
+
+A foreman drives its batch from its own terminal, so its worst failure is the
+quiet one: the session finishes a thought, prints nothing more, and sits at an
+idle prompt while its workers wait for a design gate. Nothing detects that
+today — the record's heartbeat is written by the foreman itself, so a foreman
+that stopped working also stopped reporting that it stopped.
+
+`bbs foreman watch` is the outside observer. It captures the last N lines of the
+foreman's cmux pane on an interval; if those bytes are identical for longer than
+`--idle`, it types a nudge into the pane — the same "check status" a human would
+send — and if the nudges stop landing, it says so and gives up rather than
+poking forever.
+
+```bash
+bbs foreman watch                       # every foreman with an open workspace
+bbs foreman watch fm-acme               # just this one
+bbs foreman watch --idle 300 --nudge "check status and report the board"
+bbs foreman watch --once                # one pass, for cron
+```
+
+| flag | default | what it does |
+|---|---|---|
+| `--interval <sec>` | 60 | how often to capture the pane |
+| `--idle <sec>` | 600 | unchanged for this long → nudge |
+| `--lines <n>` | 40 | how much of the pane forms the fingerprint |
+| `--nudge <text>` | `check status` | what gets typed in |
+| `--max-nudges <n>` | 3 | budget before it reports `STALLED` and stops |
+| `--once` | off | single pass then exit; prints a line per foreman |
+
+It is a foreground loop, not a daemon: it holds no lock, writes only its own
+clock under `~/.babysit/watch/`, and nothing in babysit depends on it running.
+Output is events only — a foreman that is working produces no output at all.
+
+```text
+NUDGED fm-acme after 12m (1/3) — sent "check status"
+STALLED fm-acme — 3 nudges, no change in 41m; open "bbs foreman"
+GONE fm-acme — workspace "bbs foreman" is closed
+```
+
+Two behaviours worth knowing. It selects foremen by **open cmux workspace, not
+by liveness** — a foreman wedged long enough to need a nudge is exactly the one
+whose heartbeat has gone stale, so selecting on `Live()` would drop every
+foreman this exists to catch. And the nudge's own echo in the pane does not
+refund the budget: real progress changes the pane on more than one tick, which
+is what keeps `--max-nudges` binding on a dead session.
+
 ## Health checks
 
 There is no health-check command. `./bin/setup-skills` reports what it linked and warns when `~/.local/bin` is missing from your `PATH`; beyond that, the preamble is the live check — it emits `BBS_DEGRADED` on stderr at the top of every skill run when no working `bbs` is reachable, which is the failure that actually matters.
