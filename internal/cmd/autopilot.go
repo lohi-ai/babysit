@@ -1175,17 +1175,10 @@ func arg0(args []string, def string) string {
 	return def
 }
 
-func isAllDigits(s string) bool {
-	if s == "" {
-		return false
-	}
-	for i := 0; i < len(s); i++ {
-		if s[i] < '0' || s[i] > '9' {
-			return false
-		}
-	}
-	return true
-}
+// isAllDigits is allDigits with the one difference that matters here spelled
+// out: the empty string is not a number. allDigits accepts it, because the bash
+// `case "$x" in *[!0-9]*)` it mirrors finds no non-digit in "".
+func isAllDigits(s string) bool { return s != "" && allDigits(s) }
 
 func atoiSafe(s string) int {
 	n, err := strconv.Atoi(strings.TrimSpace(s))

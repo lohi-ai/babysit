@@ -368,14 +368,7 @@ func runSnooze(args []string, cacheFile, snoozeFile string) error {
 // newline-joined with trailing newlines stripped. A missing or non-regular
 // file yields "" (the bash guards with `[ -f ]`).
 func cacheRemote(path string) string {
-	if st, err := os.Stat(path); err != nil || !st.Mode().IsRegular() {
-		return ""
-	}
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return ""
-	}
-	lines := strings.Split(string(b), "\n")
+	lines := strings.Split(readRegular(path), "\n")
 	if n := len(lines); n > 0 && lines[n-1] == "" {
 		lines = lines[:n-1] // awk records: a trailing newline ends the last one
 	}
@@ -399,6 +392,20 @@ func cacheRemote(path string) string {
 // tr deletes whitespace everywhere, not just at the ends — an unreadable or
 // missing file reads as "".
 func readVersion(path string) string {
+	return strings.Map(func(r rune) rune {
+		switch r {
+		case ' ', '\t', '\n', '\v', '\f', '\r':
+			return -1
+		}
+		return r
+	}, readRegular(path))
+}
+
+// readRegular is the `[ -f "$f" ] && cat "$f" 2>/dev/null` both readers above
+// open with: the contents of path, or "" when it is missing, unreadable, or not
+// a regular file. The regular-file test is what keeps a directory from reading
+// as an error rather than as absence.
+func readRegular(path string) string {
 	if st, err := os.Stat(path); err != nil || !st.Mode().IsRegular() {
 		return ""
 	}
@@ -406,13 +413,7 @@ func readVersion(path string) string {
 	if err != nil {
 		return ""
 	}
-	return strings.Map(func(r rune) rune {
-		switch r {
-		case ' ', '\t', '\n', '\v', '\f', '\r':
-			return -1
-		}
-		return r
-	}, string(b))
+	return string(b)
 }
 
 // removeF is `rm -f`: a missing target is success, every other failure is not.

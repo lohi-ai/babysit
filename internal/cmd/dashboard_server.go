@@ -149,6 +149,27 @@ func (s *dashServer) ticketStore(project, id string) (*ticket.Store, error) {
 	return st, nil
 }
 
+// ticketReq is the opening every ticket-mutating handler shares: the
+// origin/CSRF guard, then the request body, then the store for {project}/
+// {ticket}. Order matters and is the order the handlers already used — a
+// request that is both cross-origin and malformed must still be refused as
+// cross-origin. Pass into=nil for a handler with no body. ok=false means the
+// response is already written and the handler must return.
+func (s *dashServer) ticketReq(w http.ResponseWriter, r *http.Request, into interface{}) (*ticket.Store, bool) {
+	if !s.guard(w, r) {
+		return nil, false
+	}
+	if into != nil && !decode(w, r, into) {
+		return nil, false
+	}
+	st, err := s.ticketStore(r.PathValue("project"), r.PathValue("ticket"))
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return nil, false
+	}
+	return st, true
+}
+
 type createTicketReq struct {
 	Project     string `json:"project"`
 	Requirement string `json:"requirement"`
@@ -216,16 +237,9 @@ type assignReq struct {
 }
 
 func (s *dashServer) handleAssign(w http.ResponseWriter, r *http.Request) {
-	if !s.guard(w, r) {
-		return
-	}
 	var req assignReq
-	if !decode(w, r, &req) {
-		return
-	}
-	st, err := s.ticketStore(r.PathValue("project"), r.PathValue("ticket"))
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
+	st, ok := s.ticketReq(w, r, &req)
+	if !ok {
 		return
 	}
 	if req.Foreman != "" {
@@ -302,12 +316,8 @@ func (s *dashServer) handleSetStatus(w http.ResponseWriter, r *http.Request) {
 // in babysit state, and reaching into a checkout to delete a branch from a
 // dashboard button is a blast radius this does not want.
 func (s *dashServer) handleDeleteTicket(w http.ResponseWriter, r *http.Request) {
-	if !s.guard(w, r) {
-		return
-	}
-	st, err := s.ticketStore(r.PathValue("project"), r.PathValue("ticket"))
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
+	st, ok := s.ticketReq(w, r, nil)
+	if !ok {
 		return
 	}
 	dest, err := trashTicket(s.stateDir, r.PathValue("project"), st)
@@ -349,16 +359,9 @@ type controlReq struct {
 }
 
 func (s *dashServer) handleControl(w http.ResponseWriter, r *http.Request) {
-	if !s.guard(w, r) {
-		return
-	}
 	var req controlReq
-	if !decode(w, r, &req) {
-		return
-	}
-	st, err := s.ticketStore(r.PathValue("project"), r.PathValue("ticket"))
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
+	st, ok := s.ticketReq(w, r, &req)
+	if !ok {
 		return
 	}
 
@@ -421,16 +424,9 @@ type approvalReq struct {
 // what turns a 10-second poll into an immediate resume, and — as everywhere
 // else — it is best-effort, because the verdict is already on disk.
 func (s *dashServer) handleApproval(w http.ResponseWriter, r *http.Request) {
-	if !s.guard(w, r) {
-		return
-	}
 	var req approvalReq
-	if !decode(w, r, &req) {
-		return
-	}
-	st, err := s.ticketStore(r.PathValue("project"), r.PathValue("ticket"))
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
+	st, ok := s.ticketReq(w, r, &req)
+	if !ok {
 		return
 	}
 	state, missing, err := approvalResolve(st, req.Action, req.Note, actorRole())
@@ -458,16 +454,9 @@ func (s *dashServer) handleApproval(w http.ResponseWriter, r *http.Request) {
 // the human is mid-review, and poking the worker on every comment would resume
 // it against a half-written redirect.
 func (s *dashServer) handleApprovalComment(w http.ResponseWriter, r *http.Request) {
-	if !s.guard(w, r) {
-		return
-	}
 	var req approvalNote
-	if !decode(w, r, &req) {
-		return
-	}
-	st, err := s.ticketStore(r.PathValue("project"), r.PathValue("ticket"))
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
+	st, ok := s.ticketReq(w, r, &req)
+	if !ok {
 		return
 	}
 	id, missing, err := approvalAddComment(st, req, actorRole())
