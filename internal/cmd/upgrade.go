@@ -275,16 +275,26 @@ func upgradePlugin() (driveable, ok bool) {
 		err = runVisible("claude", "plugin", "update", "bbs@babysit")
 	}
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "claude plugin update failed — see the output above")
+		// "see the output above" is not enough to act on: runVisible inherits the
+		// child's output but never echoes the command, so the operator has no way
+		// to retry by hand. Name both spellings — the shell one for a terminal,
+		// the slash one for the session they are probably sitting in.
+		fmt.Fprintln(os.Stderr, "claude plugin update failed — see the output above, then run:")
+		fmt.Fprintln(os.Stderr, "    "+pluginCmds)
+		fmt.Fprintln(os.Stderr, "    (inside Claude Code: /plugin marketplace update babysit)")
 		return true, false
 	}
 	return true, true
 }
 
+// pluginCmds is the pair upgradePlugin runs, named once so a failure can quote
+// exactly what to re-run and hintSkills can quote the same thing.
+const pluginCmds = "claude plugin marketplace update babysit && claude plugin update bbs@babysit"
+
 // hintSkills names the command that refreshes the skill pack for the plugin
 // shape this machine has.
 func hintSkills() string {
-	const marketplace = "  Skills: claude plugin marketplace update babysit && claude plugin update bbs@babysit"
+	const marketplace = "  Skills: " + pluginCmds
 	home, err := os.UserHomeDir()
 	if err != nil || home == "" {
 		return marketplace
