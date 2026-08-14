@@ -38,7 +38,7 @@ bbs ticket serve bs-ab123                 # on startup/enterprise: put it on the
 /bbs:create-pr                            # you open the PR — autopilot never does
 ```
 
-On `startup` and `enterprise` the ticket's code lives in its own worktree under `.babysit/worktrees/`, not in the checkout you're looking at — `bbs ticket serve` is what puts it in front of you. On `pet` it's already on your branch and you can skip that line.
+The ticket's code is on the branch you're already standing on, so it's in front of you as soon as your dev server reloads. `bbs ticket serve` is for the other shape — a ticket you ran in its own worktree (`--mode=worktree`, or a `/bbs:foreman` batch), whose code isn't in this checkout.
 
 Step by step:
 
@@ -197,7 +197,7 @@ There is one knob. The wizard asks a single question — **what does a mistake c
 |---|---|---|---|
 | who | solo, hobby project | solo freelance / small team | team, enterprise codebase |
 | priority | ship now | release speed > code quality | code quality > release speed |
-| where a ticket's work goes | no branch cut — it rides base | `feat/<id>_<slug>`, in its own worktree | `feat/<id>_<slug>`, in its own worktree |
+| where a ticket's work goes | the branch you're on — no cut | the branch you're on — no cut | the branch you're on — no cut |
 | review happens | nowhere — the push is the release | **locally**, in the browser, author merges | **on GitHub**, someone else merges |
 | QA rigor | `smoke` — 3–5 cases | `standard` — 5–10 | `strict` — 8–12 |
 | `review-pr` effort | `low` | `medium` | `high` |
@@ -206,21 +206,25 @@ Each profile also expects something of *you* — which branch to be on when a ti
 
 **A repo you never configured resolves to `pet`** — no branch, no review venue, work rides whatever branch you're standing on, the same as running plain git. Ceremony is something a repo asks for, not something it gets.
 
-**First time here, or not sure? Pick `startup`.** It's the safe place to start on a repo you care about: each ticket works in its own worktree, the finished batch only reaches your base branch once you've composed and reviewed it in the browser, and nothing reaches the remote without a PR you open. Changing profile later is one line.
+**First time here, or not sure? Pick `startup`.** It's the safe place to start on a repo you care about: standard QA rigor, and nothing reaches the remote without a PR you open. Changing profile later is one line.
 
 Rigor scales **breadth, not the bar**. A `PASS` means the same thing in all three: every applicable rubric dimension at B or better, and a fresh end-to-end run against the final code. A pet project runs fewer cases — it never runs zero, and it never passes on a C-grade dimension.
 
 Setting `mode:`, `land:`, or `push:` by hand overrides the profile's preset. That's the escape hatch, not the normal shape — a knob written out by hand stops tracking its profile.
 
-#### Parallel tickets come with the profile
+#### Parallel tickets are requested, never configured
 
-`startup` and `enterprise` turn worktrees on, because running several tickets at once is the normal shape for both. There's nothing to request and no "parallel" profile to pick: each ticket gets its own worktree, your primary checkout stays pinned to `base_branch` as the shared dev server, and `bbs ticket serve` composes the finished batch there for you to review in one browser before any PR.
+**No profile cuts a branch or moves you into a worktree.** Under all three you work on the branch you're standing on, exactly as you would without babysit — the profile decides your review venue and QA rigor, nothing about where the work lives. That's deliberate: a tool that silently relocates your work is a tool you can't manage.
 
-**It costs something, so know what you bought.** The inner loop is no longer 0-step: because the code lives in a worktree and the dev server serves the primary, every test iteration is a commit plus `bbs ticket merge-base` instead of edit-and-refresh. If you genuinely work one ticket at a time, buy the fast loop back with one key — `mode: branch`, which derives `land: pr` and cuts `feat/…` in place. `/bbs:setup-project` asks you this directly ("several tickets at once, or one at a time?"), so you don't have to reason about `mode:` yourself.
+Isolation is asked for per run, when you actually want it:
 
-`pet` is the exception: it stays on trunk, and wanting separable parallel tickets is the sign a repo has outgrown it. `/bbs:foreman` can still run a batch in a `pet` repo — it requests worktrees per dispatch, whatever the config says.
+- `/bbs:foreman` — a batch: one worktree per ticket, in any repo, whatever the config says.
+- `/bbs:autopilot --mode=worktree "<requirement>"` — this one ticket in its own worktree.
+- `/bbs:autopilot --mode=branch "<requirement>"` — cut `feat/<id>_<slug>` in place.
 
-The commands that move work between a worktree and the shared surface — `merge-base`, `switch`, `reset-base`, plus the human layer `board`, `serve`, `/bbs:fix-pr` — are in [Working tickets in parallel](#working-tickets-in-parallel-worktree-mode). Details: [`references/git-flow.md`](.claude/skills/references/git-flow.md).
+**Worktrees cost something, so know what you bought.** The inner loop is no longer 0-step: because the code lives in a worktree and the dev server serves the primary checkout, every test iteration is a commit plus `bbs ticket merge-base` instead of edit-and-refresh. What it buys is separable tickets — you can review one in isolation, drop a bad one, and land each as its own clean PR. A repo that wants that shape every time can write `mode: worktree` + `land: local` by hand; nothing writes it for you.
+
+The commands that move work between a worktree and the shared surface — `merge-base`, `switch`, `reset-base`, plus the human layer `board`, `serve`, `/bbs:fix-pr` — are in [Working tickets in parallel](#working-tickets-in-parallel-worktree-mode). Details: [`references/git-flow.md`](.claude/skills/references/git-flow.md) and [`references/worktrees.md`](.claude/skills/references/worktrees.md).
 
 ### 3. Run it
 
@@ -265,9 +269,9 @@ Once the single-ticket loop is familiar, `foreman` runs a batch of them. Same wo
 /bbs:foreman                            # attach/resume: reconcile live workers + board
 ```
 
-Foreman spawns a visible worker per ticket — a cmux workspace you click in the sidebar to watch or take over — monitors the panes, and owns the checkpoint between design and build: when a worker stops at its plan/prototype handoff, foreman reviews the design, gives feedback, and either greenlights the build or escalates to you when your voice could change the outcome. It answers workers' mechanical questions itself, relays the ones that need you, verifies every QA/review verdict on disk, and — with `land: local` (the default in worktree mode) — merges all finished tickets onto your local base so you review the combined product on the dev server before deciding: per-ticket PRs or one compose PR.
+Foreman spawns a visible worker per ticket — a cmux workspace you click in the sidebar to watch or take over — monitors the panes, and owns the checkpoint between design and build: when a worker stops at its plan/prototype handoff, foreman reviews the design, gives feedback, and either greenlights the build or escalates to you when your voice could change the outcome. It answers workers' mechanical questions itself, relays the ones that need you, verifies every QA/review verdict on disk, and — with `land: local`, or `auto_land: true` — merges all finished tickets onto your local base so you review the combined product on the dev server before deciding: per-ticket PRs or one compose PR.
 
-**One hard prerequisite, which is why it's the second thing to learn:** [cmux](https://cmux.com) — foreman fails fast without it. You don't need to reconfigure the repo: `startup`/`enterprise` are already in worktree mode, and in a `pet` repo foreman requests worktrees per dispatch anyway, so parallel tickets never fight over one checkout. Your profile keeps deciding rigor either way. On a single serial ticket it buys you nothing over `/bbs:autopilot`.
+**One hard prerequisite, which is why it's the second thing to learn:** [cmux](https://cmux.com) — foreman fails fast without it. You don't need to reconfigure the repo: foreman requests a worktree per dispatch whatever the profile says, so parallel tickets never fight over one checkout. Your profile keeps deciding rigor either way. On a single serial ticket it buys you nothing over `/bbs:autopilot`.
 
 ## How to use it
 
@@ -299,11 +303,11 @@ When a stage finishes, the ticket gets a `Next:` line — literally what to do n
 /bbs:autopilot                       # resume — picks up from the current branch's checkpoint
 ```
 
-That's the whole surface. Two flags extend it — `--stop-after=requirement|plan` to stop at an earlier checkpoint, and `--mode=worktree` to run this one ticket in its own worktree even though the profile wouldn't (a `pet` repo, or one that opted into `mode: branch`). Verb tokens don't exist.
+That's the whole surface. Two flags extend it — `--stop-after=requirement|plan` to stop at an earlier checkpoint, and `--mode=worktree` (or `--mode=branch`) to isolate this one ticket, which no profile does for you. Verb tokens don't exist.
 
 ### Working tickets in parallel (worktree mode)
 
-**On `startup` and `enterprise` this is your normal flow, not an advanced one** — the profile already put you in worktree mode, so these are the commands a single-ticket run hands you. `/bbs:foreman` drives the same section for a whole batch — dispatch, design gates, verdict checks, composed surface — but you don't need it to work here.
+**This is the shape you get after `--mode=worktree`** — the commands such a run hands you. `/bbs:foreman` drives the same section for a whole batch — dispatch, design gates, verdict checks, composed surface — but you don't need it to work here.
 
 One heavy checkout per repo runs the dev server; every ticket lives in its own lightweight worktree. That makes everything parallel *except* the moment someone needs to see a ticket actually running — and that moment gets three commands:
 
@@ -323,7 +327,7 @@ bbs ticket serve            # bare: compose every finished ticket (qa + review D
 4. Approved → `bbs ticket serve --release`, then `/bbs:create-pr` per repo. Reviewer comments later → `/bbs:fix-pr`.
 5. `bbs ticket board --pr` flags merged PRs and prints the exact cleanup commands (`reset-base`, `set-status done`).
 
-**One ticket, two repos** (a feature spanning frontend + backend): `/bbs:setup-project` records the sibling repos once; autopilot's builder crosses over on its own — creates the linked sibling ticket, implements and QAs both sides — and `serve` puts the whole pair in front of you with one command. Meanwhile other tickets' sessions keep implementing and reviewing in their own worktrees; `board` shows everyone who holds the surface and for how long. Full recipe: [`references/git-flow.md` § Attended parallel review](.claude/skills/references/git-flow.md).
+**One ticket, two repos** (a feature spanning frontend + backend): `/bbs:setup-project` records the sibling repos once; autopilot's builder crosses over on its own — creates the linked sibling ticket, implements and QAs both sides — and `serve` puts the whole pair in front of you with one command. Meanwhile other tickets' sessions keep implementing and reviewing in their own worktrees; `board` shows everyone who holds the surface and for how long. Full recipe: [`references/worktrees.md` § Attended parallel review](.claude/skills/references/worktrees.md).
 
 ## Going deeper
 

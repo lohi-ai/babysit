@@ -92,8 +92,9 @@ expect_gf "unconfigured-repo-derives-pet" "base_branch: main" \
   BBS_PROFILE=pet BBS_MODE=trunk BBS_LAND=none BBS_PUSH=true \
   BBS_RIGOR=smoke BBS_REVIEW_EFFORT=low
 
-expect_gf "profile-startup-derives-worktree" "profile: startup" \
-  BBS_PROFILE=startup BBS_MODE=worktree BBS_LAND=local \
+# No profile derives a mode: every repo works on the branch the user is on.
+expect_gf "profile-startup-derives-trunk-pr" "profile: startup" \
+  BBS_PROFILE=startup BBS_MODE=trunk BBS_LAND=pr \
   BBS_RIGOR=standard BBS_REVIEW_EFFORT=medium
 
 # auto_land is off in every preset and opt-in per repo: it is the one key that
@@ -103,10 +104,10 @@ expect_gf "auto-land-is-off-by-default" "profile: enterprise" \
 
 expect_gf "auto-land-opt-in-is-exported" "profile: startup
 auto_land: true" \
-  BBS_PROFILE=startup BBS_LAND=local BBS_AUTO_LAND=true
+  BBS_PROFILE=startup BBS_AUTO_LAND=true
 
 expect_gf "profile-enterprise-derives-strict" "profile: enterprise" \
-  BBS_PROFILE=enterprise BBS_MODE=worktree BBS_LAND=local \
+  BBS_PROFILE=enterprise BBS_MODE=trunk BBS_LAND=pr \
   BBS_RIGOR=strict BBS_REVIEW_EFFORT=high
 
 # ── legacy-profile-names-resolve ──────────────────────────────────────
@@ -143,12 +144,10 @@ T="$(mktemp -d)"
 ) && ok "invalid-profile-exits-2" || fail "invalid-profile-exits-2"
 rm -rf "$T"
 
-# ── branch-with-land-local-exits-2 ────────────────────────────────────
-# `mode: branch` + `land: local` reads as configured and can never run: the
-# cut takes the primary off base, so nothing composes there. Written by hand it
-# has to fail at resolve time, not at the first compose hours later — but a
-# lone `mode: branch` (the solo opt-out, and every pre-preset repo) is not that
-# mistake and must still resolve, to the PR landing branch mode implies.
+# ── hand-written-mode-and-land-still-resolve ──────────────────────────
+# The profile derives no mode and no coherence rules stand between the human
+# and the keys they wrote: an explicit `mode:`/`land:`/`auto_land:` pair is the
+# escape hatch, and it must resolve rather than exit 2.
 T="$(mktemp -d)"
 (
   export HOME="$T/home"; mkdir -p "$HOME"
@@ -160,33 +159,12 @@ T="$(mktemp -d)"
   [ "$BBS_MODE" = branch ] && [ "$BBS_LAND" = pr ] \
     || { echo "lone mode: branch derived $BBS_MODE/$BBS_LAND, want branch/pr"; exit 1; }
 
-  set_git_flow "$(printf 'profile: startup\nmode: branch\nland: local')"
-  "$BBS_BIN" autopilot git-flow >/dev/null 2>"$T/err"; rc=$?
-  [ "$rc" -eq 2 ] || { echo "expected rc=2, got $rc"; exit 1; }
-  grep -q "land: pr" "$T/err" || { echo "error does not name the fix: $(cat "$T/err")"; exit 1; }
-) && ok "branch-with-land-local-exits-2" || fail "branch-with-land-local-exits-2"
-rm -rf "$T"
-
-# ── auto-land-with-land-pr-exits-2 ────────────────────────────────────
-# A PR is the landing venue. Auto-merging into local base behind it would land
-# work the profile said a PR must gate, so the pair has to fail at resolve time
-# rather than at the first worker that finishes overnight.
-T="$(mktemp -d)"
-(
-  export HOME="$T/home"; mkdir -p "$HOME"
-  build_repo "$T"
-  cd "$T/repo"
-
-  set_git_flow "$(printf 'profile: startup\nland: pr\nauto_land: true')"
-  "$BBS_BIN" autopilot git-flow >/dev/null 2>"$T/err"; rc=$?
-  [ "$rc" -eq 2 ] || { echo "expected rc=2, got $rc"; exit 1; }
-  grep -q "auto_land" "$T/err" || { echo "error does not name the key: $(cat "$T/err")"; exit 1; }
-
-  # …and the same pair reached through a legacy alias, which pins land: pr.
-  set_git_flow "$(printf 'profile: worktree-pr\nauto_land: true')"
-  "$BBS_BIN" autopilot git-flow >/dev/null 2>&1; rc=$?
-  [ "$rc" -eq 2 ] || { echo "alias path: expected rc=2, got $rc"; exit 1; }
-) && ok "auto-land-with-land-pr-exits-2" || fail "auto-land-with-land-pr-exits-2"
+  # the composed-review shape, written out by hand
+  set_git_flow "$(printf 'profile: startup\nmode: worktree\nland: local\nauto_land: true')"
+  eval "$("$BBS_BIN" autopilot git-flow)" || { echo "worktree/local/auto_land failed to resolve"; exit 1; }
+  [ "$BBS_MODE" = worktree ] && [ "$BBS_LAND" = local ] && [ "$BBS_AUTO_LAND" = true ] \
+    || { echo "derived $BBS_MODE/$BBS_LAND/$BBS_AUTO_LAND"; exit 1; }
+) && ok "hand-written-mode-and-land-still-resolve" || fail "hand-written-mode-and-land-still-resolve"
 rm -rf "$T"
 
 # ── pet-ensure-rides-main ─────────────────────────────────────────────
@@ -208,10 +186,9 @@ T="$(mktemp -d)"
 ) && ok "pet-ensure-rides-main" || fail "pet-ensure-rides-main"
 rm -rf "$T"
 
-# ── enterprise-ensure-diverts-to-worktree ─────────────────────────────
-# The whole point of the worktree preset: the primary checkout never leaves
-# base_branch, because that is the only state in which a batch can be composed
-# there for review.
+# ── enterprise-ensure-also-rides-the-current-branch ───────────────────
+# The strictest profile still cuts nothing: a repo asked for review rigor, not
+# for babysit to move the user off the branch they were standing on.
 T="$(mktemp -d)"
 (
   export PATH="$SCRIPT_DIR/bin:$PATH"
@@ -224,10 +201,31 @@ T="$(mktemp -d)"
   out="$("$BBS_TICKET_BIN" ensure --slug-hint ent-a --type feat 2>"$T/err")" || {
     echo "ensure failed: $(cat "$T/err")"; exit 1; }
   printf '%s\n' "$out" | grep -q '^WORKTREE=' \
-    || { echo "expected a worktree cut; out: $out"; exit 1; }
+    && { echo "enterprise cut a worktree unasked; out: $out"; exit 1; }
+  [ "$(git branch --show-current)" = "main" ] \
+    || { echo "enterprise cut a branch: $(git branch --show-current)"; exit 1; }
+) && ok "enterprise-ensure-also-rides-the-current-branch" \
+  || fail "enterprise-ensure-also-rides-the-current-branch"
+rm -rf "$T"
+
+# ── mode-flag-is-how-a-worktree-happens ───────────────────────────────
+# Worktrees are requested per run (foreman passes --mode=worktree per worker),
+# never inherited from a config file — including in an unconfigured repo.
+T="$(mktemp -d)"
+(
+  export PATH="$SCRIPT_DIR/bin:$PATH"
+  export HOME="$T/home"; mkdir -p "$HOME"
+  export AGENT_ROLE=mayor
+  build_repo "$T"
+  cd "$T/repo"
+
+  out="$("$BBS_TICKET_BIN" ensure --slug-hint wt-a --type feat --mode worktree 2>"$T/err")" || {
+    echo "ensure failed: $(cat "$T/err")"; exit 1; }
+  printf '%s\n' "$out" | grep -q '^WORKTREE=' \
+    || { echo "--mode=worktree did not divert; out: $out"; exit 1; }
   [ "$(git branch --show-current)" = "main" ] \
     || { echo "primary left base: $(git branch --show-current)"; exit 1; }
-) && ok "enterprise-ensure-diverts-to-worktree" || fail "enterprise-ensure-diverts-to-worktree"
+) && ok "mode-flag-is-how-a-worktree-happens" || fail "mode-flag-is-how-a-worktree-happens"
 rm -rf "$T"
 
 # ── dirty-tree-divert-warns-about-loop ────────────────────────────────

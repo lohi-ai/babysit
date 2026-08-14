@@ -62,12 +62,14 @@ eval "$(bbs ticket ensure \
 [ -n "${WORKTREE:-}" ] && cd "$WORKTREE"
 ```
 `ensure` is idempotent. Fast-path (already on a ticket branch): no-op, prints
-`CREATED=0` + ticket env. Slow-path: generates `bs-<8hex>`, cuts
-`feat/<id>_<slug>` through the **safe-cut gate** (in place only from a clean
-base checkout; otherwise diverts to a worktree and prints `WORKTREE=<path>` —
-cd there; see [git-flow.md](git-flow.md)), seeds `requirement.md`, prints
-`CREATED=1` + ticket env. Under `mode: trunk` the slow-path skips the cut and
-prints `export BABYSIT_TICKET=<id>` as the identity carrier.
+`CREATED=0` + ticket env. Slow-path: generates `bs-<8hex>`, seeds
+`requirement.md`, prints `CREATED=1` + ticket env. Under `trunk` — the default,
+and everything without an explicit `--mode` — that is all it does: no branch is
+cut and `export BABYSIT_TICKET=<id>` carries the identity. With
+`--mode=branch|worktree` it also cuts `feat/<id>_<slug>` through the **safe-cut
+gate** (in place only from a clean base checkout; otherwise diverts to a
+worktree and prints `WORKTREE=<path>` — cd there; see
+[git-flow.md](git-flow.md)).
 **Exit 3 = `NEEDS_CONFIRM`** — in developer mode the slow-path never cuts a
 branch in place silently: without `--cut-branch` it exits 3. Render one
 `AskUserQuestion` (cut the branch vs stay + `BABYSIT_TICKET`) and re-run with

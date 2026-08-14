@@ -16,8 +16,10 @@ status prints.
    autopilot owns every git operation (repo init, branch, commit, land,
    push) — never bounce one to the user or a step skill.
    Then ensure a ticket dir with `requirement.md` and `checkpoint.json`
-   (`bbs ticket ensure`; git-flow `mode` from `.babysit/git-flow.yaml`, one-run
-   override `--mode=<m>` — see [references/git-flow.md](../references/git-flow.md)).
+   (`bbs ticket ensure`). Work rides the branch the user is on: pass
+   `--mode=<branch|worktree>` through **only** when the invocation asked for
+   it (`foreman` passes `--mode=worktree` per worker) — never cut or divert on
+   your own initiative. See [references/git-flow.md](../references/git-flow.md).
    When seeding `requirement.md` from free text, list open decisions
    explicitly instead of papering over them
    ([references/finding-unknowns.md](../references/finding-unknowns.md)).
@@ -38,10 +40,9 @@ status prints.
    make sure that ran, so the spec and prototype exist *before* the `/goal`
    handoff — design is reviewed before implementation, not discovered after
    it. Stop here on `--stop-after=plan`. Size relaxes *only this step*: an
-   XS change still gets the step-2 ticket + worktree and the verdict gates —
-   there is no inline path, and under `mode: worktree` nothing is ever
-   committed in the primary checkout (code reaches it only via
-   `bbs ticket merge-base`/`switch`).
+   XS change still gets the step-2 ticket and the verdict gates — there is no
+   inline path, and in a worktree run nothing is ever committed in the primary
+   checkout (code reaches it only via `bbs ticket merge-base`/`switch`).
 5. Hand the work to `/goal` (below). Init never executes workflow steps.
 ## The work loop (`/goal`)
 `/goal <condition>` arms a Stop hook that blocks the session from stopping

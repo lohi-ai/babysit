@@ -243,10 +243,10 @@ func printBaseLine(primary, gitdir string, now int64) {
 	}
 	fmt.Printf("BASE: %s — %s ahead / %s behind origin/%s%s\n", base, ahead, behind, base, age)
 	if ahead != "0" {
-		// A resolve error (invalid profile/mode) leaves mode empty; the
-		// branch-cutting wording is right for the default profile, so unknown
-		// falls through to it rather than suppressing the line.
-		mode := ""
+		// A resolve error (invalid profile/mode) leaves the policy unknown, so
+		// fall back to what every profile now resolves to: trunk. The
+		// branch-cutting wording only applies to a repo that asked for it.
+		mode := "trunk"
 		if p, err := resolveGitFlow(primary); err == nil {
 			mode = p.Mode
 		}

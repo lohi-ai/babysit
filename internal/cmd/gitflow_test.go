@@ -2,9 +2,9 @@ package cmd
 
 import "testing"
 
-// The derivation table in the ticket is the contract: one `profile:` key sets
-// branch mechanics *and* rigor, explicit keys always win, and the four legacy
-// profile names keep resolving.
+// The derivation table is the contract: one `profile:` key sets the landing
+// venue and QA rigor — never a mode, which is a per-run choice — explicit keys
+// always win, and the four legacy profile names keep resolving.
 func TestGitFlowFrom(t *testing.T) {
 	cases := []struct {
 		name string
@@ -16,14 +16,14 @@ func TestGitFlowFrom(t *testing.T) {
 			gitFlowPolicy{"pet", "main", "trunk", "none", "false", "true", "smoke", "low"},
 		},
 		{
-			// Parallel tickets are the default shape, and worktree + local is
-			// one decision: only a primary pinned to base can compose a batch.
+			// No profile derives a mode: the work rides the branch the user is
+			// standing on, and isolation is asked for per run (--mode).
 			"startup", "profile: startup\n",
-			gitFlowPolicy{"startup", "main", "worktree", "local", "false", "true", "standard", "medium"},
+			gitFlowPolicy{"startup", "main", "trunk", "pr", "false", "true", "standard", "medium"},
 		},
 		{
 			"enterprise", "profile: enterprise\n",
-			gitFlowPolicy{"enterprise", "main", "worktree", "local", "false", "true", "strict", "high"},
+			gitFlowPolicy{"enterprise", "main", "trunk", "pr", "false", "true", "strict", "high"},
 		},
 		{
 			// No profile key means nobody configured this repo, so it behaves
@@ -54,8 +54,13 @@ func TestGitFlowFrom(t *testing.T) {
 			gitFlowPolicy{"pet", "main", "branch", "pr", "false", "false", "smoke", "low"},
 		},
 		{
-			// Redundant with the preset, and must stay a no-op either way.
-			"worktree-restated-keeps-land-local", "profile: enterprise\nmode: worktree\n",
+			// The parallel shape, written out by hand: the mode key is the only
+			// thing that turns worktrees on, and it does not drag land with it.
+			"hand-written-worktree-keeps-profile-land", "profile: enterprise\nmode: worktree\n",
+			gitFlowPolicy{"enterprise", "main", "worktree", "pr", "false", "true", "strict", "high"},
+		},
+		{
+			"hand-written-worktree-and-land-local", "profile: enterprise\nmode: worktree\nland: local\n",
 			gitFlowPolicy{"enterprise", "main", "worktree", "local", "false", "true", "strict", "high"},
 		},
 		{
@@ -75,11 +80,8 @@ func TestGitFlowFrom(t *testing.T) {
 			gitFlowPolicy{"startup", "main", "branch", "pr", "false", "true", "standard", "medium"},
 		},
 		{
-			// …and written the short way. `land: local` is a preset, not
-			// something this file asked for, so branch mode takes the landing
-			// it has always implied instead of resolving to an error. Repos
-			// configured before the preset existed read exactly like this.
-			"lone-mode-branch-derives-land-pr", "profile: enterprise\nmode: branch\n",
+			// …and written the short way: the profile's own landing applies.
+			"lone-mode-branch-keeps-profile-land", "profile: enterprise\nmode: branch\n",
 			gitFlowPolicy{"enterprise", "main", "branch", "pr", "false", "true", "strict", "high"},
 		},
 		{
@@ -101,7 +103,7 @@ func TestGitFlowFrom(t *testing.T) {
 			// auto_land is opt-in per repo and off in every preset, so a bare
 			// profile never lands anything by itself.
 			"auto-land-opt-in", "profile: startup\nauto_land: true\n",
-			gitFlowPolicy{"startup", "main", "worktree", "local", "true", "true", "standard", "medium"},
+			gitFlowPolicy{"startup", "main", "trunk", "pr", "true", "true", "standard", "medium"},
 		},
 		{
 			// land: none is the pet shape where the base branch IS the venue —
@@ -133,17 +135,7 @@ func TestGitFlowFromInvalid(t *testing.T) {
 		"profile: pet\nmode: bogus\n",
 		"profile: pet\nland: sometimes\n",
 		"profile: pet\npush: maybe\n",
-		// Coherent enums, impossible combination: a branch cut in place takes
-		// the primary off base, so `land: local` has nothing to compose on.
-		// Only the hand-written pair errors — a lone `mode: branch` derives
-		// `land: pr` above.
-		"profile: pet\nmode: branch\nland: local\n",
-		"profile: startup\nmode: branch\nland: local\n",
 		"profile: pet\nauto_land: sometimes\n",
-		// A PR is the landing venue, so nothing may merge into local base
-		// behind it — whether the `pr` came from a key or from an alias.
-		"profile: startup\nland: pr\nauto_land: true\n",
-		"profile: worktree-pr\nauto_land: true\n",
 	} {
 		if _, err := gitFlowFrom(yaml, "main"); err == nil {
 			t.Errorf("expected an error for %q", yaml)

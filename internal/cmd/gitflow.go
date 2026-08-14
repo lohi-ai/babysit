@@ -5,42 +5,30 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 )
 
 // Git-flow policy resolution — the one codepath that reads
-// `.babysit/git-flow.yaml`. Everything a repo's speed↔quality tradeoff implies
-// derives from a single `profile:` key; `bbs autopilot git-flow` prints the
-// derived set so skills consume it instead of re-parsing the yaml with their
-// own fallbacks.
+// `.babysit/git-flow.yaml`. A single `profile:` key says what a mistake costs
+// in this repo; `bbs autopilot git-flow` prints the derived set so skills
+// consume it instead of re-parsing the yaml with their own fallbacks.
 //
 //	profile        pet            startup        enterprise
 //	priority       ship now       speed > qual   quality > speed
-//	mode           trunk          worktree       worktree
-//	land           none           local          local
-//	auto_land      false          false          false
+//	land           none           pr             pr
 //	rigor          smoke          standard       strict
 //	review effort  low            medium         high
 //
-// `auto_land` is off in every profile and is opt-in per repo, deliberately: it
-// is the one key that moves the local base branch with nobody watching, and a
-// preset that turned itself on for a whole profile would land work in repos
-// whose owner only ever asked for parallel tickets.
+// No profile derives a mode: every repo works on the branch the user is
+// already standing on (`trunk`). Cutting branches and diverting to worktrees
+// is something a run *asks for* — `--mode` on `ensure`/autopilot, which is
+// what `foreman` passes for a parallel batch — never something a repo gets by
+// having (or not having) a config file. A tool that silently moves the user
+// off their branch is a tool they cannot manage.
 //
-// `startup` and `enterprise` default to `worktree` because parallel tickets are
-// the normal shape and the two halves are one decision: worktrees keep the
-// primary checkout pinned to `base_branch`, which is the only state in which
-// `serve` can compose a finished batch for review — `land: local`'s
-// human-QA-before-PR checkpoint. Under `mode: branch` the first ticket cuts in
-// place, the primary leaves base, and every compose BLOCKs. The cost is real
-// (a commit + `merge-base` per test iteration instead of edit-and-refresh); a
-// repo that runs one ticket at a time buys the 0-step loop back with an
-// explicit `mode: branch` + `land: pr`.
-//
-// `pet` stays on `trunk`: it answers "mistakes are cheap, no ceremony", and
-// separable parallel tickets is the request that means a repo has outgrown it.
-// It is also what an unconfigured repo resolves to — no config should read as
-// no ceremony, the same as running plain git in a repo nobody set up.
+// `auto_land` is likewise opt-in per repo: it is the one key that moves the
+// local base branch with nobody watching.
 
 type gitFlowPolicy struct {
 	Profile      string // pet | startup | enterprise
@@ -53,10 +41,12 @@ type gitFlowPolicy struct {
 	ReviewEffort string // low | medium | high
 }
 
+// A profile only sets the cost-of-a-mistake dials. The git shape is not one of
+// them — see gitFlowFrom, which presets it identically for all three.
 var gitFlowProfiles = map[string]gitFlowPolicy{
-	"pet":        {Mode: "trunk", Land: "none", AutoLand: "false", Push: "true", Rigor: "smoke", ReviewEffort: "low"},
-	"startup":    {Mode: "worktree", Land: "local", AutoLand: "false", Push: "true", Rigor: "standard", ReviewEffort: "medium"},
-	"enterprise": {Mode: "worktree", Land: "local", AutoLand: "false", Push: "true", Rigor: "strict", ReviewEffort: "high"},
+	"pet":        {Land: "none", Rigor: "smoke", ReviewEffort: "low"},
+	"startup":    {Land: "pr", Rigor: "standard", ReviewEffort: "medium"},
+	"enterprise": {Land: "pr", Rigor: "strict", ReviewEffort: "high"},
 }
 
 // gitFlowAliases keeps repos configured with the four pre-profile names
@@ -89,12 +79,9 @@ func gitFlowFrom(content, base string) (gitFlowPolicy, error) {
 	name := gfScalar(content, "profile")
 	aliasMode, aliasLand := "", ""
 	if name == "" {
-		// Unconfigured means "behave like a plain git repo": work lands on the
-		// branch the user is already standing on, nothing is cut, nothing is
-		// composed. That is `pet`. A repo earns branches, worktrees and review
-		// venues by asking for them in setup-project — never by default.
-		// Explicit keys still win below, so a pre-`profile:` config that spells
-		// out `mode:`/`land:`/`ticket_branch:` keeps the shape it wrote down.
+		// Unconfigured means "behave like a plain git repo": no PR venue, smoke
+		// QA, work on the current branch. Explicit keys still win below, so a
+		// pre-`profile:` config keeps the shape it wrote down.
 		name = "pet"
 	} else if a, ok := gitFlowAliases[name]; ok {
 		name, aliasMode, aliasLand = a.profile, a.mode, a.land
@@ -105,17 +92,17 @@ func gitFlowFrom(content, base string) (gitFlowPolicy, error) {
 	}
 	p.Profile = name
 	p.BaseBranch = base
+	// The git shape every profile shares, stated once: stay on the branch the
+	// user is standing on, push it, never move the local base unattended. Only
+	// a legacy alias or an explicit key below changes it.
+	p.Mode, p.Push, p.AutoLand = "trunk", "true", "false"
 	if aliasMode != "" {
 		p.Mode = aliasMode
 	}
 	if aliasLand != "" {
 		p.Land = aliasLand
 	}
-
-	// Explicit keys always win over the profile preset.
-	if m := gfScalar(content, "mode"); m != "" {
-		p.Mode = m
-	} else if aliasMode == "" {
+	if aliasMode == "" && gfScalar(content, "mode") == "" {
 		switch gfScalar(content, "ticket_branch") { // legacy alias for mode
 		case "optional":
 			p.Mode = "trunk"
@@ -123,59 +110,23 @@ func gitFlowFrom(content, base string) (gitFlowPolicy, error) {
 			p.Mode = "branch"
 		}
 	}
-	landSet := gfScalar(content, "land")
-	if landSet != "" {
-		p.Land = landSet
-	}
-	if v := gfScalar(content, "push"); v != "" {
-		p.Push = v
-	}
-	if v := gfScalar(content, "auto_land"); v != "" {
-		p.AutoLand = v
-	}
 
-	switch p.Mode {
-	case "trunk", "branch", "worktree":
-	default:
-		return p, fmt.Errorf("invalid mode '%s' in .babysit/git-flow.yaml (trunk|branch|worktree)", p.Mode)
-	}
-	switch p.Land {
-	case "none", "local", "pr":
-	default:
-		return p, fmt.Errorf("invalid land '%s' in .babysit/git-flow.yaml (none|local|pr)", p.Land)
-	}
-	switch p.Push {
-	case "true", "false":
-	default:
-		return p, fmt.Errorf("invalid push '%s' in .babysit/git-flow.yaml (true|false)", p.Push)
-	}
-	switch p.AutoLand {
-	case "true", "false":
-	default:
-		return p, fmt.Errorf("invalid auto_land '%s' in .babysit/git-flow.yaml (true|false)", p.AutoLand)
-	}
-	// `pr` names a landing venue that is not this machine. Auto-merging into the
-	// local base under it would land work the profile said a PR must gate, so the
-	// two keys cannot both be honoured and guessing which was meant would be
-	// wrong. `none` and `local` both end on the base branch, so both accept it.
-	if p.AutoLand == "true" && p.Land == "pr" {
-		return p, fmt.Errorf("incoherent .babysit/git-flow.yaml: auto_land 'true' with land 'pr' — a PR is the landing venue, so nothing may merge into local '%s' behind it. Use 'land: local' to review composed work on this machine, or drop auto_land", p.BaseBranch)
-	}
-	// `branch` + `local` reads as configured and can never run: the first
-	// ticket cuts in place, the primary leaves base_branch, and every compose
-	// BLOCKs with "primary checkout is on 'feat/…', not base".
-	//
-	// A lone `mode: branch` — the solo-loop opt-out, and every repo configured
-	// before `land: local` became a preset — means "one ticket at a time", and
-	// the landing that shape has always implied is a PR per ticket. Derive it
-	// rather than making a file that used to resolve stop resolving. Only a
-	// human who wrote *both* halves gets the error, because there the two keys
-	// contradict each other and guessing which one was meant would be wrong.
-	if p.Mode == "branch" && p.Land == "local" {
-		if landSet == "" {
-			p.Land = "pr"
-		} else {
-			return p, fmt.Errorf("incoherent .babysit/git-flow.yaml: mode 'branch' with land 'local' — a branch cut in place takes the primary checkout off '%s', so nothing can compose there. Use 'land: pr' for per-ticket PRs, or drop 'mode: branch' to keep the profile's worktree default", p.BaseBranch)
+	// Explicit keys always win over the profile preset, and each is validated
+	// against its enum as it is read — one rule per key, in one place.
+	for _, k := range []struct {
+		key, allowed string
+		dst          *string
+	}{
+		{"mode", "trunk|branch|worktree", &p.Mode},
+		{"land", "none|local|pr", &p.Land},
+		{"push", "true|false", &p.Push},
+		{"auto_land", "true|false", &p.AutoLand},
+	} {
+		if v := gfScalar(content, k.key); v != "" {
+			*k.dst = v
+		}
+		if !slices.Contains(strings.Split(k.allowed, "|"), *k.dst) {
+			return p, fmt.Errorf("invalid %s '%s' in .babysit/git-flow.yaml (%s)", k.key, *k.dst, k.allowed)
 		}
 	}
 	return p, nil

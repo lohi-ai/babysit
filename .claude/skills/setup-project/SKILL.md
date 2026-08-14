@@ -16,20 +16,16 @@ Set up only the config the repo needs. Re-running should be safe.
   commands (package scripts, compose, Makefile), app URL hints.
 - Ask **one** question: **what does a mistake cost in this repo?** (see `references/git-flow.md § Profiles`) — the answer is the profile; never ask about `mode`/`land`/`push`/rigor directly:
   - A pet project — ship now, mistakes are cheap → `pet`: work lands on `base_branch`, no PR, smoke QA.
-  - Client or small-team work — release speed matters more than polish → `startup`: a worktree per ticket off `develop`, the finished batch composed on local `develop` for human QA, then a PR each, standard QA.
+  - Client or small-team work — release speed matters more than polish → `startup`: tickets off `develop`, a PR each, standard QA.
   - A team or enterprise codebase — code quality outranks release speed → `enterprise`: the same shape plus a `staging` environment and strict QA, with code review on GitHub by someone else.
-  Unsure, hedging, or trying babysit for the first time → `startup`. It's the safe first answer: a ticket's work stays in its own worktree, the finished batch only reaches `base_branch` once you've composed and reviewed it in the browser, and nothing reaches the remote without a PR. Say that it's a one-line switch later rather than interrogating them further. Note that this is a real change: an unconfigured repo resolves to `pet` — no branch, no review venue — so writing a profile is what buys any ceremony at all.
-  Write `profile:` and `base_branch:` into `git-flow.yaml` and nothing else — a knob written out by hand is a knob that stops tracking its profile. Add `push:` only when the human asks for something the profile doesn't give them; `mode:`/`land:` stay unwritten unless the second question below says otherwise.
+  Unsure, hedging, or trying babysit for the first time → `startup`: nothing reaches the remote without a PR, and it's a one-line switch later. The profile buys a review venue and QA rigor — it never changes where you work: under every profile babysit works on the branch you are standing on, and worktrees happen only when `foreman` or an explicit `--mode=worktree` asks for them.
+  Write `profile:` and `base_branch:` into `git-flow.yaml` and nothing else — a knob written out by hand is a knob that stops tracking its profile. Add `push:` only when the human asks for something the profile doesn't give them; `mode:`/`land:` stay unwritten.
 - **`base_branch` follows the profile's branch topology** (`references/git-flow.md § Profiles`): `pet` → `main`; `startup`/`enterprise` → `develop`, so *integrated* and *shipped* are two events and `main` stays releasable. Detect before asking — if `origin/develop` exists, write it and say nothing. Ask only when the profile is `startup`/`enterprise` **and** there is no `develop` on the remote: **does every merge to `main` deploy, or do you cut releases?**
   - **Cut releases** (recommended) → have them create it first (`git switch -c develop main && git push -u origin develop`), then write `base_branch: develop`. Don't create the branch yourself — it changes the repo's shape and their host may need branch rules on it.
   - **Every merge deploys** → write the detected default branch and say plainly that the local compose is now the last gate before release.
   Never invent a `base_branch` that doesn't exist on the remote: the first `ensure` would find no `origin/<base>` and silently fork from local base instead.
-- Then ask **one** follow-up, and only on `startup`/`enterprise`: **do you run several tickets at once, or one at a time?** Parallel is the default and needs no keys — ask it as that outcome, never as "do you want `mode: worktree`".
-  - **Several at once** (default) → write neither key. The profile derives `mode: worktree` + `land: local`: each ticket gets its own worktree, the primary checkout stays pinned to `base_branch` as the shared dev server, and bare `bbs ticket serve` composes the finished batch (qa + review-pr `DONE`) there for human QA before any PR. Nothing is pushed — `bbs ticket reset-base` discards the pile and ticket branches stay the source of truth. Say the cost out loud: every test iteration needs a commit + `bbs ticket merge-base` instead of an edit-and-refresh.
-  - **One at a time** → write `mode: branch`, which derives `land: pr`. Tickets cut `feat/…` in place from a clean base, the inner loop stays 0-step, and each goes straight to its own PR with no composed checkpoint.
-  **Never write `land: local` next to `mode: branch`.** That pair is a resolve-time error — a branch cut in place takes the primary off `base_branch`, so every compose (`serve`/`switch`) could only BLOCK with *"primary checkout is on 'feat/…', not base"*.
-- Re-run on a configured repo = switch: read `profile:`, `base_branch:`, and the `mode:`/`land:` pair from `git-flow.yaml`, ask the questions with the current answers marked as current, and on change rewrite only the keys that changed, then walk the user through the transition steps (`references/git-flow.md § Profiles`, "Switching"). Into `mode: worktree` the primary checkout must end clean on `base_branch` first; out of it, in-flight worktrees must be finished or parked (`bbs ticket board`) and any qa-lease released. A `base_branch` change needs the new branch pushed to origin first. Leave `qa.yaml`, `.env`, and the landing doc untouched unless they're missing.
-- Parallelism is the default, not a feature to sell: on `startup`/`enterprise` the profile already derives worktrees, so the follow-up above only ever writes keys for the *one-at-a-time* answer. `foreman` requests worktrees per dispatch regardless of config, so a `pet` repo can still run a batch without changing anything.
+- There is no second git-flow question. Parallelism is requested per run, not configured: `foreman` (and `--mode=worktree` on autopilot) gives a batch one worktree per ticket in any repo, whatever the profile — see `references/worktrees.md`. Mention it only if the human asks about running several tickets at once.
+- Re-run on a configured repo = switch: read `profile:` and `base_branch:` from `git-flow.yaml`, ask the question with the current answer marked as current, and on change rewrite only the keys that changed. A `base_branch` change needs the new branch pushed to origin first. Leave `qa.yaml`, `.env`, and the landing doc untouched unless they're missing.
 - Prefer the simple top-level `qa.yaml` shape with a localhost `url`; hosted
   URLs are secondary, never a substitute for local QA. If the project cannot
   run locally, record the blocker and closest harness in the landing doc.
@@ -55,12 +51,11 @@ Prefer this committed shape:
 # .babysit/git-flow.yaml — see references/git-flow.md § Profiles
 profile: startup      # pet | startup | enterprise
 base_branch: develop  # pet → main; startup/enterprise → develop
-# Only when the human runs one ticket at a time (derives land: pr):
-# mode: branch        # cut feat/… in place, 0-step inner loop
 ```
-Check what that derives before finishing: `bbs autopilot git-flow`. Without the
-key it must print `BBS_MODE='worktree'` and `BBS_LAND='local'`; with it,
-`'branch'` and `'pr'`. Anything else means a stray hand-written key.
+Check what that derives before finishing: `bbs autopilot git-flow`. It must
+print `BBS_MODE='trunk'` (every profile works on the current branch) and
+`BBS_LAND='pr'` — `'none'` under `pet`. Anything else means a stray
+hand-written key.
 ```yaml
 # .babysit/qa.yaml
 version: 1
