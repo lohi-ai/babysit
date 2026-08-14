@@ -25,9 +25,9 @@ and pick "client or small-team work".
 
 The PR is always cut from the **ticket branch** and targets `$BBS_BASE_BRANCH`.
 
-- **branch** (default) — the current branch is the ticket branch; push it and open the PR.
+- **trunk** (the default — babysit cut nothing) — the branch the human is on *is* the PR source: push it and open the PR. Two stops: if that branch is `$BBS_BASE_BRANCH` there is nothing to PR (`BLOCKED`, naming `git switch -c <branch>` as the fix), and if it is a shared branch carrying other tickets' work, say so in the PR body rather than pretending the diff is one ticket's.
+- **branch** — the current branch is the ticket branch; push it and open the PR.
 - **worktree** — the ticket branch lives in a worktree and the base checkout carries throwaway `merge-base` integration merges. Run from the worktree (`bbs ticket resolve` gives the path); never push the base checkout, or those merges leak into the PR.
-- **trunk** — work rides a shared branch that bundles other tickets, so there is no per-ticket branch to PR. Stop with `BLOCKED`: trunk mode lands on the shared branch, not via a bundled PR.
 ## Compose PR (multiple tickets, one PR)
 When the human reviewed a composed surface (worktree mode, `bbs ticket switch <t1> <t2> …`) and wants the set to land together: cut `compose/<date>` from `origin/<base_branch>`, `git merge --no-edit` each ticket branch in (a conflict → `BLOCKED` naming the pair; resolve on the ticket branch, not the compose branch), push it, and open one PR whose body lists every ticket with its evidence per step 2. Never push the base checkout itself — the compose branch reproduces the same merges on a PR-able branch. Run `set-pointer pr <url>` for each member ticket.
 ## Rules

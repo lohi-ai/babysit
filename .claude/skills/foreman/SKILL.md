@@ -203,7 +203,9 @@ Dispatch with `--mode=worktree` on the autopilot invocation. No git-flow
 profile defaults to worktrees — they cost a commit + `merge-base` per test
 iteration and buy only parallelism, which is exactly what a batch needs and a
 serial ticket doesn't. Parallelism is foreman's to request, per dispatch;
-rigor stays whatever the repo's profile says.
+rigor stays whatever the repo's profile says. The machinery that shape brings
+with it — `merge-base`, the qa-lease, `switch`/`serve`, `auto_land` — is
+[references/worktrees.md](../references/worktrees.md).
 
 **Every worker is a todo** — the task list is the user's live board and must
 mirror reality. If you are running on an agent with no task tool, skip this
@@ -462,7 +464,10 @@ vanishes mid-look). The NEXT is: review the running base, then push it.
 shared dev server for combined review; ticket branches stay the source of
 truth, `reset-base` discards the pile. The aggregate NEXT offers
 `/bbs:create-pr <t>` per ticket or one compose PR (create-pr § Compose PR).
-`pr` → skip composing; NEXT is per-ticket `/bbs:create-pr`. `none` (a pet
+`pr` (the `startup`/`enterprise` default) → NEXT is per-ticket
+`/bbs:create-pr`; that skips the composed *checkpoint*, not local review — for
+UI work offer `bbs ticket serve <t…>` → browser → `serve --release` first.
+`none` (a pet
 project) → there are no PRs: compose with bare `serve` for one look, then the
 NEXT is landing the branches on `$BBS_BASE_BRANCH` — say so plainly rather
 than pointing at `create-pr`, which BLOCKs under this policy.

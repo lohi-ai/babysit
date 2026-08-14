@@ -117,8 +117,9 @@ func runEnsure(args []string) {
 		os.Exit(2)
 	}
 
-	// Git-flow mode: --mode > the repo's derived policy (gitflow.go owns the
-	// profile → mode derivation and the legacy ticket_branch alias).
+	// Git-flow mode: --mode > the repo's policy. Both are already enum-checked
+	// — modeFlag above, policy.Mode inside gitFlowFrom (whose error exits here)
+	// — so there is nothing left to validate.
 	policy, gfErr := resolveGitFlow("")
 	if gfErr != nil {
 		fmt.Fprintf(os.Stderr, "ensure: %v\n", gfErr)
@@ -127,12 +128,6 @@ func runEnsure(args []string) {
 	gfMode := modeFlag
 	if gfMode == "" {
 		gfMode = policy.Mode
-	}
-	switch gfMode {
-	case "trunk", "branch", "worktree":
-	default:
-		fmt.Fprintf(os.Stderr, "ensure: invalid mode '%s' in .babysit/git-flow.yaml (trunk|branch|worktree)\n", gfMode)
-		os.Exit(2)
 	}
 	if forceNoBranch {
 		gfMode = "trunk"

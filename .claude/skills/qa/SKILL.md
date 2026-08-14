@@ -34,23 +34,21 @@ Exercise the application like a user and leave reproducible evidence.
    `NEEDS_CONTEXT` only when neither docs nor conversation can name a single
    intended behavior to verify.
 2. Boot or probe the local target first; hosted URLs only when local run is
-   impossible and the reason is recorded. QA the current checkout as-is —
-   landing a worktree branch onto a shared surface is the autopilot
-   workflow's concern (`../references/git-flow.md` § QA loop). The dev
-   server lives in the repo's **primary checkout only** — never npm-install
-   or boot a server inside a ticket worktree (one heavy tree per repo); if
-   the local target is down and can't be started there, that's the recorded
-   blocker. Server prep: when `QA_ENV_PREPARE` is set (qa.yaml `prepare:`,
-   idempotent install + migrate), run it in the serving checkout after the
-   change lands, before probing. When leaving a shared surface (worktree
-   mode) and the ticket's diff added DB migrations, run `QA_ENV_REVERT`
-   (`revert:`) before releasing the qa-lease — reset-base drops the code
-   but not the schema. Before
-   trusting any surface, confirm it actually serves the change (probe a
-   marker from the diff); if not, name the stale surface rather than testing
-   blind. Fixes edit the files in the checkout under test — committing and
-   landing them, like branching, stays the invoking workflow's job —
-   re-verify on the updated surface.
+   impossible and the reason is recorded. **QA the current checkout as-is** —
+   normally the branch the user is already on, whose dev server is the one
+   running: nothing to land, lease or compose. If the local target is down
+   and can't be started here, that's the recorded blocker. Server prep: when
+   `QA_ENV_PREPARE` is set (qa.yaml `prepare:`, idempotent install +
+   migrate), run it before probing. Before trusting any surface, confirm it
+   actually serves the change (probe a marker from the diff); if not, name
+   the stale surface rather than testing blind. Fixes edit the files in the
+   checkout under test — committing and landing them, like branching, stays
+   the invoking workflow's job — re-verify on the updated surface.
+   Running inside a ticket worktree (`--mode=worktree`, a foreman batch) is
+   the exception: the dev server lives in the repo's **primary checkout
+   only** (one heavy tree per repo — never npm-install or boot a server in a
+   worktree), so landing, the qa-lease, and `QA_ENV_REVERT` before releasing
+   it all apply — see `../references/worktrees.md § QA loop`.
 3. Code-level checks (tests, typecheck, lint) first — they gate, they don't
    prove.
 4. Size the matrix to the repo's rigor: `eval "$(bbs autopilot git-flow)"` →
@@ -115,7 +113,7 @@ that URL in the handoff's `NEXT` — the human's review is a browser look, so
 handing back a live URL plus the screenshots below collapses "QA browses,
 releases, human re-serves and browses again" into one. Under `strict` the
 review happens on GitHub: release the surface before handing off and let the
-evidence travel in the PR body. Exception: under `$BBS_MODE=worktree` always
+evidence travel in the PR body. Exception: in a ticket worktree always
 release, lease included — the surface is shared, and composing the batch for
 review is `serve`'s job, not a QA session's.
 ## Coverage rubric

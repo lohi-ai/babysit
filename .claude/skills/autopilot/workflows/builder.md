@@ -34,20 +34,17 @@ If none match and there is no ticket/requirement, stop with `NEEDS_CONTEXT`.
    BASE=$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's|^origin/||')
    [ -n "$BASE" ] || for b in main master; do git show-ref -q --verify "refs/heads/$b" && BASE=$b && break; done
    mkdir -p "$TOP/.babysit"
-   printf 'profile: startup\nbase_branch: %s\nmode: branch\nland: pr\n' "${BASE:-main}" \
+   printf 'profile: startup\nbase_branch: %s\n' "${BASE:-main}" \
      > "$TOP/.babysit/git-flow.yaml"
    # every profile presets push: true — a repo with no remote must say so
    git remote get-url origin >/dev/null 2>&1 || echo 'push: false' >> "$TOP/.babysit/git-flow.yaml"
    ```
-   `startup` is the safe guess: standard rigor, nothing lands unreviewed. The
-   `mode`/`land` pair is the solo-loop opt-out, written explicitly because a
-   bootstrap is by definition one ticket in a repo nobody has configured —
-   `startup`'s worktree default would drop a first-time run into the
-   commit + `merge-base` loop it never asked for. Both keys or neither:
-   `mode: branch` alone leaves `land: local` and fails to resolve. The
-   profile is a speed↔quality call the human owns, so name what was seeded
-   and point at `/bbs:setup-project` to change it — including dropping this
-   pair once they run tickets in parallel.
+   `startup` is the safe guess: standard rigor, a PR before anything lands.
+   Seed those two keys and nothing else — no `mode:`, so the run stays on the
+   branch the human was standing on, which is the only shape a repo nobody
+   configured can be assumed to want. The profile is a speed↔quality call the
+   human owns, so name what was seeded and point at `/bbs:setup-project` to
+   change it.
    Record the seeded defaults in the handoff and recommend
    `/bbs:setup-project` for the QA harness (`qa.yaml`, credentials) — that
    part is not guessable. `state_landing_doc=0` (no CLAUDE.md or AGENTS.md)
@@ -68,11 +65,12 @@ If none match and there is no ticket/requirement, stop with `NEEDS_CONTEXT`.
    verdict with `bbs ticket set-verdict --skill review-pr` — the push gate
    reads it. (Skip in verify mode.)
 6. Run `qa` against the requirement's acceptance criteria, the plan's
-   `**Verify:**` line, and the implement handoff — not just the diff. QA needs
-   the change on the served surface first: in-place checkouts QA directly; a
-   worktree change lands via `bbs ticket merge-base` before QA. When other
-   tickets are in flight on the same repo (worktree mode, or `qa-lease
-   status` isn't FREE), hold the surface for the whole QA session:
+   `**Verify:**` line, and the implement handoff — not just the diff. Default
+   (no `--mode`): the change is on the branch this checkout already serves, so
+   QA runs directly — nothing to land, no lease. A worktree run lands first:
+   `bbs ticket merge-base` before QA. When other tickets are in flight on the
+   same repo (or `qa-lease status` isn't FREE), hold the surface for the whole
+   QA session:
    `bbs ticket qa-lease acquire` → `bbs ticket switch $TICKET` (surface =
    base + exactly this ticket) → QA → `qa-lease release`. If
    `merge-base` BLOCKs because a diverted primary isn't on base, QA in the
@@ -95,7 +93,7 @@ If none match and there is no ticket/requirement, stop with `NEEDS_CONTEXT`.
    copy-paste command — in worktree mode that is
    `bbs ticket serve <ticket>` (puts the ticket, and its siblings
    cross-repo, on the served surface for human browser review; see
-   git-flow.md § Attended parallel review), then `create-pr` per repo
+   worktrees.md § Attended parallel review), then `create-pr` per repo
    after approval. Confirm clean state first: no debug leftovers,
    nothing uncommitted, checkpoint current.
 ### Sub-ticket branch shape

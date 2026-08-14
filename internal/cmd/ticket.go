@@ -150,9 +150,9 @@ const ticketUsageText = `usage: bbs-ticket <subcommand> [args...]
 
 Subcommands:
   ensure            idempotent: no-op on ticket branch, else cut one + init
-                    mode trunk|branch|worktree (--mode > the profile-derived
-                    mode; see bbs autopilot git-flow):
-                    trunk = no cut; branch = in-place from clean base else
+                    mode trunk|branch|worktree (trunk unless --mode or an
+                    explicit mode: key says otherwise — no profile derives
+                    one): trunk = no cut; branch = in-place from clean base else
                     worktree divert; worktree = always divert, primary stays
                     on base; diverts print WORKTREE=<path>; developer role
                     asks before in-place — exit 3; --cut-branch/--no-branch
@@ -192,6 +192,11 @@ Subcommands:
   evidence-status --kind K       print {none|valid|malformed}
   qa-evidence                    audit qa verdict body: {none|ok|contradiction:<d>|thin:<d>|unexplained}
   append-history --event E [--actor A] [--extra-json JSON]
+
+Only for runs that cut something (--mode=branch|worktree, e.g. a foreman
+batch). In the default trunk mode the work is already on the branch you are
+standing on, so none of the next seven apply:
+
   merge-base [--base BRANCH]     from a ticket worktree: merge the ticket branch
                                  into the primary checkout (dev-server tree);
                                  BLOCKs on dirty/diverged state or conflict
@@ -220,6 +225,7 @@ Subcommands:
                                  + review-pr DONE, no override; never pushes.
                                  Opt in per repo with auto_land: true so a
                                  foreman lands a worker as it finishes
+
   board [--all] [--pr]           read-only ticket board: status, branch, qa/
                                  review verdicts, session, PR, qa-lease, serving
   path <kind> [selectors] --read|--write   resolve a ticket file path (canonical → legacy)

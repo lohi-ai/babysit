@@ -62,6 +62,58 @@ func mergeFailure(dir, gitSaid string) (conflicted bool, detail string) {
 
 func insideWorkTree() bool { return gitOK("rev-parse", "--is-inside-work-tree") }
 
+// baseOpsPrimary resolves the primary checkout that reset-base/switch/serve/land
+// all mutate, behind the two guards they all need first. It prints the reason
+// and returns "" when there is nothing to work on, so every caller is one
+// `if primary == "" { return 2 }`.
+func baseOpsPrimary(cmd string) string {
+	if !haveGit() {
+		fmt.Fprintf(os.Stderr, "%s: git not found\n", cmd)
+		return ""
+	}
+	if !insideWorkTree() {
+		fmt.Fprintf(os.Stderr, "%s: not in a git work tree\n", cmd)
+		return ""
+	}
+	if p := gitPrimary(); p != "" {
+		return p
+	}
+	return gitOut("rev-parse", "--show-toplevel")
+}
+
+// parseTicketsAndBase is the argument contract switch and land share: bare
+// words are ticket ids, --base overrides the resolved base, anything else is a
+// typo worth refusing. ok=false means the reason is already on stderr.
+func parseTicketsAndBase(cmd string, args []string) (tickets []string, base string, ok bool) {
+	for i := 0; i < len(args); i++ {
+		switch {
+		case args[i] == "--base":
+			base, i = valueAt(args, i), i+1
+		case strings.HasPrefix(args[i], "-"):
+			fmt.Fprintf(os.Stderr, "%s: unknown flag '%s'\n", cmd, args[i])
+			return nil, "", false
+		default:
+			tickets = append(tickets, args[i])
+		}
+	}
+	return tickets, base, true
+}
+
+// ticketBranch finds the local branch a ticket was cut on. Under the default
+// trunk mode there is none — babysit cut nothing — so the miss is the common
+// case, and it prints the BLOCK that says so before returning "".
+func ticketBranch(t string) string {
+	for _, ln := range strings.Split(gitOut("for-each-ref", "--format=%(refname:short)", "refs/heads/*/"+t+"_*"), "\n") {
+		if ln != "" {
+			return ln
+		}
+	}
+	fmt.Fprintln(os.Stderr, "STATUS: BLOCKED")
+	fmt.Fprintf(os.Stderr, "REASON: no local branch matches '*/%s_*' — unknown ticket or branch never cut.\n", t)
+	fmt.Fprintln(os.Stderr, retarget("RECOMMENDATION: check the id (bbs-ticket session list), or run ensure for it first."))
+	return ""
+}
+
 func haveGit() bool {
 	_, err := exec.LookPath("git")
 	return err == nil
@@ -680,17 +732,9 @@ func resetBase(args []string) int {
 			quiet = true
 		}
 	}
-	if !haveGit() {
-		fmt.Fprintln(os.Stderr, "reset-base: git not found")
-		return 2
-	}
-	if !insideWorkTree() {
-		fmt.Fprintln(os.Stderr, "reset-base: not in a git work tree")
-		return 2
-	}
-	primary := gitPrimary()
+	primary := baseOpsPrimary("reset-base")
 	if primary == "" {
-		primary = gitOut("rev-parse", "--show-toplevel")
+		return 2
 	}
 	if base == "" {
 		base = baseBranchIn(primary)
@@ -775,51 +819,25 @@ func resetBase(args []string) int {
 func runSwitch(args []string) { os.Exit(switchSurface(args)) }
 
 func switchSurface(args []string) int {
-	base := ""
-	var tickets []string
-	for i := 0; i < len(args); i++ {
-		switch {
-		case args[i] == "--base":
-			base, i = valueAt(args, i), i+1
-		case strings.HasPrefix(args[i], "-"):
-			fmt.Fprintf(os.Stderr, "switch: unknown flag '%s'\n", args[i])
-			return 2
-		default:
-			tickets = append(tickets, args[i])
-		}
+	tickets, base, ok := parseTicketsAndBase("switch", args)
+	if !ok {
+		return 2
 	}
 	if len(tickets) == 0 {
 		fmt.Fprintln(os.Stderr, retarget("usage: bbs-ticket switch <ticket> [<ticket>...] [--base BRANCH]"))
 		return 2
 	}
-	if !haveGit() {
-		fmt.Fprintln(os.Stderr, "switch: git not found")
-		return 2
-	}
-	if !insideWorkTree() {
-		fmt.Fprintln(os.Stderr, "switch: not in a git work tree")
-		return 2
-	}
-	primary := gitPrimary()
+	primary := baseOpsPrimary("switch")
 	if primary == "" {
-		primary = gitOut("rev-parse", "--show-toplevel")
+		return 2
 	}
 	env := identity.Resolve()
 	gitdir := gitCOut(primary, "rev-parse", "--absolute-git-dir")
 	// Resolve every ticket to a branch before touching anything.
 	var branches []string
 	for _, t := range tickets {
-		b := ""
-		for _, ln := range strings.Split(gitOut("for-each-ref", "--format=%(refname:short)", "refs/heads/*/"+t+"_*"), "\n") {
-			if ln != "" {
-				b = ln
-				break
-			}
-		}
+		b := ticketBranch(t)
 		if b == "" {
-			fmt.Fprintln(os.Stderr, "STATUS: BLOCKED")
-			fmt.Fprintf(os.Stderr, "REASON: no local branch matches '*/%s_*' — unknown ticket or branch never cut.\n", t)
-			fmt.Fprintln(os.Stderr, retarget("RECOMMENDATION: check the id (bbs-ticket session list), or run ensure for it first."))
 			return 2
 		}
 		branches = append(branches, b)
@@ -887,17 +905,9 @@ func runServe(args []string) {
 			tickets = append(tickets, args[i])
 		}
 	}
-	if !haveGit() {
-		fmt.Fprintln(os.Stderr, "serve: git not found")
-		os.Exit(2)
-	}
-	if !insideWorkTree() {
-		fmt.Fprintln(os.Stderr, "serve: not in a git work tree")
-		os.Exit(2)
-	}
-	primary := gitPrimary()
+	primary := baseOpsPrimary("serve")
 	if primary == "" {
-		primary = gitOut("rev-parse", "--show-toplevel")
+		os.Exit(2)
 	}
 	repo := filepath.Base(primary)
 	gitdir := gitCOut(primary, "rev-parse", "--absolute-git-dir")
@@ -1154,25 +1164,12 @@ func runLand(args []string) { os.Exit(landTickets(args)) }
 // guard stays quiet precisely because they do — but it means a landed base is
 // only durable once pushed. Hence the closing note on stdout.
 func landTickets(args []string) int {
-	base := ""
-	var tickets []string
-	for i := 0; i < len(args); i++ {
-		switch {
-		case args[i] == "--base":
-			base, i = valueAt(args, i), i+1
-		case strings.HasPrefix(args[i], "-"):
-			fmt.Fprintf(os.Stderr, "land: unknown flag '%s'\n", args[i])
-			return 2
-		default:
-			tickets = append(tickets, args[i])
-		}
-	}
-	if !haveGit() {
-		fmt.Fprintln(os.Stderr, "land: git not found")
+	tickets, base, ok := parseTicketsAndBase("land", args)
+	if !ok {
 		return 2
 	}
-	if !insideWorkTree() {
-		fmt.Fprintln(os.Stderr, "land: not in a git work tree")
+	primary := baseOpsPrimary("land")
+	if primary == "" {
 		return 2
 	}
 	env := identity.Resolve()
@@ -1182,10 +1179,6 @@ func landTickets(args []string) int {
 			return 2
 		}
 		tickets = []string{env.Ticket}
-	}
-	primary := gitPrimary()
-	if primary == "" {
-		primary = gitOut("rev-parse", "--show-toplevel")
 	}
 	if base == "" {
 		base = baseBranchIn(primary)
@@ -1197,17 +1190,8 @@ func landTickets(args []string) int {
 	type row struct{ ticket, branch string }
 	var rows []row
 	for _, t := range tickets {
-		b := ""
-		for _, ln := range strings.Split(gitOut("for-each-ref", "--format=%(refname:short)", "refs/heads/*/"+t+"_*"), "\n") {
-			if ln != "" {
-				b = ln
-				break
-			}
-		}
+		b := ticketBranch(t)
 		if b == "" {
-			fmt.Fprintln(os.Stderr, "STATUS: BLOCKED")
-			fmt.Fprintf(os.Stderr, "REASON: no local branch matches '*/%s_*' — unknown ticket or branch never cut.\n", t)
-			fmt.Fprintln(os.Stderr, retarget("RECOMMENDATION: check the id (bbs-ticket session list), or run ensure for it first."))
 			return 2
 		}
 		var missing []string
