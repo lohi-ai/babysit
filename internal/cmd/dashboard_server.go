@@ -13,10 +13,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/reallongnguyen/babysit/internal/cmux"
 	"github.com/reallongnguyen/babysit/internal/dashboard"
 	"github.com/reallongnguyen/babysit/internal/foreman"
 	"github.com/reallongnguyen/babysit/internal/identity"
+	"github.com/reallongnguyen/babysit/internal/orca"
 	"github.com/reallongnguyen/babysit/internal/ticket"
 )
 
@@ -519,7 +519,7 @@ func (s *dashServer) handleSpawnForeman(w http.ResponseWriter, r *http.Request) 
 	}
 	id, err := spawnForeman(req.ID, req.Dir, req.Command, req.Agent)
 	if err != nil {
-		// Spawn failures are the human's to read: cmux missing, token denied,
+		// Spawn failures are the human's to read: Orca missing, app closed,
 		// id already registered. All of them are 400-class — the server is
 		// fine, the request cannot be satisfied as asked.
 		writeErr(w, http.StatusBadRequest, err.Error())
@@ -529,7 +529,7 @@ func (s *dashServer) handleSpawnForeman(w http.ResponseWriter, r *http.Request) 
 }
 
 type retireReq struct {
-	// KeepWorkspace leaves the cmux pane open. Default false matches the CLI:
+	// KeepWorkspace leaves the Orca terminal open. Default false matches the CLI:
 	// retiring is normally how you clear a foreman that is already gone, and
 	// leaving its pane behind is the thing that made it confusing.
 	KeepWorkspace bool `json:"keep_workspace"`
@@ -560,7 +560,7 @@ func (s *dashServer) handleRetireForeman(w http.ResponseWriter, r *http.Request)
 	}
 	msg, err := retireForeman(id, req.KeepWorkspace)
 	if err != nil {
-		// Same 400-class reasoning as spawn: an unknown id or a cmux close that
+		// Same 400-class reasoning as spawn: an unknown id or an Orca close that
 		// was refused is the request's problem, not the server's.
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
@@ -571,7 +571,7 @@ func (s *dashServer) handleRetireForeman(w http.ResponseWriter, r *http.Request)
 // wakeResult is what the UI shows next to an assignment: whether the poke
 // landed, and if not, whose problem it is.
 type wakeResult struct {
-	state  string // sent | unreachable | cmux-unavailable | unknown-foreman
+	state  string // sent | unreachable | orca-unavailable | unknown-foreman
 	detail string
 }
 
@@ -586,7 +586,7 @@ func (s *dashServer) wakeAssignee(st *ticket.Store, msg string) {
 	s.wake(id, msg)
 }
 
-// wake pokes a foreman's cmux workspace with the same input channel a human
+// wake pokes a foreman's Orca terminal with the same input channel a human
 // types into. It never fails the assignment: the assignment is already on disk
 // and the foreman re-derives its inbox from the tickets on the next tick, so a
 // failed poke is a latency problem, not a correctness one.
@@ -597,31 +597,30 @@ func (s *dashServer) wakeAssignee(st *ticket.Store, msg string) {
 // protocol the message assumes the receiver is following. Callers pass the
 // instruction alone — the prefix is applied here so no wake site can forget it.
 //
-// The two failure classes are kept apart deliberately. ErrNoWorkspace means the
-// workspace is gone — that is criterion 10's unreachable. A preflight failure
-// means cmux itself is missing, not running, or refusing our capability token,
-// which says nothing about the foreman: reporting it as "unreachable" would let
-// a rotated token quietly mark every live foreman dead. Preflight runs per call
-// rather than caching a Client, so it re-reads CMUX_SOCKET_CAPABILITY from the
-// environment each time and a re-launched server picks up a new token.
+// The two failure classes are kept apart deliberately. ErrNoTerminal means the
+// terminal is gone — that is criterion 10's unreachable. A preflight failure
+// means Orca itself is missing or not running, which says nothing about the
+// foreman: reporting it as "unreachable" would let a closed app quietly mark
+// every live foreman dead. Preflight runs per call rather than caching a
+// Client, so a re-launched server picks up a newly opened Orca.
 func (s *dashServer) wake(id, msg string) wakeResult {
 	rec, err := foreman.Load(id)
 	if err != nil {
 		return wakeResult{"unknown-foreman", err.Error()}
 	}
 	if rec.WorkspaceTitle == "" {
-		return wakeResult{"unreachable", "foreman has no cmux workspace — it was registered, not spawned"}
+		return wakeResult{"unreachable", "foreman has no Orca terminal — it was registered, not spawned"}
 	}
-	client, err := cmux.Preflight()
+	client, err := orca.Preflight()
 	if err != nil {
-		return wakeResult{"cmux-unavailable", err.Error()}
+		return wakeResult{"orca-unavailable", err.Error()}
 	}
-	if err := client.Send(rec.WorkspaceTitle, "/bbs:foreman "+msg+"\n"); err != nil {
-		if errors.Is(err, cmux.ErrNoWorkspace) {
+	if err := client.SendEnter(rec.WorkspaceTitle, "/bbs:foreman "+msg); err != nil {
+		if errors.Is(err, orca.ErrNoTerminal) {
 			foreman.MarkUnreachable(id)
-			return wakeResult{"unreachable", fmt.Sprintf("workspace %q is not open — the assignment is on disk and will be picked up on the foreman's next resume", rec.WorkspaceTitle)}
+			return wakeResult{"unreachable", fmt.Sprintf("terminal %q is not open — the assignment is on disk and will be picked up on the foreman's next resume", rec.WorkspaceTitle)}
 		}
-		return wakeResult{"cmux-unavailable", err.Error()}
+		return wakeResult{"orca-unavailable", err.Error()}
 	}
 	foreman.ClearUnreachable(id)
 	return wakeResult{"sent", ""}

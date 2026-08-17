@@ -12,9 +12,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/reallongnguyen/babysit/internal/cmux"
 	"github.com/reallongnguyen/babysit/internal/foreman"
 	"github.com/reallongnguyen/babysit/internal/identity"
+	"github.com/reallongnguyen/babysit/internal/orca"
 )
 
 // Watchdog for a foreman that stopped moving.
@@ -167,7 +167,7 @@ func foremanWatch(args []string) error {
 			return err
 		}
 	}
-	client, err := cmux.Preflight()
+	client, err := orca.Preflight()
 	if err != nil {
 		return err
 	}
@@ -178,9 +178,9 @@ func foremanWatch(args []string) error {
 		}
 		if len(targets) == 0 {
 			// Nothing to watch is a terminal condition, not an error: the
-			// foreman finished and its workspace closed, which is the outcome
+			// foreman finished and its terminal closed, which is the outcome
 			// the batch was aiming for.
-			fmt.Println("watch: no foreman with an open cmux workspace — nothing to watch")
+			fmt.Println("watch: no foreman with an open Orca terminal — nothing to watch")
 			return nil
 		}
 		for _, r := range targets {
@@ -196,13 +196,13 @@ func foremanWatch(args []string) error {
 }
 
 // watchTargets is the set to poll: one named foreman, or every registered one
-// whose workspace cmux still has open.
+// whose Orca terminal is still open.
 //
-// "Open workspace", not Live() — a foreman's heartbeat is written by the
+// "Open terminal", not Live() — a foreman's heartbeat is written by the
 // foreman, so a session wedged long enough to need a nudge is exactly the one
 // that has gone stale. Selecting on liveness would drop every foreman this
 // command exists to catch.
-func watchTargets(client *cmux.Client, id string) ([]foreman.Record, error) {
+func watchTargets(client *orca.Client, id string) ([]foreman.Record, error) {
 	var records []foreman.Record
 	if id != "" {
 		r, err := foreman.Load(id)
@@ -228,11 +228,11 @@ func watchTargets(client *cmux.Client, id string) ([]foreman.Record, error) {
 // watchTick is one poll of one foreman. It returns the line to print, or "" for
 // "nothing a human needs to know" — a moving foreman is the normal case and
 // must not produce output every interval, or the signal drowns.
-func watchTick(client *cmux.Client, r foreman.Record, o watchOpts, now time.Time) string {
+func watchTick(client *orca.Client, r foreman.Record, o watchOpts, now time.Time) string {
 	pane, err := client.CapturePane(r.WorkspaceTitle, o.lines)
 	if err != nil {
-		if errors.Is(err, cmux.ErrNoWorkspace) {
-			return fmt.Sprintf("GONE %s — workspace %q is closed", r.ID, r.WorkspaceTitle)
+		if errors.Is(err, orca.ErrNoTerminal) {
+			return fmt.Sprintf("GONE %s — terminal %q is closed", r.ID, r.WorkspaceTitle)
 		}
 		foreman.MarkUnreachable(r.ID)
 		return fmt.Sprintf("UNREACHABLE %s — %s", r.ID, err)
@@ -293,15 +293,12 @@ func watchTick(client *cmux.Client, r foreman.Record, o watchOpts, now time.Time
 			r.ID, s.Nudges, roundMin(idleFor), r.WorkspaceTitle)
 	}
 
-	// Send + Enter: cmux Send is a pure text channel, so text with no keypress
-	// behind it sits in the composer unsent while the pane still looks busy —
-	// which would read as a foreman ignoring the nudge.
-	if err := client.Send(r.WorkspaceTitle, o.nudge); err != nil {
+	// Send + Enter in one call: text with no Enter sits in the composer
+	// unsent while the pane still looks busy — which would read as a
+	// foreman ignoring the nudge.
+	if err := client.SendEnter(r.WorkspaceTitle, o.nudge); err != nil {
 		foreman.MarkUnreachable(r.ID)
 		return fmt.Sprintf("UNREACHABLE %s — %s", r.ID, err)
-	}
-	if err := client.SendKey(r.WorkspaceTitle, "enter"); err != nil {
-		return fmt.Sprintf("UNREACHABLE %s — nudge typed but not submitted: %s", r.ID, err)
 	}
 	s.Nudges++
 	s.Pending = true

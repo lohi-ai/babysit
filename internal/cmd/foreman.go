@@ -14,9 +14,9 @@ import (
 	"time"
 
 	"github.com/reallongnguyen/babysit/internal/agent"
-	"github.com/reallongnguyen/babysit/internal/cmux"
 	"github.com/reallongnguyen/babysit/internal/foreman"
 	"github.com/reallongnguyen/babysit/internal/identity"
+	"github.com/reallongnguyen/babysit/internal/orca"
 	"github.com/reallongnguyen/babysit/internal/qaconfig"
 	"github.com/reallongnguyen/babysit/internal/ticket"
 	"github.com/spf13/cobra"
@@ -54,7 +54,7 @@ const foremanSkillPrompt = `/bbs:foreman`
 func newForemanCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:                "foreman",
-		Short:              "manage foreman sessions and their cmux workspaces",
+		Short:              "manage foreman sessions and their Orca terminals",
 		DisableFlagParsing: true,
 		RunE: func(_ *cobra.Command, args []string) error {
 			return runForeman(args)
@@ -305,9 +305,9 @@ func foremanSpawn(args []string) (string, error) {
 // in SKILL.md would be a second place agent selection could drift.
 //
 // It preflights, so a missing binary — or a directory the agent would stop and
-// ask about — is reported before cmux opens a workspace on a command that cannot
+// ask about — is reported before Orca opens a terminal on a command that cannot
 // run. --dir is the worker's cwd, defaulting to the repo the foreman is in,
-// matching the `--cwd "$REPO"` the skill passes to `cmux workspace create`.
+// matching the `--worktree path:$REPO` the skill passes to `orca terminal create`.
 func foremanWorkerCommand(args []string) error {
 	_, kv, err := foremanFlags(args)
 	if err != nil {
@@ -335,9 +335,9 @@ func foremanWorkerCommand(args []string) error {
 	return nil
 }
 
-// spawnForeman creates the cmux workspace a foreman runs in and registers the
+// spawnForeman creates the Orca terminal a foreman runs in and registers the
 // record in the same call, so a spawned foreman is never half-present: either
-// both exist or the workspace is left for the operator to see. It returns the
+// both exist or the terminal is left for the operator to see. It returns the
 // id it settled on — the dashboard sends no id when it wants the default, and
 // still has to name the foreman it just created back to the human.
 //
@@ -345,15 +345,15 @@ func foremanWorkerCommand(args []string) error {
 // arrive as JSON, and round-tripping them through the flag parser would let an
 // id beginning with "-" be re-read as a flag.
 //
-// Spawn is also the resume path. A registered id whose workspace has since been
+// Spawn is also the resume path. A registered id whose terminal has since been
 // closed used to be a hard error ("retire it first"), which is the one thing a
 // human must not do here: retiring drops the record, and with it the only
 // pointer back to the conversation the foreman was having. So a registered id
-// with a dead workspace re-opens one on `claude --resume <session>` instead. A
-// registered id whose workspace is still OPEN stays an error — that is a real
+// with a dead terminal re-opens one on `claude --resume <session>` instead. A
+// registered id whose terminal is still OPEN stays an error — that is a real
 // collision, not a restart.
 func spawnForeman(id, dir, command, agentFlag string) (string, error) {
-	client, err := cmux.Preflight()
+	client, err := orca.Preflight()
 	if err != nil {
 		return "", err
 	}
@@ -381,9 +381,9 @@ func spawnForeman(id, dir, command, agentFlag string) (string, error) {
 	if resuming {
 		if ref, err := client.Ref(r.WorkspaceTitle); err == nil {
 			return "", fmt.Errorf("foreman %s already registered and running in %s — retire it first", id, ref)
-		} else if !errors.Is(err, cmux.ErrNoWorkspace) {
-			// cmux could not answer. Spawning anyway would create a second
-			// workspace next to a live one we simply failed to see.
+		} else if !errors.Is(err, orca.ErrNoTerminal) {
+			// Orca could not answer. Spawning anyway would create a second
+			// terminal next to a live one we simply failed to see.
 			return "", fmt.Errorf("cannot tell whether %s is still running: %w", id, err)
 		}
 		// A foreman is bound to ONE project. Resuming from wherever the human
@@ -455,7 +455,7 @@ func spawnForeman(id, dir, command, agentFlag string) (string, error) {
 			command = prof.NewSessionCommand(session, foremanSkillPrompt)
 		}
 	}
-	ref, err := client.Create(cmux.CreateOpts{Title: title, Cwd: dir, Command: command})
+	ref, err := client.Create(orca.CreateOpts{Title: title, Cwd: dir, Command: command})
 	if err != nil {
 		return "", err
 	}
@@ -510,9 +510,9 @@ func foremanRetire(args []string) error {
 }
 
 // retireForeman drops a foreman record and, unless asked to keep it, closes the
-// cmux workspace it was running in. Shared with the dashboard's retire endpoint:
+// Orca terminal it was running in. Shared with the dashboard's retire endpoint:
 // the two entry points must not drift, because a record dropped without its
-// workspace closed leaves a pane that looks like a working foreman and can never
+// terminal closed leaves a pane that looks like a working foreman and can never
 // be reached again from the list it was just removed from.
 //
 // Returns the line to report, which is not always "retired": a workspace left
@@ -524,10 +524,10 @@ func retireForeman(id string, keepWorkspace bool) (string, error) {
 	}
 
 	if !keepWorkspace && r.WorkspaceTitle != "" {
-		client, err := cmux.Preflight()
+		client, err := orca.Preflight()
 		if err != nil {
 			// The record is still worth dropping — but say what was left
-			// behind, so nobody hunts for a workspace that is still open.
+			// behind, so nobody hunts for a terminal that is still open.
 			if rmErr := foreman.Remove(id); rmErr != nil {
 				return "", rmErr
 			}

@@ -36,13 +36,10 @@ Set up only the config the repo needs. Re-running should be safe.
 - Prefer `AGENTS.md` when both exist; otherwise update whichever exists, or
   create `AGENTS.md`. Don't duplicate git-flow/QA rules there — link the
   config files.
-- Suggest **cmux** once, never block on it: when the human mentions running
-  tickets in parallel, if `command -v cmux` misses, tell them it is the
-  recommended terminal for that shape of work (https://cmux.com) —
-  worker-per-workspace, status pills,
-  a real diff viewer, a browser split beside the dev server — and that
-  `foreman` requires it outright. It is a machine preference, so it goes in
-  the message, not in committed config or the landing doc.
+- When the human asks about running several tickets at once, point them at
+  `/bbs:foreman`. Do not recommend, install, or write a specific IDE /
+  terminal multiplexer into committed config or the landing doc — that is a
+  machine preference, and `foreman` owns its own backend preflight.
 - Related repos (FE/BE counterpart, shared schemas) feed planning and API-contract checks. Their paths belong in the **workspace registry** — `bbs config workspace add-repo <ws> --git-url <url> --path <dir> --role <fe|be|shared>` — which is the authority babysit reads. `RELATED_*_REPO` in `.babysit/.env` still resolves for repos that never joined a workspace, but it is a fallback: when both name a role and disagree, babysit blocks instead of picking. Meaning (what each repo is *for*) still goes in `AGENTS.md`.
 - Record the harness version once the config is written: `bbs config repo stamp`. It is what makes "this repo was set up by an older babysit" visible in `bbs config workspace show`. A repo with no `harness_version` is not a problem — that is every repo configured before this existed — so never warn about it.
 ## QA Harness Notes

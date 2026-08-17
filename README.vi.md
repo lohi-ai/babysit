@@ -19,7 +19,7 @@
 /bbs:foreman rebuild the novel request flow
 ```
 
-Mỗi yêu cầu một worker hiện hình, nằm trong workspace cmux riêng ở sidebar (mỗi worker chạy autopilot trọn gói — plan, code, review, QA, push), design được duyệt trước khi viết dòng code nào, và mọi ticket xong đều được merge lên base local để bạn review cả lô đang chạy trong một trình duyệt — rồi mới tạo PR. Đây là luồng nâng cao: nó cần [cmux](https://cmux.com), và chỉ đáng công khi bạn có vài ticket độc lập để giao cùng lúc.
+Mỗi yêu cầu một worker hiện hình, nằm trong terminal Orca riêng ở sidebar (mỗi worker chạy autopilot trọn gói — plan, code, review, QA, push), design được duyệt trước khi viết dòng code nào, và mọi ticket xong đều được merge lên base local để bạn review cả lô đang chạy trong một trình duyệt — rồi mới tạo PR. Đây là luồng nâng cao: nó cần [Orca](https://www.onorca.dev), và chỉ đáng công khi bạn có vài ticket độc lập để giao cùng lúc.
 
 *babysit là việc bạn làm khi khỏi cần ai trông.* Nó chuộng mấy quyết định Claude tự làm tự kiểm được, hơn là mấy quyết định phải có người ngồi kè kè — đẻ ra cho các lần chạy theo lịch, pipeline được điều phối, và bất cứ thứ gì bạn muốn giao rồi đi chơi.
 
@@ -54,7 +54,7 @@ Từng bước:
 **Thêm khi cần:**
 
 - **`/bbs:review-pr`** (tức `/code-review`) — một chốt trước khi merge, vì team nhỏ không có người review thứ hai. Đây là lưới an toàn của bạn.
-- **`/bbs:foreman`** — luồng nâng cao: một worker hiện hình cho mỗi ticket (workspace cmux), nhiều ticket độc lập cùng lúc. Đụng tới khi vòng lặp trên đã quen tay và bạn có nguyên một mẻ để giao; thừa thãi với việc solo, tuần tự.
+- **`/bbs:foreman`** — luồng nâng cao: một worker hiện hình cho mỗi ticket (terminal Orca), nhiều ticket độc lập cùng lúc. Đụng tới khi vòng lặp trên đã quen tay và bạn có nguyên một mẻ để giao; thừa thãi với việc solo, tuần tự.
 
 ## Vì sao nó chạy được
 
@@ -163,7 +163,7 @@ marketplace đã cài sẽ thắng khi trùng tên.
 
 Yêu cầu: Claude Code có hỗ trợ plugin, Git.
 
-Khuyến nghị, chưa cần ngay lúc đầu: **[cmux](https://cmux.com)**, một terminal sinh ra cho lối phát triển bằng agent. `/bbs:autopilot` và mọi thứ khác chạy trên terminal bất kỳ — cmux là **phụ thuộc cứng chỉ với `foreman`** (cũng như nút spawn trên dashboard), vì nó không còn backend nào khác: cmux cho mỗi worker song song một workspace riêng trên sidebar kèm status pill và badge thông báo, diff mở trong trình xem thật thay vì trôi qua trong pane, và app đang chạy nằm ngay ở split browser bên cạnh. Thiếu cmux thì `foreman` dừng ngay với thông báo cách cài.
+Khuyến nghị, chưa cần ngay lúc đầu: **[Orca](https://www.onorca.dev)**, ADE để chạy nhiều coding agent cạnh nhau. `/bbs:autopilot` và mọi thứ khác chạy trên terminal bất kỳ — Orca là **phụ thuộc cứng chỉ với `foreman`**, vì nó không còn backend nào khác: Orca cho mỗi worker song song một tab terminal riêng, diff mở trong editor, và app đang chạy nằm trong browser của Orca. Thiếu Orca thì `foreman` dừng ngay với thông báo cách cài.
 
 #### `bbs` CLI là cái gì
 
@@ -266,9 +266,9 @@ Khi vòng lặp một-ticket đã quen tay, `foreman` chạy cả một mẻ. T�
 /bbs:foreman                        # attach/resume: điểm danh worker đang sống + board
 ```
 
-Foreman mở một worker cho mỗi ticket — một workspace cmux bạn bấm ở sidebar để xem hoặc tự lái — theo dõi các pane, và giữ chốt chặn giữa design và build: khi một worker dừng ở bản bàn giao plan/prototype, foreman review design, góp ý, rồi hoặc bật đèn xanh cho build hoặc hỏi bạn khi tiếng nói của bạn có thể đổi hướng kết quả. Nó tự trả lời các câu hỏi máy móc của worker, chuyển cho bạn những câu cần bạn, kiểm chứng mọi verdict QA/review trên đĩa, và — với `land: local` (mặc định ở mode worktree) — merge hết các ticket xong lên base local để bạn review sản phẩm gộp trên dev server trước khi quyết: PR từng ticket hay một compose PR.
+Foreman mở một worker cho mỗi ticket — một terminal Orca bạn bấm ở sidebar để xem hoặc tự lái — theo dõi các pane, và giữ chốt chặn giữa design và build: khi một worker dừng ở bản bàn giao plan/prototype, foreman review design, góp ý, rồi hoặc bật đèn xanh cho build hoặc hỏi bạn khi tiếng nói của bạn có thể đổi hướng kết quả. Nó tự trả lời các câu hỏi máy móc của worker, chuyển cho bạn những câu cần bạn, kiểm chứng mọi verdict QA/review trên đĩa, và — với `land: local` (mặc định ở mode worktree) — merge hết các ticket xong lên base local để bạn review sản phẩm gộp trên dev server trước khi quyết: PR từng ticket hay một compose PR.
 
-**Một thứ phải có trước, nên nó mới là bài học thứ hai:** [cmux](https://cmux.com) — thiếu là foreman dừng ngay. Bạn không cần cấu hình lại repo: `startup`/`enterprise` vốn đã ở mode worktree, còn trong repo `pet` thì foreman tự xin worktree theo từng lần giao việc, nên các ticket song song không bao giờ giành nhau một checkout. Profile của bạn vẫn là thứ quyết định độ gắt. Với một ticket lẻ chạy tuần tự, nó chẳng hơn `/bbs:autopilot` chỗ nào.
+**Một thứ phải có trước, nên nó mới là bài học thứ hai:** [Orca](https://www.onorca.dev) — thiếu là foreman dừng ngay. Bạn không cần cấu hình lại repo: `startup`/`enterprise` vốn đã ở mode worktree, còn trong repo `pet` thì foreman tự xin worktree theo từng lần giao việc, nên các ticket song song không bao giờ giành nhau một checkout. Profile của bạn vẫn là thứ quyết định độ gắt. Với một ticket lẻ chạy tuần tự, nó chẳng hơn `/bbs:autopilot` chỗ nào.
 
 ## Cách dùng
 
@@ -320,7 +320,7 @@ bbs ticket serve            # để trống: gộp mọi ticket đã xong (qa + 
 1. Một ticket chạm chặng 3 — dòng `Next:` trong bản handoff đưa tận tay lệnh cần gõ: `bbs ticket serve bs-ab123`.
 2. `serve` giữ bề mặt test trong 4 tiếng (QA của các agent lịch sự xếp hàng sau bạn) và chuyển server đang chạy sang base + đúng ticket này — ở repo này **và** ở repo FE/BE anh em khi ticket trải qua cả hai.
 3. Review trong browser. Nhờ session của ticket sửa; nó commit trong worktree của riêng nó; chạy lại `serve` (reentrant — làm mới thời gian giữ, cắt lại bề mặt) rồi refresh browser. Lặp tới khi ưng.
-   Với cmux, cả vòng lặp này gói gọn trong một workspace: `cmux browser open <qa url>` đưa app đang chạy vào một split, `cmux diff --branch --repo <worktree> --base origin/main` mở diff đầy đủ của ticket bên cạnh, còn `cmux diff --last-turn` chỉ hiện những gì session vừa đổi ở lượt cuối.
+   Với Orca, cả vòng lặp này gói gọn trong một worktree: `orca tab create --url <qa url>` đưa app đang chạy vào browser tích hợp, còn `orca file open-changed --mode diff --worktree path:<ticket-worktree>` mở diff của ticket bên cạnh.
 4. Ưng rồi → `bbs ticket serve --release`, rồi `/bbs:create-pr` cho từng repo. Reviewer comment sau đó → `/bbs:fix-pr`.
 5. `bbs ticket board --pr` chỉ ra các PR đã merge và in đúng các lệnh dọn dẹp (`reset-base`, `set-status done`).
 

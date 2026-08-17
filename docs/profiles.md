@@ -221,8 +221,8 @@ REASON: primary checkout … is on 'feat/…', not base 'main'.
 
 ### Option A — `foreman` dispatches for you
 
-Needs [cmux](https://cmux.com) as a hard dependency. Hand it several independent
-requests; it opens one visible worker per ticket, each in its own cmux workspace
+Needs [Orca](https://www.onorca.dev) as a hard dependency. Hand it several independent
+requests; it opens one visible worker per ticket, each in its own Orca terminal
 running autopilot end to end, and requests `--mode=worktree` per dispatch — so
 it works the same on any repo, configured or not:
 

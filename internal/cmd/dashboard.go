@@ -59,8 +59,6 @@ Env overrides:
   BABYSIT_DASHBOARD_REPO         Default: dirname of this script's repo root
   BBS_DASHBOARD_MAX_BYTES        Default: 5000000. If data.js exceeds this, caps are
                                  tightened to 1000/100 and one retry is attempted.
-  CMUX_SOCKET_CAPABILITY         The cmux socket token, inherited from the terminal that
-                                 started the server. Required to spawn or wake a foreman.
 `
 
 func dashErr(msg string) { fmt.Fprintf(os.Stderr, retarget("bbs-dashboard: %s\n"), msg) }

@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/reallongnguyen/babysit/internal/cmux"
 	"github.com/reallongnguyen/babysit/internal/foreman"
 	"github.com/reallongnguyen/babysit/internal/identity"
+	"github.com/reallongnguyen/babysit/internal/orca"
 	"github.com/reallongnguyen/babysit/internal/ticket"
 )
 
@@ -375,26 +375,26 @@ func runApprovalAwait(st *ticket.Store, env identity.Env, args []string) {
 	}
 }
 
-// remindApproval nudges the assigned foreman's workspace once — that is the
+// remindApproval nudges the assigned foreman's terminal once — that is the
 // window a human is actually watching, and the ticket's assignee is the only
-// workspace this process can name (a waiting worker does not reliably know its
-// own cmux title).
+// terminal this process can name (a waiting worker does not reliably know its
+// own Orca title).
 //
-// cmux being unreachable is not worth failing the wait over: the record is
+// Orca being unreachable is not worth failing the wait over: the record is
 // already on the dashboard, which is where the decision happens. The reminder
 // is a convenience on top of it, so every failure here is a warning.
 func remindApproval(st *ticket.Store, env identity.Env) {
 	assignee := ticket.ReadDoc(st.IndexPath()).Get("assignee")
 	if assignee == "" {
-		fmt.Fprintf(os.Stderr, "approval await: %s is unassigned — no workspace to remind\n", env.Ticket)
+		fmt.Fprintf(os.Stderr, "approval await: %s is unassigned — no terminal to remind\n", env.Ticket)
 		return
 	}
 	rec, err := foreman.Load(assignee)
 	if err != nil || rec.WorkspaceTitle == "" {
-		fmt.Fprintf(os.Stderr, "approval await: no workspace for %s — reminder skipped\n", assignee)
+		fmt.Fprintf(os.Stderr, "approval await: no terminal for %s — reminder skipped\n", assignee)
 		return
 	}
-	client, err := cmux.Preflight()
+	client, err := orca.Preflight()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "approval await: reminder not sent (%v)\n", err)
 		return

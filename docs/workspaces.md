@@ -19,19 +19,19 @@ all three exist and none is going away. Only one of them is *this* thing.
 
 | Meaning | What it is | How it is named in output |
 |---|---|---|
-| 1. cmux workspace | a cmux pane group — one visible worker, its terminal and browser split | always written **"cmux workspace"**, never bare |
+| 1. Orca terminal | an Orca terminal tab — one visible worker, its agent session and optional browser tab | always written **"Orca terminal"**, never bare |
 | 2. worktree pool | `<repo>/.babysit/worktrees/<ticket>_<slug>`, one git worktree per ticket | always written **"worktree"** — never "workspace" |
 | 3. registry workspace | this file's subject: a named set of repos | always carries its name — **"workspace acme"** |
 
 The rule for anything you write — CLI output, skill text, docs: **meaning 3
-always appears with its name attached**, meaning 1 always carries the `cmux`
+always appears with its name attached**, meaning 1 always carries the `Orca`
 prefix, and meaning 2 is called a worktree. Bare "workspace" with no name and
 no prefix is a bug in the message.
 
 `foreman` gains no new field for this. A foreman record already carries
 `ProjectDir`; its registry workspace is whatever that repo's `config.yaml`
 declares. (`foreman.Record.WorkspaceDir` / `WorkspaceRef` / `WorkspaceTitle`
-are meaning 1 — the cmux workspace the worker runs in.)
+are meaning 1 — the Orca terminal the worker runs in.)
 
 ## Two files, two commands
 

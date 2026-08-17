@@ -35,14 +35,14 @@ type Record struct {
 	ID    string `yaml:"id"`
 	Owner string `yaml:"owner"`
 	// ProjectDir is the repo the foreman works in; WorkspaceDir is the folder
-	// its cmux workspace is rooted at. They differ under worktree mode, where
+	// its Orca terminal is rooted at. They differ under worktree mode, where
 	// the foreman sits in the primary checkout and workers get worktrees.
 	ProjectDir   string `yaml:"project_dir"`
 	WorkspaceDir string `yaml:"workspace_dir"`
-	// WorkspaceTitle is the ONLY durable workspace handle. WorkspaceRef is the
-	// ref as of the last write, kept for display and debugging — refs are
-	// positional and churn as workspaces open and close, so anything that
-	// actually talks to the workspace re-derives the ref from the title.
+	// WorkspaceTitle is the ONLY durable terminal handle. WorkspaceRef is the
+	// runtime handle as of the last write, kept for display — Orca issues
+	// term_… ids per session, so anything that actually talks to the
+	// terminal re-derives the handle from the title.
 	WorkspaceRef   string `yaml:"workspace_ref"`
 	WorkspaceTitle string `yaml:"workspace_title"`
 	// Agent is the coding-agent CLI this foreman's session was minted by

@@ -117,7 +117,7 @@ today — the record's heartbeat is written by the foreman itself, so a foreman
 that stopped working also stopped reporting that it stopped.
 
 `bbs foreman watch` is the outside observer. It captures the last N lines of the
-foreman's cmux pane on an interval; if those bytes are identical for longer than
+foreman's Orca terminal on an interval; if those bytes are identical for longer than
 `--idle`, it types a nudge into the pane — the same "check status" a human would
 send — and if the nudges stop landing, it says so and gives up rather than
 poking forever.
@@ -145,10 +145,10 @@ Output is events only — a foreman that is working produces no output at all.
 ```text
 NUDGED fm-acme after 12m (1/3) — sent "check status"
 STALLED fm-acme — 3 nudges, no change in 41m; open "bbs foreman"
-GONE fm-acme — workspace "bbs foreman" is closed
+GONE fm-acme — terminal "bbs foreman" is closed
 ```
 
-Two behaviours worth knowing. It selects foremen by **open cmux workspace, not
+Two behaviours worth knowing. It selects foremen by **open Orca terminal, not
 by liveness** — a foreman wedged long enough to need a nudge is exactly the one
 whose heartbeat has gone stale, so selecting on `Live()` would drop every
 foreman this exists to catch. And the nudge's own echo in the pane does not

@@ -223,8 +223,8 @@ REASON: primary checkout … is on 'feat/…', not base 'main'.
 
 ### Cách A — để `foreman` giao việc hộ
 
-Cần [cmux](https://cmux.com), phụ thuộc cứng. Đưa cho nó vài yêu cầu độc lập; nó
-mở mỗi ticket một worker nhìn thấy được, mỗi worker trong cmux workspace riêng
+Cần [Orca](https://www.onorca.dev), phụ thuộc cứng. Đưa cho nó vài yêu cầu độc lập; nó
+mở mỗi ticket một worker nhìn thấy được, mỗi worker trong terminal Orca riêng
 chạy autopilot đầu-tới-cuối, và tự xin `--mode=worktree` theo từng lần giao — nên
 nó chạy y hệt nhau trên mọi repo, đã cấu hình hay chưa:
 

@@ -1,10 +1,10 @@
 ---
 name: foreman
-description: Attended orchestrator for parallel feature work — one visible Claude Code worker per ticket in its own cmux workspace, workers run autopilot, pane monitoring, design-checkpoint review with feedback, greenlight-by-/goal or human escalation. Requires cmux. Use when the user hands you product requests to run in parallel while staying able to watch and intervene.
+description: Attended orchestrator for parallel feature work — one visible coding-agent worker per ticket in its own Orca terminal, workers run autopilot, pane monitoring, design-checkpoint review with feedback, greenlight-by-/goal or human escalation. Requires Orca (https://www.onorca.dev). Use when the user hands you product requests to run in parallel while staying able to watch and intervene.
 ---
 # foreman
 
-Workers are full coding-agent sessions in cmux workspaces the human can open at
+Workers are full coding-agent sessions in Orca terminals the human can open at
 any moment; you dispatch them, watch them, review their designs, and own the
 checkpoint between design and build. Workers own the code.
 
@@ -12,13 +12,13 @@ Which CLI a worker runs on is config, not your decision — ask `bbs foreman
 worker-command` for the command line (see [Dispatch a worker](#dispatch-a-worker))
 rather than writing `claude` yourself. Everything else in this skill is
 agent-independent: the prompt is `/bbs:<skill>` on every agent, and workers are
-driven through cmux and disk state either way.
+driven through Orca and disk state either way.
 
 ## Invocation
 
 Route by the shape of the argument, not a verb:
 
-- bare — attach/resume: live `bbs …` workers (`cmux workspace list`)
+- bare — attach/resume: live `bbs …` workers (`orca terminal list --json`)
   + `bbs foreman inbox` + `bbs ticket board` are the state; reconcile (live
   workers, verdicts, todo list vs reality), re-arm a monitor per live worker,
   report the board, resume. Disk + the terminal are sufficient — never rely on
@@ -29,8 +29,8 @@ Route by the shape of the argument, not a verb:
   ignored.)
 - ticket-id — that ticket's worker: attach if its session lives, else
   re-dispatch from disk state (`/bbs:autopilot builder <ticket>`).
-- `stop <ticket|workspace>` — the only verb: archive the pane, close the
-  workspace, mark the todo (this is the explicit permission the kill rule
+- `stop <ticket|title>` — the only verb: archive the pane, close the
+  terminal tab, mark the todo (this is the explicit permission the kill rule
   requires; without a terminal STATUS the ticket stays resumable from disk).
 
 **One human-review command: `bbs ticket serve`.** Bare = every finished
@@ -77,18 +77,79 @@ it. Two columns gate action:
 Unassigned tickets are not yours: dispatch only what the inbox lists, plus
 whatever the human hands you directly in this session.
 
-## Terminal backend — cmux, required
+## Terminal backend — Orca, required
 
-cmux is a hard dependency. Preflight before dispatching anything; a foreman
-that degrades to a weaker terminal silently loses the sidebar, the status
-pills and the notifications the whole attended loop is built on, so fail here
-instead:
+Orca ([onorca.dev](https://www.onorca.dev)) is the default terminal backend.
+Preflight before dispatching anything; a foreman that degrades to a weaker
+terminal silently loses the sidebar, live terminals, and the notifications
+the attended loop is built on, so fail here instead.
 
 ```bash
-command -v cmux >/dev/null 2>&1 && cmux ping >/dev/null 2>&1 || {
-  echo "BLOCKED: foreman requires cmux — install it (https://github.com/manaflow-ai/cmux) and make sure the app is running" >&2
+# Resolve the CLI once and reuse it. ORCA_CLI_COMMAND is set inside Orca-managed
+# WSL sessions; on Linux outside an Orca terminal the `orca` name is usually
+# the GNOME screen reader — use `orca-ide` there.
+if [ -n "${ORCA_CLI_COMMAND:-}" ]; then ORCA="$ORCA_CLI_COMMAND"
+elif [ -n "${ORCA_DEV_REPO_ROOT:-}" ] && command -v orca-dev >/dev/null 2>&1; then ORCA=orca-dev
+elif [ "$(uname -s)" = Linux ] && [ -z "${ORCA_RUNTIME_ID:-}" ]; then ORCA=orca-ide
+else ORCA=orca
+fi
+command -v "$ORCA" >/dev/null 2>&1 || {
+  echo "BLOCKED: foreman requires Orca — install it from https://www.onorca.dev and make sure the app is running" >&2
   exit 1
 }
+_orca_ready() {
+  "$ORCA" status --json 2>/dev/null | python3 -c \
+    'import json,sys; d=json.load(sys.stdin); r=d.get("result") or {};
+raise SystemExit(0 if d.get("ok") and (r.get("runtime") or {}).get("reachable") else 1)' \
+    2>/dev/null
+}
+_orca_ready || { "$ORCA" open --json >/dev/null 2>&1 || true; _orca_ready; } || {
+  echo "BLOCKED: Orca is installed but not reachable — open the app (https://www.onorca.dev) and retry" >&2
+  exit 1
+}
+# Register the repo if Orca does not already track it (add is a no-op when present).
+"$ORCA" repo add --path "$REPO" --json >/dev/null 2>&1 || true
+```
+
+Workers are **Orca terminals** in the repo's existing Orca worktree (the
+primary checkout, selected as `path:$REPO`). Do **not** `orca worktree create`
+per ticket — that mints a second git worktree on top of babysit's
+`--mode=worktree` pool. Babysit still owns isolation; Orca is the visibility
+layer.
+
+`$T` is the runtime handle (`term_…`). Handles churn across an app restart —
+on resume re-derive `$T` from the terminal **title** via
+`orca terminal list --json`. Title every worker `bbs <ticket-or-slug>`. The
+title is the durable handle; the runtime id is not.
+
+| op | command |
+|---|---|
+| read pane | `"$ORCA" terminal read --terminal "$T" --limit 60 --json` → `result.terminal.tail` |
+| alive? | `"$ORCA" terminal show --terminal "$T" --json` (`connected`) |
+| one-line msg | `"$ORCA" terminal send --terminal "$T" --text '<text>' --enter` |
+| interrupt | `"$ORCA" terminal send --terminal "$T" --interrupt` |
+| retitle | `"$ORCA" terminal rename --terminal "$T" --title "bbs <ticket>: <one-liner>"` |
+| needs-you | `"$ORCA" worktree set --worktree path:"$REPO" --comment "<ticket> needs you" --workspace-status in-review` |
+| human opens it | clicks the `bbs <ticket>` tab, or `"$ORCA" terminal switch --terminal "$T"` |
+| close | `"$ORCA" terminal close --terminal "$T" --tab` |
+| preview | `"$ORCA" tab create --url <qa url> --worktree path:"$REPO"` |
+| diff | `"$ORCA" file open-changed --mode diff --worktree path:<ticket-worktree>` |
+
+`terminal send --text` delivers the string; `--enter` submits it. Multi-line
+text is one payload — do not wrap it in bracketed-paste markers. Text with no
+`--enter` sits in the worker's composer unsent. Confirm the composer is empty
+(via `terminal read`) before believing a message landed.
+
+Orca has no arrow-key send-key. Answer worker menus as **plain text**
+(`--text` the chosen option in words), not by driving the TUI with up/down.
+Wedged TUI (no spinner, no prompt, minutes of stillness with the process
+alive): `--interrupt` once, then re-send context as a plain message.
+
+Satellites belong in the same worktree so the worker's surface stays together:
+
+```bash
+"$ORCA" terminal create --worktree path:"$REPO" --title "bbs <slug> serve" --command "<dev server or log tail>"
+"$ORCA" tab create --url <url> --worktree path:"$REPO"
 ```
 
 ## Which agent runs the workers
@@ -122,51 +183,12 @@ one-time per repo (workers share the repo cwd): `cd <repo> && grok`, answer,
 quit. Do not answer it by sending keystrokes into a worker pane — a trust
 decision that never reaches the file recurs on the next spawn.
 
-Each worker is its own **workspace** — a sidebar entry with its own cwd (the
-ticket worktree), status pill and notification badge, not a horizontal tab
-inside another workspace. The human switches workers by clicking, no
-attach/detach. `$W` is the handle, a `workspace:<n>` ref.
+Each worker is its own **Orca terminal tab**, titled `bbs <ticket-or-slug>`.
+The human switches workers by clicking the tab. `$T` is the runtime handle.
 
-| op | command |
-|---|---|
-| read pane | `cmux capture-pane --workspace "$W" --lines 60` |
-| alive? | `cmux workspace list \| grep -q "$W "` |
-| one-line msg | `cmux send --workspace "$W" -- '<text>\n'` |
-| key | `cmux send-key --workspace "$W" enter\|escape\|ctrl+c\|ctrl+u` |
-| retitle | `cmux workspace rename "$W" --title "bbs <ticket>: <one-liner>"` |
-| sidebar pill | `cmux set-status bbs "<lane>" --workspace "$W" --icon sparkle` |
-| notify | `cmux notify --workspace "$W" --title "<ticket> needs you" --body "<the ask>"` |
-| human opens it | clicks it in the sidebar, or `cmux workspace select "$W"` |
-| close | `cmux workspace close "$W"` |
-
-Refs are per-window ids, stable while cmux runs but reassigned across an app
-restart — on bare resume re-derive `$W` from the workspace **title** via
-`cmux workspace list`, which is why every worker is titled `bbs <ticket-or-slug>`.
-The title is the durable handle; the ref is not.
-
-`set-status` takes a fixed lane, not free text: `todo`, `working`,
-`needs-attention`, `review`, `done`, `auto`. Map the phase onto the nearest
-one (designing/building → `working`, escalation → `needs-attention`, design
-gate or QA handoff → `review`) — an unknown lane is rejected, not shown.
-
-**`cmux send` is byte-transparent, with three exceptions.** It interprets `\n`
-and `\r` as Enter and `\t` as Tab; every other byte arrives at the worker's input
-unchanged, so escape sequences land as literal characters rather than being
-interpreted. Anything in bbs that sends multi-line text to a workspace — this
-skill, `bbs dashboard`'s wake — sends it raw and never wraps or re-encodes it.
-
-The practical consequence: **text with no trailing `\n` sits in the worker's
-composer unsent.** The pane still looks busy, so it reads as a worker ignoring
-you. Either end the message with `\n` or follow it with `send-key … enter`, then
-capture the pane and confirm the composer is empty before believing it landed.
-
-Satellites belong *inside* a worker's workspace, so the whole worker closes as
-one unit:
-
-```bash
-cmux new-surface --workspace "$W" --working-directory <worktree>   # a shell for the dev server or a log tail
-cmux new-pane --type browser --workspace "$W" --url <url>          # a live preview
-```
+Map the phase onto the worktree board status when the whole batch shares a
+state (`todo` / `in-progress` / `in-review` / `completed`); per-worker signal
+is the terminal title plus `worktree set --comment`.
 
 ## Dispatch a worker
 
@@ -178,21 +200,14 @@ cmux new-pane --type browser --workspace "$W" --url <url>          # a live prev
 CMD=$(bbs foreman worker-command --prompt "/bbs:autopilot --mode=worktree <requirement>") || {
   echo "BLOCKED: $CMD" >&2; exit 1; }
 
-# new sidebar workspace, unfocused so the human's current one is not stolen
-W=$(cmux workspace create --name "bbs <slug>" --cwd "$REPO" ${G:+--group "$G"} \
-      --command "$CMD" \
-    | awk '/^OK/{print $2}')     # -> workspace:5
-
-# batch of 2+: collapse them under one sidebar header. Run once, after the
-# first worker exists; `create --from` mints its own anchor workspace, so the
-# group survives closing any individual worker.
-G=$(cmux workspace-group create --name "bbs foreman" --from "$W" | awk '/^OK/{print $2}')  # -> workspace_group:1
-cmux workspace-group collapse "$G"    # optional; expand to see the workers again
+T=$("$ORCA" terminal create --worktree path:"$REPO" --title "bbs <slug>" --command "$CMD" --json \
+  | python3 -c 'import json,sys; d=json.load(sys.stdin); r=d.get("result") or d; t=r.get("terminal") or r; print(t.get("handle") or "")')
+[ -n "$T" ] || { echo "BLOCKED: orca terminal create returned no handle" >&2; exit 1; }
 ```
 
-On resume, re-derive `$G` by name from `cmux workspace-group list --json`, and
-adopt a worker dispatched without it via
-`cmux workspace-group add --group "$G" --workspace "$W"`.
+On resume, re-derive `$T` by title from `"$ORCA" terminal list --json`
+(`result.terminals[].title` / `.handle`). Do not `orca worktree create` for
+a worker — see [Terminal backend](#terminal-backend--orca-required).
 
 Workers always run autopilot: it creates the ticket + worktree, seeds
 requirement/design/plan, and **stops at the copy-paste `/goal` handoff** —
@@ -213,14 +228,13 @@ mirror silently and treat `bbs ticket board` as the board; it is the ground
 truth either way:
 
 - dispatch → `TaskCreate` `<ticket-or-slug>: <requirement one-liner>
-  [<workspace title>]`, `in_progress`; beyond `MAX_WORKERS` →
+  [<terminal title>]`, `in_progress`; beyond `MAX_WORKERS` →
   `pending`, flipped when dispatched.
 - phase change / escalation → `TaskUpdate` the `activeForm` (what the worker
-  is doing + which workspace to open), and mirror the phase onto the sidebar
-  pill with `set-status`.
+  is doing + which terminal title to open), and rename the tab to match.
 - close-out (verdicts verified, pane archived) → `completed`. BLOCKED stays
   `in_progress` with the blocker — never complete a task to tidy the list.
-- bare resume → reconcile the list against `cmux workspace list` + `board`
+- bare resume → reconcile the list against `orca terminal list --json` + `board`
   first.
 
 ## Monitor
@@ -232,11 +246,14 @@ One Monitor per worker (persistent). Ground truth is disk (`bbs ticket board`,
 prev=""
 while true; do
   # no ^ anchor: Claude Code indents STATUS lines, so line-start never matches
-  cur=$(cmux capture-pane --workspace "$W" --lines 60 2>/dev/null \
+  cur=$("$ORCA" terminal read --terminal "$T" --limit 60 --json 2>/dev/null \
+    | python3 -c 'import json,sys; t=((json.load(sys.stdin).get("result") or {}).get("terminal") or {}); print("\n".join(t.get("tail") or []))' \
     | grep -E "Enter to select|Copy the block below|STATUS: (DONE|DONE_WITH_CONCERNS|BLOCKED|NEEDS_CONTEXT)|API Error" | tail -4)
   [ "$cur" != "$prev" ] && [ -n "$cur" ] && echo "$cur"
   prev="$cur"
-  cmux workspace list 2>/dev/null | grep -q "$W " || { echo "worker gone"; exit 0; }
+  "$ORCA" terminal show --terminal "$T" --json 2>/dev/null \
+    | python3 -c 'import json,sys; t=((json.load(sys.stdin).get("result") or {}).get("terminal") or {}); raise SystemExit(0 if t.get("connected") or t.get("handle") else 1)' \
+    || { echo "worker gone"; exit 0; }
   sleep 20
 done
 ```
@@ -250,33 +267,27 @@ question attached is most likely the watchdog reporting that you went quiet, not
 the human asking for something new.
 
 Treat it as a bare `/bbs:foreman`: reconcile from disk (`inbox`, `board`,
-`cmux workspace list`), re-arm a monitor per live worker, report the board,
+`orca terminal list --json`), re-arm a monitor per live worker, report the board,
 carry on. It is idempotent by design, so answering it costs one reconcile and
 proves you are alive. If you were genuinely blocked, say what on and who you are
 waiting for — silence is what summoned it.
 
 ## Driving a worker's terminal
 
-- **Multi-line paste** (the `/goal` block) — clear first (input may hold a
-  pre-filled suggestion; never blind-Enter it), send the block as-is, then
-  submit:
+- **Multi-line paste** (the `/goal` block) — send the block as one payload and
+  submit. Do not wrap it in bracketed-paste markers:
   ```bash
-  cmux send-key --workspace "$W" ctrl+u
-  cmux send --workspace "$W" -- "$BLK"
-  cmux send-key --workspace "$W" enter
+  "$ORCA" terminal send --terminal "$T" --text "$BLK" --enter
   ```
-  `cmux send` is byte-transparent: embedded newlines arrive as real newlines
-  and land in the input box without submitting each line. **Do not wrap the
-  block in bracketed-paste markers** (`\033[200~` … `\033[201~`) — cmux
-  forwards those bytes literally, so they show up as `[200~` and `[201~`
-  inside the message the worker receives.
-- **Question menus** — `↑/↓` navigate, `Enter` selects the focused option and
-  advances, `Left`/`Right` switch questions, final view is "Submit answers":
-  `cmux send-key --workspace "$W" up|down|left|right|enter`.
-  Capture the pane after every keystroke; menus re-render.
+  Then `terminal read` and confirm the composer is empty before believing it
+  landed. If a pre-filled suggestion ran instead, `--interrupt` once and
+  resend the block.
+- **Question menus** — Orca has no arrow send-key. Answer as plain text:
+  `"$ORCA" terminal send --terminal "$T" --text "<the chosen option, in words>" --enter`.
+  Then `terminal read` to confirm it landed.
 - **Wedged TUI** (no spinner, no prompt, minutes of stillness with the process
-  alive): `cmux send-key … escape`, then a single `ctrl+c` — that recovers the
-  prompt without killing the worker. Then re-send context as a plain message.
+  alive): `"$ORCA" terminal send --terminal "$T" --interrupt` once, then
+  re-send context as a plain message.
 
 ## The design checkpoint (core)
 
@@ -332,7 +343,7 @@ review is the explicit opt-in via `bbs foreman hold`:
   minute; a wrong greenlight costs a build.
 
 Worker questions mid-flight (menus) follow the same split: answer Mechanical/
-Taste from the requirement + framework via send-keys; escalate User
+Taste from the requirement + framework as plain `--text`; escalate User
 Challenges.
 
 ### You resolve the checkpoint yourself (default autonomy)
@@ -389,15 +400,15 @@ Whenever a worker needs a human — a question you can't answer, a `BLOCKED`/
 worker directly:
 
 ```text
-open the "bbs <ticket>" workspace in the sidebar   (or: cmux workspace select <ref>)
+open the "bbs <ticket>" terminal tab in Orca   (or: orca terminal switch --terminal <handle>)
 ```
 
-Also fire `cmux notify --workspace "$W"` and set the status pill to
-`needs-attention`, so the workspace announces itself in the sidebar.
+Also `"$ORCA" worktree set --worktree path:"$REPO" --comment "<ticket> needs you" --workspace-status in-review`
+so the worktree card announces itself.
 
-Apply the answer wherever the human gives it: answered you → drive the
-worker's menu/prompt via `send`/`send-key`; answered in the workspace → re-arm the
-monitor and continue.
+Apply the answer wherever the human gives it: answered you →
+`terminal send --text … --enter`; answered in the tab → re-arm the monitor
+and continue.
 
 ## Report signal, not flow
 
@@ -423,9 +434,9 @@ BABYSIT_TICKET=<id> bbs ticket verdict-status --skill review-pr
 ```
 
 then report the row (ticket, branch, verdicts, pushed, one-line summary),
-archive the pane (`cmux capture-pane --workspace "$W" --scrollback --lines
-2000 > <scratch>/$W.txt`), close the workspace, and dispatch the next queued
-assignment. QA across workers
+archive the pane (`"$ORCA" terminal read --terminal "$T" --limit 2000 --json > <scratch>/$T.json`),
+close the tab (`"$ORCA" terminal close --terminal "$T" --tab`), and dispatch
+the next queued assignment. QA across workers
 serializes on `bbs ticket qa-lease` — workers handle that themselves;
 `board` shows who holds it.
 
@@ -476,9 +487,9 @@ than pointing at `create-pr`, which BLOCKs under this policy.
 
 - foreman never edits worker code and never creates PRs — `NEXT:
   /bbs:create-pr` stays with the human (checkpoint 4).
-- `cmux workspace-group delete` closes **every** worker in the group — never
-  use it. Retire workers one at a time with `cmux workspace close "$W"`; drop
-  the header alone with `cmux workspace-group ungroup "$G"`.
+- `orca terminal stop --worktree …` and `orca worktree rm` close **every**
+  terminal in that worktree — never use them on the primary checkout. Retire
+  workers one at a time with `orca terminal close --terminal "$T" --tab`.
 - Never close a worker that hasn't printed a terminal STATUS unless the human
   says so; a wedged worker gets the recovery sequence, then a re-dispatch
   from disk state.

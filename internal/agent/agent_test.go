@@ -165,7 +165,7 @@ func TestWorkerCommandCarriesTheYoloFlagPerAgent(t *testing.T) {
 }
 
 // A requirement is free text and reaches a shell through
-// `cmux workspace create --command "<this>"`.
+// `orca terminal create --command "<this>"`.
 func TestWorkerCommandSurvivesAnApostropheInTheRequirement(t *testing.T) {
 	got := profiles["grok"].WorkerCommand(`/bbs:autopilot don't break checkout`)
 	if got != `grok --always-approve '/bbs:autopilot don'\''t break checkout'` {
@@ -194,7 +194,7 @@ func TestForemanCommandsBindAndResumeTheSession(t *testing.T) {
 	}
 }
 
-// A missing CLI has to be caught before cmux opens a workspace on it, and the
+// A missing CLI has to be caught before Orca opens a terminal on it, and the
 // message has to say what to install. For grok that includes the plugin store:
 // the binary alone leaves it unable to resolve /bbs: prompts.
 func TestPreflightNamesWhatToInstall(t *testing.T) {

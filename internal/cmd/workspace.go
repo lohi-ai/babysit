@@ -9,10 +9,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// The registry workspace, not the cmux one and not the worktree pool. Output
-// here always names the workspace ("workspace acme") so a reader can tell
-// which of the three is meant without guessing; `bbs foreman` says "cmux
-// workspace" for its own, and the per-ticket pool is only ever called a
+// The registry workspace, not the Orca terminal and not the worktree pool.
+// Output here always names the workspace ("workspace acme") so a reader can
+// tell which of the three is meant without guessing; `bbs foreman` says
+// "Orca terminal" for its own, and the per-ticket pool is only ever called a
 // worktree.
 const workspaceUsage = `Usage:
   bbs config workspace list

@@ -49,7 +49,7 @@ export function createTicket(project: string, requirement: string, title?: strin
 export interface AssignResult {
   ticket: string;
   assignee: string;
-  /** How the wake went: sent | unreachable | cmux-unavailable | unknown-foreman.
+  /** How the wake went: sent | unreachable | orca-unavailable | unknown-foreman.
    *  Absent when the call unassigned. Never an error — the assignment is on
    *  disk either way and the foreman picks it up on its next tick. */
   wake?: string;
@@ -147,7 +147,7 @@ export function spawnForeman(dir: string, id = '', command = '') {
 
 export interface RetireResult {
   retired: string;
-  /** The server's own line — says so when the cmux workspace was left open. */
+  /** The server's own line — says so when the Orca terminal was left open. */
   detail: string;
 }
 

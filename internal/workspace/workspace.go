@@ -7,9 +7,9 @@
 // Only one of them lives here. Keep them apart when writing code, CLI output,
 // or docs:
 //
-//  1. cmux workspace — a sidebar entry with its own cwd, what the foreman skill
-//     drives. Held by foreman.Record's WorkspaceDir/WorkspaceRef/WorkspaceTitle.
-//     Always written "cmux workspace" in output.
+//  1. Orca terminal — a sidebar tab with its own agent session, what the
+//     foreman skill drives. Held by foreman.Record's WorkspaceDir/WorkspaceRef/
+//     WorkspaceTitle. Always written "Orca terminal" in output.
 //  2. .babysit/worktrees/ — the per-ticket git worktree pool under
 //     mode: worktree. Always written "worktree" in output, never "workspace".
 //  3. this package — a named set of repos. Always written with its name

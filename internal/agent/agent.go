@@ -4,7 +4,7 @@
 // The two CLIs are close enough that a profile is data, not a template
 // language: they differ only in the binary name and the flag that turns off
 // permission prompts. Everything else a spawn needs — the `/bbs:<skill>`
-// prompt, the session flags, the cmux workspace around it — is identical,
+// prompt, the session flags, the Orca terminal around it — is identical,
 // because grok reads babysit's plugin manifest and namespaces its skills the
 // same way.
 //
@@ -53,7 +53,7 @@ type Profile struct {
 	// Bin is the executable looked up on PATH.
 	Bin string
 	// Yolo is the flag that stops the agent asking for tool approval. A worker
-	// runs unattended in a cmux workspace nobody is watching keystroke by
+	// runs unattended in an Orca terminal nobody is watching keystroke by
 	// keystroke, so without it the run stalls on the first edit. Foreman spawns
 	// deliberately omit it — a foreman is attended, and the human at the
 	// sidebar is the approver.
@@ -188,7 +188,7 @@ func selectName(key, flag string) (name, source string) {
 }
 
 // Preflight reports whether this agent can actually be spawned. It runs before
-// the workspace is created, because cmux happily opens a workspace on a command
+// the terminal is created, because Orca happily opens a terminal on a command
 // that does not exist: the human gets a pane containing "command not found"
 // and a session that never reports, which reads as a hung ticket rather than a
 // missing binary.
@@ -283,7 +283,7 @@ func (p Profile) ResumeCommand(session, prompt string) string {
 // shellQuote wraps s in single quotes, ending and reopening the quoted run
 // around each embedded single quote — the only escape that is safe inside POSIX
 // single quotes, where backslash is literal. It matters because a free-text
-// requirement reaches `cmux workspace create --command "<this>"` and is parsed
+// requirement reaches `orca terminal create --command "<this>"` and is parsed
 // by a shell: an unquoted apostrophe in "don't break checkout" would truncate
 // the requirement at best and split the command line at worst.
 func shellQuote(s string) string {

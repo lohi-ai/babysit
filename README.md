@@ -19,7 +19,7 @@ English | [Tiếng Việt](README.vi.md)
 /bbs:foreman rebuild the novel request flow
 ```
 
-One visible worker per request, each in its own cmux workspace in the sidebar (each running autopilot end-to-end — plan, code, review, QA, push), a design review before any code is written, and every finished ticket merged onto your local base so you review the whole batch running in one browser — then you create the PRs. It's the advanced flow: it needs [cmux](https://cmux.com), and it earns its keep only when you have several independent tickets to hand off at once.
+One visible worker per request, each in its own Orca terminal (each running autopilot end-to-end — plan, code, review, QA, push), a design review before any code is written, and every finished ticket merged onto your local base so you review the whole batch running in one browser — then you create the PRs. It's the advanced flow: it needs [Orca](https://www.onorca.dev), and it earns its keep only when you have several independent tickets to hand off at once.
 
 *babysit is what you do when you don't need a babysitter.* It prefers decisions Claude can make and verify alone over decisions that need a human in the loop — built for scheduled runs, orchestrated pipelines, and anything you want to walk away from.
 
@@ -54,7 +54,7 @@ Step by step:
 **Add as you need it:**
 
 - **`/bbs:review-pr`** (a.k.a. `/code-review`) — a gate before merge, since there's no second reviewer on a small team. Your safety net.
-- **`/bbs:foreman`** — the advanced flow: one visible worker per ticket (a cmux workspace), several independent tickets at once. Reach for it once the loop above feels familiar and you have a batch to hand off; overkill for solo, serial work.
+- **`/bbs:foreman`** — the advanced flow: one visible worker per ticket (an Orca terminal), several independent tickets at once. Reach for it once the loop above feels familiar and you have a batch to hand off; overkill for solo, serial work.
 
 ## Why it works
 
@@ -162,7 +162,7 @@ an installed marketplace plugin wins the name collision.
 
 Requirements: Claude Code with plugin support, Git.
 
-Recommended, not required to start: **[cmux](https://cmux.com)**, a terminal built for agentic development. `/bbs:autopilot` and everything else run in any terminal — cmux is a **hard dependency only for `foreman`** (and the dashboard's spawn action), which has no other backend: it gives each parallel worker its own sidebar workspace with a live status pill and notification badge, diffs open in a real viewer instead of scrolling past in a pane, and the running app sits in a browser split next to them. `foreman` fails fast with an install message when cmux is missing.
+Recommended, not required to start: **[Orca](https://www.onorca.dev)**, an ADE for running coding agents side by side. `/bbs:autopilot` and everything else run in any terminal — Orca is a **hard dependency only for `foreman`**, which has no other backend: it gives each parallel worker its own terminal tab, diffs in the editor, and the running app in Orca's browser. `foreman` fails fast with an install message when Orca is missing.
 
 #### What the `bbs` CLI is
 
@@ -269,9 +269,9 @@ Once the single-ticket loop is familiar, `foreman` runs a batch of them. Same wo
 /bbs:foreman                            # attach/resume: reconcile live workers + board
 ```
 
-Foreman spawns a visible worker per ticket — a cmux workspace you click in the sidebar to watch or take over — monitors the panes, and owns the checkpoint between design and build: when a worker stops at its plan/prototype handoff, foreman reviews the design, gives feedback, and either greenlights the build or escalates to you when your voice could change the outcome. It answers workers' mechanical questions itself, relays the ones that need you, verifies every QA/review verdict on disk, and — with `land: local`, or `auto_land: true` — merges all finished tickets onto your local base so you review the combined product on the dev server before deciding: per-ticket PRs or one compose PR.
+Foreman spawns a visible worker per ticket — an Orca terminal you click in the sidebar to watch or take over — monitors the panes, and owns the checkpoint between design and build: when a worker stops at its plan/prototype handoff, foreman reviews the design, gives feedback, and either greenlights the build or escalates to you when your voice could change the outcome. It answers workers' mechanical questions itself, relays the ones that need you, verifies every QA/review verdict on disk, and — with `land: local`, or `auto_land: true` — merges all finished tickets onto your local base so you review the combined product on the dev server before deciding: per-ticket PRs or one compose PR.
 
-**One hard prerequisite, which is why it's the second thing to learn:** [cmux](https://cmux.com) — foreman fails fast without it. You don't need to reconfigure the repo: foreman requests a worktree per dispatch whatever the profile says, so parallel tickets never fight over one checkout. Your profile keeps deciding rigor either way. On a single serial ticket it buys you nothing over `/bbs:autopilot`.
+**One hard prerequisite, which is why it's the second thing to learn:** [Orca](https://www.onorca.dev) — foreman fails fast without it. You don't need to reconfigure the repo: foreman requests a worktree per dispatch whatever the profile says, so parallel tickets never fight over one checkout. Your profile keeps deciding rigor either way. On a single serial ticket it buys you nothing over `/bbs:autopilot`.
 
 ## How to use it
 
@@ -323,7 +323,7 @@ bbs ticket serve            # bare: compose every finished ticket (qa + review D
 1. A ticket reaches pause 3 — its handoff's `Next:` line hands you the exact command: `bbs ticket serve bs-ab123`.
 2. `serve` holds the test surface for 4 hours (agents' QA politely queues behind you) and switches the running server to base + exactly this ticket — in this repo **and** in its FE/BE sibling repo when the ticket spans both.
 3. Review in the browser. Ask the ticket's session for changes; it commits in its own worktree; re-run `serve` (reentrant — refreshes the hold, re-cuts the surface) and refresh the browser. Repeat until happy.
-   Under cmux this whole loop fits in one workspace: `cmux browser open <qa url>` puts the running app in a split, `cmux diff --branch --repo <worktree> --base origin/main` opens the ticket's full diff beside it, and `cmux diff --last-turn` shows just what the session changed since its last turn.
+   Under Orca this whole loop fits in one worktree: `orca tab create --url <qa url>` puts the running app in the built-in browser, and `orca file open-changed --mode diff --worktree path:<ticket-worktree>` opens the ticket's diff beside it.
 4. Approved → `bbs ticket serve --release`, then `/bbs:create-pr` per repo. Reviewer comments later → `/bbs:fix-pr`.
 5. `bbs ticket board --pr` flags merged PRs and prints the exact cleanup commands (`reset-base`, `set-status done`).
 

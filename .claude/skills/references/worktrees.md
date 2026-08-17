@@ -6,9 +6,6 @@ human who wants one ticket isolated). The default shape is
 `--mode=worktree` makes `ensure` always divert: the ticket gets
 `<repo>/.babysit/worktrees/<ticket>_<slug>/`, `ensure` prints `WORKTREE=<path>`
 and `manifest.yaml` records it — cd there, and every later step runs there.
-Under cmux, open it instead of cd-ing:
-`cmux workspace create --name "bbs <ticket>" --cwd <worktree>` — one worktree,
-one sidebar workspace, with its own status pill and diff.
 
 The primary checkout stays where the human left it, and if it is on
 `base_branch` it doubles as the shared test surface: `node_modules` and the dev
@@ -75,10 +72,7 @@ QA lease on disk) see zero behavior change.
    `bbs config workspace show`). Bare = all finished tickets (qa + review-pr
    DONE) composed; `serve <t…>` = exactly those; `--release` = done.
 3. Review-fix loop: human reviews in browser → agent fixes **in the worktree**,
-   commits → re-run `serve <ticket>` (reentrant) → refresh browser. Under cmux,
-   keep app and diff side by side in one workspace: `cmux browser open <qa url>`
-   + `cmux diff --branch --repo <worktree> --base origin/<base>`
-   (`--last-turn` for just the session's latest edit).
+   commits → re-run `serve <ticket>` (reentrant) → refresh browser.
 4. Approved → `serve --release` → `create-pr` per repo → comments via `fix-pr`.
 5. `board --pr` flags merged PRs; then `reset-base` and `set-status done`.
 

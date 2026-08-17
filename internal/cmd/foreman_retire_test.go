@@ -16,7 +16,7 @@ import (
 // dropped on its own leaves a workspace that still looks like a working foreman
 // and can no longer be reached from the list it was just removed from.
 func TestRetireClosesTheWorkspaceAndDropsTheRecord(t *testing.T) {
-	log, _ := fakeCmuxFor(t)
+	log, _ := fakeOrcaFor(t)
 
 	if _, err := spawnForeman("fm-a", t.TempDir(), "", ""); err != nil {
 		t.Fatal(err)
@@ -33,10 +33,10 @@ func TestRetireClosesTheWorkspaceAndDropsTheRecord(t *testing.T) {
 	if _, err := foreman.Load("fm-a"); err == nil {
 		t.Error("retire left the record in place")
 	}
-	// The stub resolves the title to workspace:<n> before closing, so assert on
+	// The stub resolves the title to term_<n> before closing, so assert on
 	// the close call rather than on the title.
-	if calls := readCalls(t, log); !strings.Contains(calls, "workspace close") {
-		t.Errorf("retire did not close the workspace %q:\n%s", rec.WorkspaceTitle, calls)
+	if calls := readCalls(t, log); !strings.Contains(calls, "terminal close") {
+		t.Errorf("retire did not close the terminal %q:\n%s", rec.WorkspaceTitle, calls)
 	}
 	if strings.Contains(msg, "left open") {
 		t.Errorf("workspace was closed, but the message claims otherwise: %q", msg)
@@ -45,7 +45,7 @@ func TestRetireClosesTheWorkspaceAndDropsTheRecord(t *testing.T) {
 
 // The opt-out exists for a foreman whose pane the human still wants to read.
 func TestRetireKeepsTheWorkspaceWhenAsked(t *testing.T) {
-	log, _ := fakeCmuxFor(t)
+	log, _ := fakeOrcaFor(t)
 
 	if _, err := spawnForeman("fm-a", t.TempDir(), "", ""); err != nil {
 		t.Fatal(err)
@@ -56,30 +56,30 @@ func TestRetireKeepsTheWorkspaceWhenAsked(t *testing.T) {
 	if _, err := foreman.Load("fm-a"); err == nil {
 		t.Error("retire left the record in place")
 	}
-	if calls := readCalls(t, log); strings.Contains(calls, "workspace close") {
+	if calls := readCalls(t, log); strings.Contains(calls, "terminal close") {
 		t.Errorf("keep-workspace still closed the pane:\n%s", calls)
 	}
 }
 
-// cmux being gone is the common case for the foreman this feature exists to
+// Orca being gone is the common case for the foreman this feature exists to
 // clear — the app was restarted hours ago. Retire must still drop the record,
 // and must say what it could not close, or the human hunts for a pane that is
 // not there.
-func TestRetireDropsTheRecordWhenCmuxIsUnavailable(t *testing.T) {
-	fakeCmuxFor(t)
+func TestRetireDropsTheRecordWhenOrcaIsUnavailable(t *testing.T) {
+	fakeOrcaFor(t)
 
 	if _, err := spawnForeman("fm-a", t.TempDir(), "", ""); err != nil {
 		t.Fatal(err)
 	}
-	// Break cmux only after the spawn: PATH is a single temp dir, so removing
+	// Break orca only after the spawn: PATH is a single temp dir, so removing
 	// the stub is enough to make Preflight fail the way a stopped app does.
 	for _, dir := range strings.Split(os.Getenv("PATH"), ":") {
-		_ = os.Remove(filepath.Join(dir, "cmux"))
+		_ = os.Remove(filepath.Join(dir, "orca"))
 	}
 
 	msg, err := retireForeman("fm-a", false)
 	if err != nil {
-		t.Fatalf("cmux being down must not block retiring a dead foreman: %v", err)
+		t.Fatalf("orca being down must not block retiring a dead foreman: %v", err)
 	}
 	if _, err := foreman.Load("fm-a"); err == nil {
 		t.Error("retire left the record in place")
@@ -92,7 +92,7 @@ func TestRetireDropsTheRecordWhenCmuxIsUnavailable(t *testing.T) {
 // The endpoint is the dashboard's only way to clear a record, so it has to reach
 // the same code the CLI does — and reject an id that would escape the store.
 func TestRetireEndpointClearsTheRecord(t *testing.T) {
-	fakeCmuxFor(t)
+	fakeOrcaFor(t)
 
 	if _, err := spawnForeman("fm-a", t.TempDir(), "", ""); err != nil {
 		t.Fatal(err)

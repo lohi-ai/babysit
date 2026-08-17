@@ -122,7 +122,7 @@ export function Foremen({ snapshot }: { snapshot: Snapshot }) {
               <HeaderCell>Foreman</HeaderCell>
               <HeaderCell>Owner</HeaderCell>
               <HeaderCell>Workspace dir</HeaderCell>
-              <HeaderCell>cmux</HeaderCell>
+              <HeaderCell>Orca</HeaderCell>
               <HeaderCell align="right">Tickets</HeaderCell>
               <HeaderCell align="right">Heartbeat</HeaderCell>
               <span />
@@ -243,7 +243,7 @@ function ForemanListRow({
 }
 
 // Retiring is reversible in the sense that a foreman can be spawned again, but
-// it is not an undo: the record, its id and its cmux workspace all go. So the
+// it is not an undo: the record, its id and its Orca terminal all go. So the
 // confirm names the two things the human cannot see from the row — what happens
 // to the workspace, and which tickets stop moving.
 function RetireModal({
@@ -288,8 +288,8 @@ function RetireModal({
     >
       <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>
         Drops the foreman record. {foreman.workspace_title
-          ? <>Its cmux workspace <span className="font-mono">{foreman.workspace_title}</span> closes unless you keep it.</>
-          : <>It has no cmux workspace to close — it was registered, not spawned.</>}
+          ? <>Its Orca terminal <span className="font-mono">{foreman.workspace_title}</span> closes unless you keep it.</>
+          : <>It has no Orca terminal to close — it was registered, not spawned.</>}
       </p>
 
       {openTickets.length > 0 ? (
@@ -315,7 +315,7 @@ function RetireModal({
           checked={keepWorkspace}
           onChange={e => setKeepWorkspace(e.target.checked)}
         />
-        Keep the cmux workspace open
+        Keep the Orca terminal open
       </label>
 
       {error && <ErrorBox title="Retire failed" body={error} />}
@@ -386,7 +386,7 @@ function SpawnModal({ open, onClose, defaultDir }: { open: boolean; onClose: () 
     >
       <Field
         label="Workspace folder"
-        hint="The repo checkout the foreman works in. A cmux workspace is created rooted here."
+        hint="The repo checkout the foreman works in. An Orca terminal is created rooted here."
       >
         {fid => (
           <input
@@ -411,7 +411,7 @@ function SpawnModal({ open, onClose, defaultDir }: { open: boolean; onClose: () 
           />
         )}
       </Field>
-      {/* Spawning fails for boring reasons — cmux not running, path missing —
+      {/* Spawning fails for boring reasons — Orca not running, path missing —
           and the server's message is the fix, so it goes through verbatim. */}
       {error && <ErrorBox title="Spawn failed" body={error} />}
     </Modal>

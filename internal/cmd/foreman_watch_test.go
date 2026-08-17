@@ -7,17 +7,17 @@ import (
 	"testing"
 	"time"
 
-	"github.com/reallongnguyen/babysit/internal/cmux"
 	"github.com/reallongnguyen/babysit/internal/foreman"
+	"github.com/reallongnguyen/babysit/internal/orca"
 )
 
-// watchFixture stands up a stub cmux whose pane content is a file the test
+// watchFixture stands up a stub orca whose pane content is a file the test
 // rewrites, plus a registered foreman pointing at it. The pane file IS the
 // control surface: writing the same bytes twice is a foreman that stopped
 // working, which is the only condition this command reacts to.
 //
 // It returns the client, the record, the pane file and the call log.
-func watchFixture(t *testing.T) (*cmux.Client, foreman.Record, string, string) {
+func watchFixture(t *testing.T) (*orca.Client, foreman.Record, string, string) {
 	t.Helper()
 	dir := t.TempDir()
 	log := filepath.Join(dir, "calls.log")
@@ -27,40 +27,49 @@ func watchFixture(t *testing.T) (*cmux.Client, foreman.Record, string, string) {
 	write(t, pane, "worker A: building\n")
 
 	// PATH inside the stub is its own: the Go process runs with PATH=dir so it
-	// can only find this cmux, which leaves `cat` unresolvable to the script.
+	// can only find this orca, which leaves `python3` unresolvable unless we
+	// restore a real PATH for the script body.
 	script := `#!/bin/sh
 PATH=/bin:/usr/bin
 printf '%s\n' "$*" >> ` + log + `
+titles=` + titles + `
+pane=` + pane + `
 case "$1" in
-  ping) echo PONG ;;
-  list-windows) echo '[{"id":"window:1","index":0}]' ;;
-  capture-pane) cat ` + pane + ` ;;
-  workspace)
+  status) echo '{"ok":true,"result":{"runtime":{"reachable":true}}}' ;;
+  open) echo '{"ok":true,"result":{}}' ;;
+  terminal)
     case "$2" in
       list)
-        printf '{"window_ref":"window:1","workspaces":['
-        i=0; sep=
-        while IFS= read -r t; do
-          [ -n "$t" ] || continue
-          printf '%s{"ref":"workspace:%s","custom_title":"%s","has_custom_title":true,' "$sep" "$i" "$t"
-          printf '"title":"%s","index":%s,"current_directory":"/repo"}' "$t" "$i"
-          i=$((i+1)); sep=,
-        done < ` + titles + `
-        printf ']}\n' ;;
-      *) echo OK ;;
+        python3 -c '
+import json
+titles=open("'"$titles"'").read().splitlines()
+terms=[{"handle":"term_%d"%i,"title":t,"connected":True,"worktreePath":"/repo"}
+       for i,t in enumerate(titles) if t]
+print(json.dumps({"ok":True,"result":{"terminals":terms}}))
+' ;;
+      read)
+        python3 -c '
+import json
+lines=open("'"$pane"'").read().splitlines()
+print(json.dumps({"ok":True,"result":{"terminal":{"handle":"term_0","tail":lines}}}))
+' ;;
+      send|close) echo '{"ok":true,"result":{}}' ;;
+      *) echo '{"ok":true,"result":{}}' ;;
     esac ;;
-  *) echo OK ;;
+  worktree) echo '{"ok":true,"result":{}}' ;;
+  *) echo '{"ok":true,"result":{}}' ;;
 esac
 `
-	write(t, filepath.Join(dir, "cmux"), script)
-	if err := os.Chmod(filepath.Join(dir, "cmux"), 0o755); err != nil {
+	write(t, filepath.Join(dir, "orca"), script)
+	if err := os.Chmod(filepath.Join(dir, "orca"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", dir)
-	t.Setenv("CMUX_SOCKET_CAPABILITY", "test-token")
+	t.Setenv("ORCA_CLI_COMMAND", "")
+	t.Setenv("ORCA_DEV_REPO_ROOT", "")
 	t.Setenv("BABYSIT_HOME", t.TempDir())
 
-	client, err := cmux.Preflight()
+	client, err := orca.Preflight()
 	if err != nil {
 		t.Fatalf("preflight: %v", err)
 	}
@@ -117,7 +126,7 @@ func TestWatchIgnoresTrailingWhitespace(t *testing.T) {
 	if !strings.HasPrefix(line, "NUDGED") {
 		t.Fatalf("re-padded pane should still be idle, got %q", line)
 	}
-	if !strings.Contains(callLog(t, log), "send --workspace workspace:0 -- check status") {
+	if !strings.Contains(callLog(t, log), "terminal send --terminal term_0 --text check status --enter") {
 		t.Error("expected the nudge text to be sent")
 	}
 }
@@ -138,11 +147,8 @@ func TestWatchNudgesAfterIdle(t *testing.T) {
 		t.Fatalf("got %q", line)
 	}
 	calls := callLog(t, log)
-	if !strings.Contains(calls, "send --workspace workspace:0 -- check status") {
-		t.Errorf("nudge text not sent; calls:\n%s", calls)
-	}
-	if !strings.Contains(calls, "send-key --workspace workspace:0 enter") {
-		t.Errorf("nudge never submitted; calls:\n%s", calls)
+	if !strings.Contains(calls, "terminal send --terminal term_0 --text check status --enter") {
+		t.Errorf("nudge text not sent and submitted; calls:\n%s", calls)
 	}
 }
 
@@ -236,7 +242,7 @@ func TestWatchTargetsIncludeStaleForemen(t *testing.T) {
 	}
 }
 
-// A record whose workspace cmux no longer has is not watchable, so a bare watch
+// A record whose terminal Orca no longer has is not watchable, so a bare watch
 // must not report it every interval.
 func TestWatchTargetsSkipClosedWorkspaces(t *testing.T) {
 	client, r, _, _ := watchFixture(t)
