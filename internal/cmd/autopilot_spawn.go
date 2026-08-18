@@ -344,7 +344,7 @@ func (a *apState) runSpawn(job spawnJob, o spawnOpts) (spawnResult, error) {
 	env := append(os.Environ(), "BABYSIT_TICKET="+ticket)
 	env = append(env, job.extraEnv...)
 	c.Env = env
-	c.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	c.SysProcAttr = detachedProcAttr()
 	if err := c.Start(); err != nil {
 		return spawnResult{}, errSpawn{1, prefix + ": " + err.Error()}
 	}
