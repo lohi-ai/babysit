@@ -20,6 +20,7 @@ import (
 	"os/exec"
 	"runtime"
 	"strings"
+	"unicode"
 )
 
 var (
@@ -286,6 +287,52 @@ func (c *Client) lookup(title string) (Terminal, error) {
 		}
 	}
 	return Terminal{}, fmt.Errorf("%w: %q", ErrNoTerminal, title)
+}
+
+// LookupSpawn finds the tab for a spawn-goal / spawn-review. Orca often
+// rewrites the title we created (e.g. "bbs review bs-x1" → "bs-x1 plan and
+// prototype review"), so a live tab is matched by ticket + kind, not exact
+// title.
+//
+// Both halves are matched as whole words. Substring matching is what makes a
+// loose match dangerous rather than merely loose: `bs-x1` would claim the tab
+// for `bs-x11`, and a caller that mistakes another ticket's tab for its own
+// reports ALREADY_RUNNING and never starts the worker at all.
+func (c *Client) LookupSpawn(kind, ticket string) (Terminal, error) {
+	terms, err := c.list()
+	if err != nil {
+		return Terminal{}, err
+	}
+	exact := "bbs " + kind + " " + ticket
+	for _, t := range terms {
+		if t.Title == exact {
+			return t, nil
+		}
+	}
+	for _, t := range terms {
+		if titleHasWord(t.Title, ticket) && titleHasWord(t.Title, kind) {
+			return t, nil
+		}
+	}
+	return Terminal{}, fmt.Errorf("%w: %s %s", ErrNoTerminal, kind, ticket)
+}
+
+// titleHasWord reports whether title contains word as a whole token, comparing
+// case-insensitively and treating every non-alphanumeric rune as a separator so
+// a retitle that repunctuates ("bs-x1: review") still matches.
+func titleHasWord(title, word string) bool {
+	if word == "" {
+		return false
+	}
+	sep := func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '-' && r != '_'
+	}
+	for _, f := range strings.FieldsFunc(title, sep) {
+		if strings.EqualFold(f, word) {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *Client) list() ([]Terminal, error) {

@@ -146,6 +146,20 @@ func Resolve(key, flag string) (Profile, error) {
 	return p, nil
 }
 
+// Current names the CLI this process is running inside, or "". Grok exports
+// GROK_AGENT / GROK_SESSION_ID; Claude Code exports CLAUDE_CODE_SESSION_ID.
+// Grok wins if both look set — a grok session can inherit leftover Claude
+// Code env from the user's shell.
+func Current() string {
+	if os.Getenv("GROK_AGENT") != "" || os.Getenv("GROK_SESSION_ID") != "" {
+		return "grok"
+	}
+	if os.Getenv("CLAUDE_CODE_SESSION_ID") != "" {
+		return "claude"
+	}
+	return ""
+}
+
 // ByName resolves a recorded agent name with no config ladder. Spawn uses it on
 // the resume path: the conversation being re-opened was minted by a specific
 // CLI, and the config may have changed since. Resuming a Claude session with

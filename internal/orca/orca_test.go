@@ -288,3 +288,71 @@ func readLog(t *testing.T, path string) string {
 	}
 	return string(b)
 }
+
+// listBody serves `terminal list` from a fixed set of titles, so a lookup can
+// be aimed at tabs that merely resemble the one it wants.
+func listBody(titles ...string) string {
+	rows := make([]string, len(titles))
+	for i, t := range titles {
+		rows[i] = fmt.Sprintf(`{"handle":"term_%d","title":%q,"connected":true}`, i, t)
+	}
+	return `case "$1" in
+  status) echo '{"ok":true,"result":{"runtime":{"reachable":true,"state":"ready"}}}' ;;
+  terminal) echo '{"ok":true,"result":{"terminals":[` + strings.Join(rows, ",") + `]}}' ;;
+esac`
+}
+
+// A loose match is worse than no match: the caller reads a hit as "the worker
+// is already running" and never starts one. These are the neighbours a spawn
+// lookup actually shares a board with.
+func TestLookupSpawnIgnoresTabsThatOnlyLookLikeTheTarget(t *testing.T) {
+	for _, tc := range []struct{ name, kind, ticket, title string }{
+		{"longer ticket id", "goal", "bs-x1", "bbs goal bs-x11"},
+		{"foreman worker tab", "review", "bs-x1", "bbs bs-x1: fix review-pr findings"},
+		{"other kind", "goal", "bs-x1", "bbs review bs-x1"},
+		{"ticket inside a word", "goal", "bs-x1", "bbs goal notbs-x1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fakeOrca(t, listBody(tc.title))
+			c, err := Preflight()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got, err := c.LookupSpawn(tc.kind, tc.ticket); err == nil {
+				t.Errorf("matched %q for %s %s", got.Title, tc.kind, tc.ticket)
+			}
+		})
+	}
+}
+
+// The reason the match is loose at all: Orca rewrites the title we created.
+func TestLookupSpawnStillFindsARetitledTab(t *testing.T) {
+	fakeOrca(t, listBody("bbs goal bs-zz", "◐ bs-x1 — plan and prototype, review"))
+	c, err := Preflight()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := c.LookupSpawn("review", "bs-x1")
+	if err != nil {
+		t.Fatalf("retitled tab not found: %v", err)
+	}
+	if !strings.Contains(got.Title, "bs-x1") {
+		t.Errorf("matched the wrong tab: %q", got.Title)
+	}
+}
+
+// The exact title wins even when a looser candidate is listed first.
+func TestLookupSpawnPrefersTheExactTitle(t *testing.T) {
+	fakeOrca(t, listBody("bs-x1 review notes", "bbs review bs-x1"))
+	c, err := Preflight()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := c.LookupSpawn("review", "bs-x1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Title != "bbs review bs-x1" {
+		t.Errorf("title = %q, want the exact one", got.Title)
+	}
+}

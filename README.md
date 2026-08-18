@@ -48,6 +48,8 @@ Step by step:
 **The human checkpoints — where you stay in control.** Autopilot only pauses at the moments that are actually yours to own; pick which one by flag:
 
 - `--stop-after=plan` — approve the approach before any code is written.
+- `--auto` — skip the paste; spawn `/goal` on the agent you started in (Grok stays Grok, Claude stays Claude).
+- `--reviewer claude|grok` — spawn that agent to review the plan and prototype. Omit it: no agent review. With `--auto`, approve starts `/goal` on the start agent.
 - *default* — stops QA-ready, you review the evidence.
 - **`/bbs:create-pr`** — you invoke it; autopilot never opens PRs itself.
 
@@ -234,7 +236,7 @@ The commands that move work between a worktree and the shared surface — `merge
 /bbs:autopilot "add a settings page with dark mode toggle"
 ```
 
-Autopilot inits the ticket — requirement, plan, branch — then stops and prints a `/goal` block as its **last message**. That block is the one thing you do next: **copy it, paste it back into Claude Code, and walk away.** The goal session then writes the code, reviews it, runs QA, and pushes the branch. Open the PR yourself after review.
+Autopilot inits the ticket — requirement, plan, branch — then stops and prints a `/goal` block as its **last message**. That block is the one thing you do next: **copy it, paste it back into Claude Code, and walk away.** The goal session then writes the code, reviews it, runs QA, and pushes the branch. Open the PR yourself after review. Pass `--auto` to skip the paste: `/goal` runs on the same agent you started in. Pass `--reviewer claude` or `--reviewer grok` if you want a different agent to review the plan first.
 
 > **The handoff looks like this** — autopilot ends with a plain-language preamble, then the block to copy:
 >
@@ -303,7 +305,7 @@ When a stage finishes, the ticket gets a `Next:` line — literally what to do n
 /bbs:autopilot                       # resume — picks up from the current branch's checkpoint
 ```
 
-That's the whole surface. Two flags extend it — `--stop-after=requirement|plan` to stop at an earlier checkpoint, and `--mode=worktree` (or `--mode=branch`) to isolate this one ticket, which no profile does for you. Verb tokens don't exist.
+That's the whole surface. Four flags extend it — `--stop-after=requirement|plan` to stop at an earlier checkpoint, `--auto` to spawn `/goal` on the agent you started in, `--reviewer claude|grok` to add an agent review of the plan, and `--mode=worktree` (or `--mode=branch`) to isolate this one ticket, which no profile does for you. Verb tokens don't exist.
 
 ### Working tickets in parallel (worktree mode)
 

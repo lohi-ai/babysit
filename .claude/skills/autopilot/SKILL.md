@@ -48,7 +48,20 @@ status prints.
 `/goal <condition>` arms a Stop hook that blocks the session from stopping
 until the condition holds. Autopilot cannot arm it itself — after init, print
 the handoff and stop (`developer`: the human copy-pastes it; orchestrators put
-the `/goal` block at the front of the spawn prompt).
+the `/goal` block at the front of the spawn prompt). Two independent flags
+replace that paste; `--stop-after` still wins. If `SPAWNED` is already true,
+you are that process: skip the handoff and work. Start-agent is this
+session (`GROK_SESSION_ID`/`GROK_AGENT` → grok, else claude).
+- `--reviewer claude|grok` (alias `--review`) — spawn that agent to review
+  the plan and prototype. Omit it: no agent review. From the worktree:
+  `bbs autopilot spawn-review --ticket "$TICKET" --workflow "$WF" --agent <name>`
+  plus `--builder <start-agent>` only when `--auto` is also set (approve
+  then spawn-goal). Print pid/log (or ORCA=) and stop.
+- `--auto` — spawn `/goal` on the start agent. If `--reviewer` ran, that
+  process does it on approve; otherwise
+  `bbs autopilot spawn-goal --ticket "$TICKET" --workflow "$WF"` (no
+  `--agent` — spawn-goal uses the start agent). Print pid/log and stop.
+  Never the copy-paste handoff.
 For `developer`, the handoff **is the whole final message and must be the very
 last thing on screen** — nothing after it. Init may have run `plan-draft` /
 `design-ui`, which print their own reports; do **not** let those be the last

@@ -324,6 +324,31 @@ decided_at = 3
 	}
 }
 
+func TestCurrentReadsGrokBeforeClaudeCodeEnv(t *testing.T) {
+	t.Setenv("GROK_AGENT", "")
+	t.Setenv("GROK_SESSION_ID", "")
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "")
+	if got := Current(); got != "" {
+		t.Errorf("empty env: Current() = %q", got)
+	}
+
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "cc-1")
+	if got := Current(); got != "claude" {
+		t.Errorf("claude session: Current() = %q", got)
+	}
+
+	t.Setenv("GROK_SESSION_ID", "gk-1")
+	if got := Current(); got != "grok" {
+		t.Errorf("both set: Current() = %q, want grok", got)
+	}
+
+	t.Setenv("GROK_SESSION_ID", "")
+	t.Setenv("GROK_AGENT", "1")
+	if got := Current(); got != "grok" {
+		t.Errorf("GROK_AGENT: Current() = %q", got)
+	}
+}
+
 func TestNamesListsEveryRegisteredAgent(t *testing.T) {
 	got := strings.Join(Names(), ",")
 	if got != "claude,grok" {
