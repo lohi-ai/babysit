@@ -230,6 +230,13 @@ is the terminal title plus `worktree set --comment`.
 CMD=$(bbs foreman worker-command --skill autopilot --prompt "--mode=worktree <requirement>") || {
   echo "BLOCKED: $CMD" >&2; exit 1; }
 
+# On the mailbox path the worker escalates back over the bus instead of into a
+# pane nobody is reading. AGENT_ROLE is the skills' delivery-channel switch
+# (references/preamble.md § One mode, four escalation channels); set it only
+# when the bus is actually there, because a worker told to ask a coordinator
+# that does not exist has no way to ask anyone.
+[ "$MAILBOX" = on ] && CMD="AGENT_ROLE=orca $CMD"
+
 T=$("$ORCA" terminal create --worktree path:"$REPO" --title "bbs <slug>" --command "$CMD" --json \
   | python3 -c 'import json,sys; d=json.load(sys.stdin); r=d.get("result") or d; t=r.get("terminal") or r; print(t.get("handle") or "")')
 [ -n "$T" ] || { echo "BLOCKED: orca terminal create returned no handle" >&2; exit 1; }
@@ -275,7 +282,7 @@ Everything below only tells you *when* to look.
 Pick the path once, at batch start:
 
 ```bash
-bbs foreman mailbox status "$FM"      # MAILBOX=on | MAILBOX=off
+MAILBOX=$(bbs foreman mailbox status "$FM" | sed -n 's/^MAILBOX=//p')   # on | off
 ```
 
 ### `MAILBOX=on` — one blocking read for the whole batch
@@ -304,7 +311,10 @@ be lost. Never `--ack` before you have acted.
 - `type: worker_done` — the **doorbell, not the verdict**. Confirm on disk with
   `bbs ticket verdict-status` before believing anything finished.
 - `needs_answer: true` (`ask` / `question` / `escalation`) — the worker is
-  blocked until you answer:
+  blocked until you answer. This is where a worker's `NEEDS_CONTEXT` arrives
+  now: `AGENT_ROLE=orca` routes it to `orca orchestration ask`, which blocks
+  the worker on a durable message rather than printing a block into a pane and
+  carrying on:
   ```bash
   bbs foreman mailbox reply "$FM" --message "<id>" --body "<the answer, in words>"
   ```

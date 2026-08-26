@@ -14,7 +14,7 @@ Drop filler, pleasantries, hedging. Route by consumer:
 | Human — terminal, AskUserQuestion, NEEDS_CONTEXT | **Lite** | Full sentences, professional but tight. |
 | Security/destructive/ambiguous | **Normal** | Full prose. Resume terse after. |
 Skills with their own output format take precedence.
-## One mode, three escalation channels
+## One mode, four escalation channels
 Skills always run autonomously — never prompt mid-flight for taste or
 cosmetic choices. Escalate only when proceeding on a guess would land
 incorrect work: ambiguous requirement with materially different readings,
@@ -26,10 +26,11 @@ you're steering — stop and report.
 `AGENT_ROLE` (fallback `GT_ROLE`) picks the delivery channel:
 `developer` (default, unset) → render as a single `AskUserQuestion`;
 `dashboard` → publish an approval record and wait (below);
+`orca` → ask the coordinator over the message bus and block (below);
 anything else (`mayor`, `general`, `scanner`, …) → print the structured block
 verbatim (an orchestrator relays it; `AskUserQuestion` would hang the run).
 Only the channel changes. The analysis, the artifacts, and the decision itself
-are identical in all three.
+are identical in all four.
 ### `AGENT_ROLE=dashboard`
 The human is at the web dashboard, not at this terminal. A design checkpoint
 publishes a record on the ticket and blocks on the answer:
@@ -53,6 +54,24 @@ human's note to stderr. Rules for anything that consumes it:
   decision the human is already reading.
 Honored by `autopilot` (its `/goal` handoff), `foreman` (the design gate), and
 any skill that would otherwise call `AskUserQuestion` at a design checkpoint.
+### `AGENT_ROLE=orca`
+Set only by a foreman that dispatched this worker over Orca's message bus, so
+the bus is known to be there. The coordinator is another agent reading a
+mailbox, not a human at this terminal:
+```bash
+ANSWER=$(orca orchestration ask --question "<the one question, in one line>" \
+  --options "a,b" --timeout-ms 1800000 --json)
+```
+- `ask` blocks until the coordinator answers and returns a durable message id.
+  A timeout leaves the question *pending*, not dropped — resume the same
+  question with `--resume <message_id>` rather than asking it again, or the
+  coordinator sees two questions and answers one.
+- Never `AskUserQuestion` here: nobody is watching this pane, and it would hang
+  the run in a way a batch cannot recover from.
+- If `ask` fails outright (no bus, no coordinator), fall through to the
+  structured block below. A dispatched worker that cannot reach its foreman is
+  in the orchestrator case, and the block is what an orchestrator reads.
+
 ### `NEEDS_CONTEXT` shape
 ```
 STATUS: NEEDS_CONTEXT

@@ -145,7 +145,7 @@ When adding or editing a skill, don't write new ad-hoc prompts. Classify the
 decision point, let the framework route it, and log every Taste decision to
 `~/.babysit/analytics/decisions.jsonl`.
 
-### One mode, three escalation channels — design skills accordingly
+### One mode, four escalation channels — design skills accordingly
 
 Every skill always runs autonomously: decisions go through the Auto-Decision
 Framework, and skills *never* prompt mid-flight for taste, style, or cosmetic
@@ -158,6 +158,10 @@ for `NEEDS_CONTEXT`, picked by `AGENT_ROLE` (or legacy `GT_ROLE`):
   (`bbs ticket approval publish`) and block on `approval await`. The human
   answers in the web dashboard, where the artifacts are readable; nobody is
   watching this terminal.
+- `AGENT_ROLE=orca` — the run was dispatched by a foreman over Orca's
+  message bus. Ask the coordinator with `orca orchestration ask` and block on
+  the answer; the foreman replies from its own mailbox read. Set by foreman
+  only on the mailbox path, so the bus is known present.
 - `AGENT_ROLE=mayor|general|scanner|...` — emit the structured `NEEDS_CONTEXT`
   block. An orchestrator (babysit-office, gastown, cron) relays via its own
   channel. `AskUserQuestion` here would hang the run.
@@ -168,7 +172,7 @@ analysis, artifacts, and decision logic are identical either way.
 
 **The operational rules — when to escalate, the `NEEDS_CONTEXT` format the
 orchestrator expects, the `INVOKER` values — live in
-[.claude/skills/references/preamble.md § One mode, three escalation channels](.claude/skills/references/preamble.md#one-mode-three-escalation-channels).**
+[.claude/skills/references/preamble.md § One mode, four escalation channels](.claude/skills/references/preamble.md#one-mode-four-escalation-channels).**
 That file is loaded at skill-invocation time regardless of which repo the skill
 runs in. *This* `CLAUDE.md` is only in context when someone is working inside
 the babysit repo itself; non-`developer` invocations from babysit-office or
