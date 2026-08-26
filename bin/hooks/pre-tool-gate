@@ -8,36 +8,51 @@
 #
 #   - explicit BLOCKED / NEEDS_CONTEXT verdict  → deny  (evidence says not ready)
 #   - verdict missing ("none")                  → ask   (human checkpoint)
-#   - verdict DONE / DONE_WITH_CONCERNS / PASS  → defer (no objection)
-#   - no ticket resolves, or jq unavailable     → defer (never gate ad-hoc work)
+#   - verdict DONE / DONE_WITH_CONCERNS / PASS  → pass  (no objection)
+#   - no ticket resolves, or jq unavailable     → pass  (never gate ad-hoc work)
 #   - bbs-ticket itself unresolvable            → deny  (gate offline, see below)
+#
+# "pass" is NO OUTPUT (empty stdout, exit 0): the hook abstains and the call
+# falls through to the user's normal permission rules. It is deliberately not
+# `permissionDecision: "defer"` — in Claude Code, "defer" means "pause this
+# session so an SDK caller can resume the tool later". It is honored in every
+# non-interactive context (`claude -p`, every Agent-tool subagent) and kills the
+# turn before the command runs; only interactive sessions ignore it. Never use
+# it as a pass-through (github issue #21). And not "allow" either: that would
+# auto-approve pushes the user's own rules might want to prompt on.
 #
 # Score never auto-approves: the gate keys on categorical verdicts, never a
 # number. Fail-open *about the ticket's state* — when in doubt about a verdict,
-# defer; only a concrete not-ready verdict produces a hard deny.
+# pass; only a concrete not-ready verdict produces a hard deny.
 #
 # But fail CLOSED when the gate cannot run at all: if bbs-ticket is
-# unresolvable there are no verdicts to read, and deferring would disable
-# enforcement in a way that reads exactly like the ordinary ad-hoc-shell defer.
+# unresolvable there are no verdicts to read, and passing would disable
+# enforcement in a way that reads exactly like the ordinary ad-hoc-shell pass.
 # An unverifiable stage is denied, not waved through.
 #
 # Input:  hook JSON on stdin (.tool_input.command).
-# Output: PreToolUse permissionDecision JSON on stdout; always exit 0.
+# Output: PreToolUse permissionDecision JSON on stdout (deny/ask only), or
+#         nothing at all for pass; always exit 0.
 set -uo pipefail
 
-emit() { # $1=allow|deny|ask|defer  $2=reason
+emit() { # $1=deny|ask  $2=reason   (never "defer" — see header)
   printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"%s","permissionDecisionReason":"%s"}}\n' "$1" "$2"
+  exit 0
+}
+
+pass() { # $1=reason — no objection: print nothing on stdout, keep the trail on stderr
+  printf 'pre-tool-gate: %s\n' "$1" >&2
   exit 0
 }
 
 # jq is required to parse hook input; without it we cannot read the command —
 # fail open so the hook never blocks a user who lacks jq.
-command -v jq >/dev/null 2>&1 || emit defer "pre-tool-gate: jq unavailable, deferring"
+command -v jq >/dev/null 2>&1 || pass "jq unavailable"
 
 CMD="$(jq -r '.tool_input.command // empty' 2>/dev/null)"
-[ -n "$CMD" ] || emit defer "pre-tool-gate: no command, deferring"
+[ -n "$CMD" ] || pass "no command"
 
-# Classify the hard stage first (cheap) — defer immediately on anything else, so
+# Classify the hard stage first (cheap) — pass immediately on anything else, so
 # only push/PR/merge pays the ticket-resolution cost. Order matters: merge is
 # checked before a bare push so `gh pr merge` isn't mis-read as a push.
 STAGE=""
@@ -45,7 +60,7 @@ case "$CMD" in
   *"gh pr merge"*|*"glab mr merge"*) STAGE="merge" ;;
   *"gh pr create"*|*"glab mr create"*) STAGE="pr" ;;
   *"git push"*|*"git -C "*" push"*) STAGE="push" ;;
-  *) emit defer "pre-tool-gate: not a hard-stage command, deferring" ;;
+  *) pass "not a hard-stage command" ;;
 esac
 
 # Resolve bbs-ticket into an argv array (the multicall fallback below is two
@@ -86,17 +101,17 @@ _bbs_resolve() { # $1=bbs-<sub>
 }
 
 # Fail CLOSED: with no way to read the ticket's verdicts, this gate cannot tell
-# a reviewed branch from an unreviewed one. Deferring here would silently
+# a reviewed branch from an unreviewed one. Passing here would silently
 # disable the enforcement boundary while looking exactly like the legitimate
-# "ad-hoc shell, no ticket" defer below — that indistinguishability is the bug
-# this guards. Deny loudly instead, in wording no defer path shares.
+# "ad-hoc shell, no ticket" pass below — that indistinguishability is the bug
+# this guards. Deny loudly instead, in wording no pass path shares.
 _bbs_resolve bbs-ticket || emit deny "pre-tool-gate: GATE OFFLINE — cannot resolve bbs-ticket, so the $STAGE cannot be checked against its verdicts. Blocking rather than allowing an unverified $STAGE. Fix: from a checkout, run bin/setup-skills (or 'go build -o bin/bbs ./cmd/bbs'); from a plugin install with no checkout behind it, 'brew install lohi-ai/babysit/bbs' — the plugin ships no compiled binary. Then retry."
 TICKET_BIN=("${BBS_ARGV[@]}")
 
 # Resolve the ticket. exit 0 = id; 1 = no ticket; 2 = conflict. Only gate
 # workflow tickets — ad-hoc shells (no ticket) push freely.
-TICKET="$("${TICKET_BIN[@]}" resolve 2>/dev/null)" || emit defer "pre-tool-gate: no ticket resolved, deferring"
-[ -n "$TICKET" ] || emit defer "pre-tool-gate: empty ticket, deferring"
+TICKET="$("${TICKET_BIN[@]}" resolve 2>/dev/null)" || pass "no ticket resolved"
+[ -n "$TICKET" ] || pass "empty ticket"
 
 vs() { "${TICKET_BIN[@]}" verdict-status --skill "$1" 2>/dev/null || echo none; }
 
@@ -119,7 +134,7 @@ case "$STAGE" in
     elif [ "$REVIEW" = none ]; then
       emit ask "No review-pr verdict on $TICKET. Run /bbs:review-pr or approve to push anyway."
     fi
-    emit defer "pre-tool-gate: review-pr=$REVIEW — ok to push"
+    pass "review-pr=$REVIEW — ok to push"
     ;;
   pr)
     # PR creation is babysit's real handoff-to-human boundary (autopilot never
@@ -137,7 +152,7 @@ case "$STAGE" in
       contradiction:*) emit deny "qa=$QA on $TICKET contradicts its own rubric ($(qa_evidence)) — not a real PASS. Re-run /bbs:qa before opening a PR." ;;
       thin:*|unexplained) emit ask "qa=$QA on $TICKET but evidence is $(qa_evidence) — no confirmed end-to-end web run. Run /bbs:qa or approve to proceed." ;;
     esac
-    emit defer "pre-tool-gate: review-pr=$REVIEW qa=$QA — ok to open PR"
+    pass "review-pr=$REVIEW qa=$QA — ok to open PR"
     ;;
   merge)
     if blocked "$REVIEW" || blocked "$QA"; then
@@ -149,8 +164,8 @@ case "$STAGE" in
       contradiction:*) emit deny "qa=$QA on $TICKET contradicts its own rubric ($(qa_evidence)) — not a real PASS. Re-run /bbs:qa before merging." ;;
       thin:*|unexplained) emit ask "qa=$QA on $TICKET but evidence is $(qa_evidence) — no confirmed end-to-end web run. Run /bbs:qa or approve to merge anyway." ;;
     esac
-    emit defer "pre-tool-gate: review-pr=$REVIEW qa=$QA — ok to merge"
+    pass "review-pr=$REVIEW qa=$QA — ok to merge"
     ;;
 esac
 
-emit defer "pre-tool-gate: no rule matched, deferring"
+pass "no rule matched"

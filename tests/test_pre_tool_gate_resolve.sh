@@ -84,10 +84,11 @@ check "installed shim → dangling chain still denies" deny "$(decision "$out")"
 BIN="$T/bin"; mkdir -p "$BIN"
 cat >"$BIN/bbs-ticket" <<'EOF'
 #!/usr/bin/env bash
+# BBS_STUB_NO_TICKET=1 → ad-hoc shell; BBS_STUB_READY=1 → DONE/PASS verdicts.
 case "$1" in
-  resolve) echo "bs-test0001" ;;
-  verdict-status) echo none ;;
-  qa-evidence) echo none ;;
+  resolve) [ -n "${BBS_STUB_NO_TICKET:-}" ] && exit 1; echo "bs-test0001" ;;
+  verdict-status) if [ -n "${BBS_STUB_READY:-}" ]; then echo DONE; else echo none; fi ;;
+  qa-evidence) if [ -n "${BBS_STUB_READY:-}" ]; then echo "e2e:ok"; else echo none; fi ;;
   *) exit 1 ;;
 esac
 EOF
@@ -97,7 +98,23 @@ withinstall() { echo "{\"tool_input\":{\"command\":\"$1\"}}" | \
 
 check "with-install: git push → ask (unchanged)"      ask "$(decision "$(withinstall "git push origin HEAD")")"
 check "with-install: gh pr create → ask (unchanged)"  ask "$(decision "$(withinstall "gh pr create --fill")")"
-check "with-install: non-hard-stage → defer"          defer "$(decision "$(withinstall "ls -la")")"
+# ── Pass paths must print NOTHING (github issue #21). `permissionDecision:
+# "defer"` is not a pass-through: Claude Code honors it in every non-interactive
+# context (`claude -p`, every Agent-tool subagent) as "pause the session, resume
+# the tool later", so a gate that deferred killed the subagent's turn before the
+# command ran. Compound commands matter too: the hooks.json `if` filter fails
+# open on commands it can't split, so the gate runs on an unrelated loop.
+# "No objection" = empty stdout, and the call falls through to normal rules.
+check "with-install: non-hard-stage → silent"           "" "$(withinstall "ls -la")"
+check "with-install: compound loop → silent"            "" "$(withinstall "for i in 1 2 3; do echo hi-\$i; done")"
+check "no-ticket: git push → silent"                    "" "$(echo '{"tool_input":{"command":"git push origin HEAD"}}' | \
+  env -i PATH="$BIN:/usr/bin:/bin" HOME="$EMPTY" BBS_STUB_NO_TICKET=1 bash "$GATE" 2>/dev/null)"
+check "ready verdicts: git push → silent"               "" "$(echo '{"tool_input":{"command":"git push origin HEAD"}}' | \
+  env -i PATH="$BIN:/usr/bin:/bin" HOME="$EMPTY" BBS_STUB_READY=1 bash "$GATE" 2>/dev/null)"
+check "ready verdicts: gh pr create → silent"           "" "$(echo '{"tool_input":{"command":"gh pr create --fill"}}' | \
+  env -i PATH="$BIN:/usr/bin:/bin" HOME="$EMPTY" BBS_STUB_READY=1 bash "$GATE" 2>/dev/null)"
+# Static guard: the word must not come back as a decision value.
+check "gate never emits permissionDecision defer"       0 "$(sed 's/#.*//' "$GATE" | grep -c 'defer' | tr -d ' ')"
 
 # ── The multicall fallback: bbs-ticket unresolvable, but `bbs ticket` serves it.
 # Must resolve through the fallback and behave exactly like the real bin (ask),
