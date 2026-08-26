@@ -67,7 +67,13 @@ type Record struct {
 	// `run-use` this id to rebind, or its whole mailbox reads as somebody
 	// else's. Empty for a foreman running under the pane-monitor fallback, or
 	// on an Orca that does not serve the orchestration contract.
-	Run       string `yaml:"run,omitempty"`
+	Run string `yaml:"run,omitempty"`
+	// Delivery is the id of the last mailbox batch this foreman was handed,
+	// acknowledged on its next read. It lives on the record rather than in the
+	// reader because every `bbs foreman mailbox wait` is a separate process:
+	// a delivery id held in memory dies with the call that fetched it, and the
+	// batch it would have acknowledged replays for ever.
+	Delivery  string `yaml:"delivery,omitempty"`
 	Status    string `yaml:"status"`
 	Heartbeat string `yaml:"heartbeat"`
 	// Unreachable is the RFC3339 stamp of the last poke that could not be

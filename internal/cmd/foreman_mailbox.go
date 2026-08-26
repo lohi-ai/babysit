@@ -226,12 +226,31 @@ func foremanMailboxWait(args []string) error {
 	if v := kv["types"]; v != "" {
 		types = strings.Split(v, ",")
 	}
-	_, ack := kv["ack"]
-	msgs, err := c.Check(orca.CheckOpts{Run: rec.Run, Types: types, WaitMS: timeout, Ack: ack})
+	// --ack acknowledges the batch handed out by the PREVIOUS wait, which is
+	// the one the caller has now finished acting on. The id comes off the
+	// record, not from the caller: `--ack` is a decision ("I am done with the
+	// last batch"), and making the skill carry a delivery id between two shell
+	// invocations would be one more thing to lose on a crash.
+	var ack string
+	if _, want := kv["ack"]; want {
+		ack = rec.Delivery
+	}
+	batch, err := c.Check(orca.CheckOpts{Run: rec.Run, Types: types, WaitMS: timeout, Ack: ack})
 	if err != nil {
 		return err
 	}
-	fmt.Printf("MAILBOX=on\nCOUNT=%d\n", len(msgs))
+	// Record before printing. If the process dies between the two, the worst
+	// case is a batch acked without being acted on — recoverable from disk,
+	// where the verdicts are. The other order loses the id and replays the
+	// batch for ever.
+	if batch.DeliveryID != rec.Delivery {
+		rec.Delivery = batch.DeliveryID
+		if err := foreman.Save(rec); err != nil {
+			return err
+		}
+	}
+	msgs := batch.Messages
+	fmt.Printf("MAILBOX=on\nCOUNT=%d\nDELIVERY=%s\n", len(msgs), batch.DeliveryID)
 	for _, m := range msgs {
 		// worker_done is the doorbell, not the verdict: the skill still reads
 		// `bbs ticket verdict-status` before believing anything finished.

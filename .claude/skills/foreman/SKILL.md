@@ -300,13 +300,15 @@ bbs foreman mailbox dispatch "$FM" --ticket "$TICKET" --terminal "$T"
 
 # the monitor: one call for every worker at once
 bbs foreman mailbox wait "$FM" --timeout-ms 60000
-#   → COUNT=<n> then one JSON line per message:
+#   → COUNT=<n>, DELIVERY=<id>, then one JSON line per message:
 #     {"id","type","subject","task","outcome","files","needs_answer","body"}
 ```
 
 Act on each line, then acknowledge the batch by passing `--ack` on the *next*
 wait — delivery replays until acknowledged, which is why an event can no longer
-be lost. Never `--ack` before you have acted.
+be lost. Never `--ack` before you have acted. You do not carry the delivery id
+yourself: it is recorded on the foreman, so `--ack` still acknowledges the right
+batch after a crash between the two calls.
 
 - `type: worker_done` — the **doorbell, not the verdict**. Confirm on disk with
   `bbs ticket verdict-status` before believing anything finished.

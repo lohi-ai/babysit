@@ -217,24 +217,42 @@ type CheckOpts struct {
 	// expires. This is the call that replaces N per-worker poll loops with one
 	// blocking read for the whole batch.
 	WaitMS int
-	// Ack acknowledges the previous batch before reading. Delivery is FIFO and
-	// replays until acknowledged, which is the property the pane monitor did
-	// not have: an event that scrolled past a 60-line tail was simply gone.
-	Ack bool
+	// Ack is the DeliveryID of the previous batch, acknowledged before this
+	// read. Delivery is FIFO and replays until acknowledged, which is the
+	// property the pane monitor did not have: an event that scrolled past a
+	// 60-line tail was simply gone.
+	//
+	// It is an id and not a bool because `--ack` takes one. A bare `--ack`
+	// is accepted by the CLI and silently acknowledges nothing — the response
+	// comes back `acknowledged: null, replayed: true` — so a caller that
+	// thought it was acking gets the same batch again on every read, forever,
+	// acting on the same worker_done each time. That failure is invisible
+	// until you look at the field, which is why Batch carries it.
+	Ack string
+}
+
+// Batch is one mailbox read: the messages, plus the handle needed to
+// acknowledge them. The two travel together because acknowledging is a
+// separate later call — a foreman acts on a batch, then acks it on its NEXT
+// read — and a delivery id that got dropped in between is a batch that
+// replays.
+type Batch struct {
+	DeliveryID string
+	Messages   []Message
 }
 
 // Check reads the mailbox. A wait that expires with nothing is not an error —
 // it returns no messages, and the caller loops.
-func (c *Client) Check(o CheckOpts) ([]Message, error) {
+func (c *Client) Check(o CheckOpts) (Batch, error) {
 	if !c.Orchestration() {
-		return nil, ErrNoOrchestration
+		return Batch{}, ErrNoOrchestration
 	}
 	args := []string{"orchestration", "check"}
 	if o.Run != "" {
 		args = append(args, "--run", o.Run)
 	}
-	if o.Ack {
-		args = append(args, "--ack")
+	if o.Ack != "" {
+		args = append(args, "--ack", o.Ack)
 	}
 	if len(o.Types) > 0 {
 		args = append(args, "--types", strings.Join(o.Types, ","))
@@ -244,10 +262,11 @@ func (c *Client) Check(o CheckOpts) ([]Message, error) {
 	}
 	raw, err := c.run(args...)
 	if err != nil {
-		return nil, err
+		return Batch{}, err
 	}
 	var wrap struct {
-		Messages []struct {
+		DeliveryID string `json:"deliveryId"`
+		Messages   []struct {
 			ID       string      `json:"id"`
 			Type     string      `json:"type"`
 			Subject  string      `json:"subject"`
@@ -259,7 +278,7 @@ func (c *Client) Check(o CheckOpts) ([]Message, error) {
 		} `json:"messages"`
 	}
 	if err := json.Unmarshal(raw, &wrap); err != nil {
-		return nil, fmt.Errorf("orchestration check: %w", err)
+		return Batch{}, fmt.Errorf("orchestration check: %w", err)
 	}
 	out := make([]Message, 0, len(wrap.Messages))
 	for _, m := range wrap.Messages {
@@ -270,7 +289,7 @@ func (c *Client) Check(o CheckOpts) ([]Message, error) {
 		applyPayload(&msg, m.Payload)
 		out = append(out, msg)
 	}
-	return out, nil
+	return Batch{DeliveryID: wrap.DeliveryID, Messages: out}, nil
 }
 
 // Reply answers one message, unblocking a worker parked on `ask`.

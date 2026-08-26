@@ -111,6 +111,14 @@ func (a *apState) reviewGate(args []string) {
 	code, filled, reason := selfResolveGate(st, env, rec, o.rubric)
 
 	td, _ := a.ticketDir(ticketID)
+	if td == "" {
+		// Without a ticket dir the round counter has nowhere to live, and an
+		// un-spendable budget is not a lenient gate — it is an infinite one:
+		// every round reads as the first, `spent >= reviewRounds` never holds,
+		// and the reviewer redirects for ever instead of ever reaching BLOCKED.
+		// Fall back to the same relative path reviewPrompt already uses.
+		td = filepath.Join("tickets", ticketID)
+	}
 	switch code {
 	case exitFloor:
 		a.logReviewGate(ticketID, "escalate", "floor: "+reason, filled)
@@ -123,7 +131,14 @@ func (a *apState) reviewGate(args []string) {
 
 	case exitRubric:
 		spent := bumpReviewRound(td)
-		a.logReviewGate(ticketID, "redirect", "rubric unfilled: "+reason, filled)
+		// Log the decision that was actually made. A BLOCKED recorded as a
+		// redirect reads, later, as a run that was still iterating when it had
+		// in fact stopped — and this log is the only record of it.
+		choice := "redirect"
+		if spent >= reviewRounds {
+			choice = "blocked"
+		}
+		a.logReviewGate(ticketID, choice, "rubric unfilled: "+reason, filled)
 		if spent >= reviewRounds {
 			fmt.Printf("VERDICT=BLOCKED\nREASON=rubric\nUNFILLED=%s\nROUNDS=%d/%d\n",
 				reason, spent, reviewRounds)

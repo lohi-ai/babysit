@@ -24,7 +24,7 @@ func orchestrationBody(caps string) string {
       reply)       echo '{"ok":true,"result":{}}' ;;
       ask)         echo '{"ok":true,"result":{"messageId":"msg_q1","answer":"option B"}}' ;;
       check)
-        echo '{"ok":true,"result":{"runId":"run_abc123","messages":[{"id":"msg_1","type":"worker_done","subject":"bs-x1 done","body":"QA passed","from_handle":"term_9","sequence":88,"payload":"{\"taskId\":\"task_def456\",\"dispatchId\":\"ctx_9\",\"outcome\":\"succeeded\",\"filesModified\":[\"a.go\",\"b.go\"]}"}],"count":1}}' ;;
+        echo '{"ok":true,"result":{"runId":"run_abc123","deliveryId":"delivery_1","messages":[{"id":"msg_1","type":"worker_done","subject":"bs-x1 done","body":"QA passed","from_handle":"term_9","sequence":88,"payload":"{\"taskId\":\"task_def456\",\"dispatchId\":\"ctx_9\",\"outcome\":\"succeeded\",\"filesModified\":[\"a.go\",\"b.go\"]}"}],"count":1}}' ;;
       *) echo '{"ok":true,"result":{}}' ;;
     esac ;;
 esac`
@@ -84,7 +84,7 @@ func TestWithoutTheCapabilityEveryMailboxCallRefusesDistinguishably(t *testing.T
 	assertNoOrchestration(t, "TaskCreate", err)
 	_, err = c.Dispatch("run_1", "task_1", "term_1")
 	assertNoOrchestration(t, "Dispatch", err)
-	_, err = c.Check(CheckOpts{})
+	_, err = c.Check(CheckOpts{}) //nolint:errcheck // the error IS the assertion
 	assertNoOrchestration(t, "Check", err)
 	assertNoOrchestration(t, "Reply", c.Reply("run_1", "msg_1", "yes"))
 	_, err = c.Ask(AskOpts{Question: "q"})
@@ -150,19 +150,25 @@ func TestRunLifecycleBindsFreshAndRebindsOnResume(t *testing.T) {
 // have to do that itself.
 func TestCheckReturnsTypedMessagesWithTheirPayloadFlattened(t *testing.T) {
 	c, log := withOrchestration(t)
-	msgs, err := c.Check(CheckOpts{
+	batch, err := c.Check(CheckOpts{
 		Run:    "run_abc123",
 		Types:  []string{"worker_done", "escalation", "question"},
 		WaitMS: 60000,
-		Ack:    true,
+		Ack:    "delivery_prev",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(msgs) != 1 {
-		t.Fatalf("got %d messages, want 1", len(msgs))
+	if len(batch.Messages) != 1 {
+		t.Fatalf("got %d messages, want 1", len(batch.Messages))
 	}
-	m := msgs[0]
+	// The id that acknowledges this batch has to come back with it: acking is
+	// a separate later call, and an id dropped in between is a batch that
+	// replays for ever.
+	if batch.DeliveryID != "delivery_1" {
+		t.Errorf("deliveryId = %q, want delivery_1", batch.DeliveryID)
+	}
+	m := batch.Messages[0]
 	if !m.Done() {
 		t.Errorf("worker_done did not read as done: %+v", m)
 	}
@@ -185,8 +191,10 @@ func TestCheckReturnsTypedMessagesWithTheirPayloadFlattened(t *testing.T) {
 		"--wait",
 		"--timeout-ms 60000",
 		// FIFO replays until acknowledged — that is the property the 60-line
-		// pane tail did not have.
-		"--ack",
+		// pane tail did not have. `--ack` takes the id of the batch being
+		// acknowledged; a bare `--ack` is accepted and acknowledges nothing,
+		// so the same messages come back on every read.
+		"--ack delivery_prev",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("check missing %q:\n%s", want, got)
@@ -204,12 +212,12 @@ esac`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	msgs, err := c.Check(CheckOpts{WaitMS: 1000})
+	batch, err := c.Check(CheckOpts{WaitMS: 1000})
 	if err != nil {
 		t.Fatalf("an expired wait must not be an error: %v", err)
 	}
-	if len(msgs) != 0 {
-		t.Errorf("got %d messages from an empty mailbox", len(msgs))
+	if len(batch.Messages) != 0 {
+		t.Errorf("got %d messages from an empty mailbox", len(batch.Messages))
 	}
 }
 

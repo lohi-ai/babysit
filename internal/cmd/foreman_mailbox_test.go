@@ -40,7 +40,7 @@ case "$1" in
       task-create) echo '{"ok":true,"result":{"task":{"id":"task_1"}}}' ;;
       dispatch)    echo '{"ok":true,"result":{"preamble":"PRE"}}' ;;
       reply)       echo '{"ok":true,"result":{}}' ;;
-      check)       echo '{"ok":true,"result":{"messages":[{"id":"msg_1","type":"worker_done","subject":"bs-x1","from_handle":"term_9","payload":"{\"taskId\":\"task_1\",\"outcome\":\"succeeded\",\"filesModified\":[\"a.go\"]}"},{"id":"msg_2","type":"ask","subject":"409 or merge?","from_handle":"term_9"}],"count":2}}' ;;
+      check)       echo '{"ok":true,"result":{"deliveryId":"delivery_1","messages":[{"id":"msg_1","type":"worker_done","subject":"bs-x1","from_handle":"term_9","payload":"{\"taskId\":\"task_1\",\"outcome\":\"succeeded\",\"filesModified\":[\"a.go\"]}"},{"id":"msg_2","type":"ask","subject":"409 or merge?","from_handle":"term_9"}],"count":2}}' ;;
       *) echo '{"ok":true,"result":{}}' ;;
     esac ;;
   *) echo '{"ok":true,"result":{}}' ;;
@@ -179,7 +179,7 @@ func TestMailboxWaitReturnsTypedMessagesForTheWholeBatch(t *testing.T) {
 	}
 
 	got := readCalls(t, log)
-	for _, want := range []string{"--wait", "--timeout-ms 45000", "--ack", "--types worker_done,escalation,question,ask"} {
+	for _, want := range []string{"--wait", "--timeout-ms 45000", "--types worker_done,escalation,question,ask"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("wait missing %q:\n%s", want, got)
 		}
@@ -198,6 +198,48 @@ func TestMailboxWaitDoesNotAcknowledgeUnlessAsked(t *testing.T) {
 	})
 	if strings.Contains(readCalls(t, log), "--ack") {
 		t.Errorf("wait acknowledged a batch nobody has acted on yet:\n%s", readCalls(t, log))
+	}
+}
+
+// The whole justification for adopting the bus is that a batch replays until
+// acknowledged, so no event can be lost. `--ack` takes the id of the batch
+// being acknowledged: passed bare it is accepted and acknowledges nothing
+// (`acknowledged: null, replayed: true`), and a foreman that believed it was
+// acking would be handed the same worker_done on every read, forever, acting
+// on it every time. Nothing surfaces that — the call succeeds.
+//
+// The id therefore has to survive between two separate `bbs foreman mailbox
+// wait` processes, which is why it lives on the record and not in the reader.
+func TestMailboxWaitAcknowledgesThePreviousBatchByIdAcrossProcesses(t *testing.T) {
+	log := fakeOrcaMailbox(t, `"orchestration.contract.v1"`)
+	seedForeman(t, "fm-a", "run_rec")
+
+	// First read: nothing to acknowledge yet, and the delivery id is recorded.
+	out := captureStdout(t, func() {
+		if err := foremanMailbox([]string{"wait", "fm-a"}); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if !strings.Contains(out, "DELIVERY=delivery_1") {
+		t.Errorf("wait did not report the delivery id: %q", out)
+	}
+	rec, err := foreman.Load("fm-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Delivery != "delivery_1" {
+		t.Fatalf("delivery id not persisted: %q — the next process cannot ack what it never saw", rec.Delivery)
+	}
+
+	// Second read, in what is a fresh process in real use: it acknowledges the
+	// batch the first one handed out, by id.
+	captureStdout(t, func() {
+		if err := foremanMailbox([]string{"wait", "fm-a", "--ack"}); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if got := readCalls(t, log); !strings.Contains(got, "--ack delivery_1") {
+		t.Errorf("--ack carried no delivery id — it acknowledges nothing and the batch replays:\n%s", got)
 	}
 }
 
