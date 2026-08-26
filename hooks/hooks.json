@@ -1,5 +1,5 @@
 {
-  "description": "babysit artifact-gated approval — hard-stage gate (PreToolUse) + verdict-contract audit (PostToolUse). Prompts are advisory; these hooks are the control mechanism.",
+  "description": "babysit artifact-gated approval — hard-stage gate (PreToolUse) + verdict-contract audit (PostToolUse). Prompts are advisory; these hooks are the control mechanism. The PreToolUse `if` filters fail open on commands Claude Code cannot split (loops, etc.), so pre-tool-gate must stay silent (no output) on anything that is not push/PR/merge — never `defer`, see issue #21.",
   "hooks": {
     "PreToolUse": [
       {

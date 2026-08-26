@@ -17,11 +17,20 @@ hard-stage **gate is unchanged** (still `verdicts/` only). See
 
 | Situation | Decision |
 |-----------|----------|
-| Command isn't push/PR/merge | `defer` (hook never fires in prod — `if`-matched) |
-| Hard stage, no ticket resolves (ad-hoc shell) | `defer` (fail-open) |
+| Command isn't push/PR/merge | pass — no output (the `if` filter usually skips the hook, but fails open on compound commands) |
+| Hard stage, no ticket resolves (ad-hoc shell) | pass — no output (fail-open) |
 | Hard stage, required verdict missing | `ask` (human checkpoint) |
 | Hard stage, verdict `BLOCKED`/`NEEDS_CONTEXT` | **`deny`** + reason naming the skill to run |
-| Hard stage, verdict `DONE`/`DONE_WITH_CONCERNS` | `defer` (no objection) |
+| Hard stage, verdict `DONE`/`DONE_WITH_CONCERNS` | pass — no output (no objection) |
+
+"Pass" is **empty stdout, exit 0** — the hook abstains and the call falls
+through to the user's normal permission rules. It is never
+`permissionDecision: "defer"`: in Claude Code that means "pause this session so
+an SDK caller can resume the tool later", and it is honored in every
+non-interactive context (`claude -p`, every Agent-tool subagent), killing the
+turn before the command runs. Only interactive sessions ignore it, which is why
+the original `defer`-as-pass-through went unnoticed (issue #21). Nor is it
+`allow`, which would auto-approve pushes the user's own rules might prompt on.
 
 `push` gates on `review-pr` (legacy `review` fallback); `pr` and `merge` gate
 on **both** `review-pr` AND `qa`. PR creation is babysit's real
@@ -113,7 +122,7 @@ The preamble "session-writer hook" is inline bash, not a harness hook.
 `${CLAUDE_PLUGIN_ROOT}/bin/hooks/pre-tool-gate`. Matches the irreversible
 commands and checks the ticket's verdict artifacts are present **and** PASS
 before allowing them. Resolves the ticket via `bbs ticket resolve`; if no ticket
-resolves (ad-hoc shell), `defer` (don't gate non-workflow work).
+resolves (ad-hoc shell), pass (don't gate non-workflow work).
 
 | Stage (matched command) | Required artifacts | Allow when |
 |-------------------------|--------------------|-----------|
@@ -170,7 +179,7 @@ harness the user rejected. **Keep skills as guidance; put the gate in the hook.*
 
 1. **Ship Hook A at all?** It denies `git push` / `gh pr merge` when evidence is
    missing — powerful, but it will block legitimate ad-hoc pushes if the
-   ticket-resolution / `defer`-when-no-ticket logic is wrong. Blast radius is real.
+   ticket-resolution / pass-when-no-ticket logic is wrong. Blast radius is real.
 2. **Exact gate policy** — the table above is a starting point. Which commands,
    which artifacts per stage, and how strict (deny vs `ask`)?
 3. **Hook B scope** — all `bbs:` skills, or only the work skills?
