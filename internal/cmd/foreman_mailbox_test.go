@@ -40,7 +40,20 @@ case "$1" in
       task-create) echo '{"ok":true,"result":{"task":{"id":"task_1"}}}' ;;
       dispatch)    echo '{"ok":true,"result":{"preamble":"PRE"}}' ;;
       reply)       echo '{"ok":true,"result":{}}' ;;
-      check)       echo '{"ok":true,"result":{"deliveryId":"delivery_1","messages":[{"id":"msg_1","type":"worker_done","subject":"bs-x1","from_handle":"term_9","payload":"{\"taskId\":\"task_1\",\"outcome\":\"succeeded\",\"filesModified\":[\"a.go\"]}"},{"id":"msg_2","type":"ask","subject":"409 or merge?","from_handle":"term_9"}],"count":2}}' ;;
+      check)
+        # The runtime validates --types against a fixed enum and rejects the
+        # whole call on an unknown one ("Invalid --types: ask") rather than
+        # ignoring it. The fake used to accept anything, which is exactly how a
+        # type name that does not exist shipped and took the monitor's only
+        # blocking read down with it. Reject here too, so a made-up name fails
+        # in the suite instead of against a live batch.
+        for t in $(echo "$*" | tr ' ' '\n' | grep -A0 -E '^[a-z_]+,|^[a-z_]+$' | tail -1 | tr ',' ' '); do
+          case "$t" in
+            worker_done|escalation|question|handoff) ;;
+            *) echo "orca orchestration: Invalid --types: $t" >&2; exit 1 ;;
+          esac
+        done
+        echo '{"ok":true,"result":{"deliveryId":"delivery_1","messages":[{"id":"msg_1","type":"worker_done","subject":"bs-x1","from_handle":"term_9","payload":"{\"taskId\":\"task_1\",\"outcome\":\"succeeded\",\"filesModified\":[\"a.go\"]}"},{"id":"msg_2","type":"question","subject":"409 or merge?","from_handle":"dispatch:ctx_1"}],"count":2}}' ;;
       *) echo '{"ok":true,"result":{}}' ;;
     esac ;;
   *) echo '{"ok":true,"result":{}}' ;;
@@ -179,7 +192,7 @@ func TestMailboxWaitReturnsTypedMessagesForTheWholeBatch(t *testing.T) {
 	}
 
 	got := readCalls(t, log)
-	for _, want := range []string{"--wait", "--timeout-ms 45000", "--types worker_done,escalation,question,ask"} {
+	for _, want := range []string{"--wait", "--timeout-ms 45000", "--types worker_done,escalation,question,handoff"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("wait missing %q:\n%s", want, got)
 		}

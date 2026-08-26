@@ -66,7 +66,7 @@ func (c *Client) Orchestration() bool { return c.Supports(CapOrchestration) }
 // ANSI terminal tail: the fields below are what the pane monitor had to infer
 // from text, and could lose entirely when a line scrolled past a 60-line read.
 //
-// Type is the routing key — worker_done, escalation, question, ask. Payload
+// Type is the routing key — worker_done, escalation, question, handoff. Payload
 // fields (TaskID, DispatchID, Outcome, FilesModified) arrive as a JSON string
 // inside the envelope and are flattened here so a caller never parses twice.
 type Message struct {
@@ -91,9 +91,11 @@ type Message struct {
 func (m Message) Done() bool { return m.Type == "worker_done" }
 
 // NeedsAnswer reports a message the foreman must reply to before the sender can
-// continue. `ask` blocks the worker until Reply lands.
+// continue. A worker that called `orca orchestration ask` is parked until Reply
+// lands — and it arrives here as a `question`: `ask` is the command, never a
+// message type, and the runtime rejects the name outright.
 func (m Message) NeedsAnswer() bool {
-	return m.Type == "ask" || m.Type == "question" || m.Type == "escalation"
+	return m.Type == "question" || m.Type == "escalation"
 }
 
 // RunCreate binds a FRESH Run to this terminal and returns its id.

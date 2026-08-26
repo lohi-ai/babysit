@@ -38,7 +38,14 @@ const foremanMailboxUsage = `Usage:
 // mailboxTypes are the message kinds a foreman acts on. Everything else on the
 // bus is somebody else's business, and filtering here rather than in the skill
 // keeps the batch's blocking read from waking on chatter.
-var mailboxTypes = []string{"worker_done", "escalation", "question", "ask"}
+//
+// These are the names the runtime accepts, not the names of the commands that
+// produce them: `orca orchestration ask` — the worker half of the
+// AGENT_ROLE=orca escalation channel — delivers a message of type `question`.
+// There is no `ask` type, and asking for one is not ignored: the whole call is
+// rejected with `Invalid --types: ask`, which takes the monitor's one blocking
+// read down with it.
+var mailboxTypes = []string{"worker_done", "escalation", "question", "handoff"}
 
 func foremanMailbox(args []string) error {
 	if len(args) == 0 {
