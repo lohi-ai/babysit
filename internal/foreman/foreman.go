@@ -46,7 +46,7 @@ type Record struct {
 	WorkspaceRef   string `yaml:"workspace_ref"`
 	WorkspaceTitle string `yaml:"workspace_title"`
 	// Agent is the coding-agent CLI this foreman's session was minted by
-	// ("claude", "grok"). It is pinned at spawn and read back on resume rather
+	// (see internal/agent). It is pinned at spawn and read back on resume rather
 	// than re-resolved from config: Session below is only meaningful to the CLI
 	// that created it, so resuming with whatever config says today would hand a
 	// different agent a uuid it has never heard of. Empty means claude — every

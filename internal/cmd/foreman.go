@@ -464,7 +464,7 @@ func spawnForeman(id, dir, command, agentFlag string) (string, error) {
 	}
 
 	// Mint the durable handle only once the profile is known, because what a
-	// handle even IS depends on the agent. claude and grok take a uuid;
+	// handle even IS depends on the agent. Only some agents take a uuid;
 	// omp has no mint flag and gets a private session directory instead, so
 	// that "the most recent conversation in there" is unambiguously this
 	// foreman's rather than whatever else ran in the same checkout; codex has

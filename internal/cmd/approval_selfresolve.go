@@ -103,12 +103,60 @@ func floorHits(text string) []string {
 // rubricKeys are the design-checkpoint rubric lines from foreman/SKILL.md.
 // Every one must carry named evidence before any auto-approval — that is the
 // bar a grant explicitly does not lower.
-var rubricKeys = []struct{ canon, match string }{
-	{"coverage", "coverage"},
-	{"host-page consistency", "host"},
-	{"reuse", "reuse"},
-	{"prototype inspected", "prototype"},
-	{"scope", "scope"},
+//
+// `nullable` marks the two lines that a non-UI change cannot answer as written.
+// The rubric was authored for user-facing work: on a CLI, Go or markdown ticket
+// "host-page consistency" and "prototype inspected" have no referent at all, so
+// insisting a missing line is never a pass left those tickets with a rubric
+// that could only be filled dishonestly or redirected forever. Those two accept
+// an explicit `N/A — <reason>` instead.
+//
+// Coverage, reuse and scope are never nullable, and that asymmetry is the whole
+// design: they are the lines that carry the actual review. Every acceptance
+// criterion maps to a plan step, existing code is reused or a new thing is
+// justified, and nothing exceeds the request — all three mean exactly as much
+// for a Go package as for a screen. Making them nullable too would turn the
+// escape hatch into a way to approve anything.
+var rubricKeys = []struct {
+	canon, match string
+	nullable     bool
+}{
+	{canon: "coverage", match: "coverage"},
+	{canon: "host-page consistency", match: "host", nullable: true},
+	{canon: "reuse", match: "reuse"},
+	{canon: "prototype inspected", match: "prototype", nullable: true},
+	{canon: "scope", match: "scope"},
+}
+
+// naPattern matches a line that declines a nullable rubric key WITH a reason.
+// A bare "N/A" stays noise: the reason is the evidence here, and it is what
+// makes "this ticket has no UI surface" reviewable after the fact rather than
+// a word that means nothing.
+var naPattern = regexp.MustCompile(`(?i)^n/?a\b[\s:—–-]*(.+)$`)
+
+// naReason returns the stated reason for declining a nullable key, and whether
+// the line was an N/A at all. The reason has to be long enough to be a reason —
+// the same bar the evidence lines are held to.
+func naReason(val string) (string, bool) {
+	m := naPattern.FindStringSubmatch(strings.TrimSpace(val))
+	if m == nil {
+		return "", false
+	}
+	reason := strings.TrimSpace(m[1])
+	if len([]rune(reason)) < 8 {
+		return "", false
+	}
+	return reason, true
+}
+
+// isNA reports whether a line declines its key at all, reasoned or bare. It is
+// deliberately wider than naReason: naReason answers "may this stand as
+// evidence", isNA answers "was this an attempt to decline", and a non-nullable
+// key needs the second question so a well-worded refusal is not mistaken for a
+// well-worded answer.
+func isNA(val string) bool {
+	v := strings.ToLower(strings.TrimSpace(val))
+	return v == "n/a" || v == "na" || naPattern.MatchString(strings.TrimSpace(val))
 }
 
 // rubricNoise is evidence that is not evidence: a line filled in with a
@@ -138,10 +186,24 @@ func parseRubric(text string) (filled map[string]string, missing []string) {
 		key = strings.ToLower(strings.Trim(strings.TrimSpace(key), "*`_"))
 		val = strings.TrimSpace(val)
 		for _, rk := range rubricKeys {
-			if strings.HasPrefix(key, rk.match) && filled[rk.canon] == "" {
-				if !rubricNoise[strings.ToLower(val)] && len([]rune(val)) >= 8 {
-					filled[rk.canon] = val
+			if !strings.HasPrefix(key, rk.match) || filled[rk.canon] != "" {
+				continue
+			}
+			// A nullable key may be declined, but only with a stated reason —
+			// which is then recorded as the evidence, so the decisions log shows
+			// what was skipped and why. On a key that is never nullable an N/A
+			// is a missing line, however well argued: "N/A — this is a backend
+			// change" is long enough and specific enough to read as evidence to
+			// a length check, and letting it through would hand back the
+			// approve-anything hatch the nullable list exists to avoid.
+			if isNA(val) {
+				if reason, ok := naReason(val); ok && rk.nullable {
+					filled[rk.canon] = "N/A — " + reason
 				}
+				continue
+			}
+			if !rubricNoise[strings.ToLower(val)] && len([]rune(val)) >= 8 {
+				filled[rk.canon] = val
 			}
 		}
 	}

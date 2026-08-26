@@ -52,7 +52,7 @@ the `/goal` block at the front of the spawn prompt). Two independent flags
 replace that paste; `--stop-after` still wins. If `SPAWNED` is already true,
 you are that process: skip the handoff and work. Start-agent is this
 session (`GROK_SESSION_ID`/`GROK_AGENT` → grok, else claude).
-- `--reviewer claude|grok` (alias `--review`) — spawn that agent to review
+- `--reviewer <agent>` (alias `--review`) — spawn that agent to review
   the plan and prototype. Omit it: no agent review. From the worktree:
   `bbs autopilot spawn-review --ticket "$TICKET" --workflow "$WF" --agent <name>`
   plus `--builder <start-agent>` only when `--auto` is also set (approve

@@ -16,7 +16,8 @@ import (
 // Two independent flags, two commands:
 //
 //	--auto              spawn-goal on the agent that started this session
-//	--reviewer claude|grok   spawn-review on that agent (omit = no review)
+//	--reviewer <agent>       spawn-review on that agent (omit = no review);
+//	                         any registered agent, and never the builder
 //
 // Both: review first; --builder (the start agent) makes approve run spawn-goal.
 
@@ -165,7 +166,8 @@ func (a *apState) runSpawnGoal(o spawnOpts) (spawnResult, error) {
 
 func (a *apState) runSpawnReview(o spawnOpts) (spawnResult, error) {
 	if o.agentFlag == "" {
-		return spawnResult{}, errSpawn{2, "spawn-review: --agent claude|grok is required"}
+		return spawnResult{}, errSpawn{2, "spawn-review: --agent is required — one of: " +
+			strings.Join(agent.Names(), ", ")}
 	}
 	// --builder only when --auto is also set (skill passes it). Omit it
 	// and the reviewer persists the review and stops — no spawn-goal. It is
@@ -175,6 +177,18 @@ func (a *apState) runSpawnReview(o spawnOpts) (spawnResult, error) {
 	if o.builder != "" {
 		if _, err := agent.ByName(o.builder); err != nil {
 			return spawnResult{}, errSpawn{2, "spawn-review: --builder " + err.Error()}
+		}
+		// Independence is the flag's only purpose. Spawning a second process on
+		// the same model to grade the first one's plan satisfies --reviewer
+		// while delivering nothing: the whole value of an agent reviewer is a
+		// read the builder did not produce. Compare worker_agent / foreman_agent,
+		// which deliberately do not inherit for exactly this reason.
+		if o.builder == o.agentFlag {
+			return spawnResult{}, errSpawn{2, fmt.Sprintf(
+				"spawn-review: --reviewer %s cannot also be --builder %s — a plan reviewed by the "+
+					"model that wrote it is not an independent read, which is the only thing this flag buys. "+
+					"Pick a different reviewer (known agents: %s), or drop --reviewer and let the human review.",
+				o.agentFlag, o.builder, strings.Join(agent.Names(), ", "))}
 		}
 	}
 	return a.runSpawn(reviewJob(o.builder), o)
@@ -211,21 +225,41 @@ func (a *apState) reviewPrompt(prof agent.Profile, ticket, workflow, builder str
 		"\n" +
 		"Fill every rubric line with named evidence (a missing line is a redirect, never a pass):\n" +
 		"- Coverage — each acceptance criterion maps to a named plan step / design element\n" +
-		"- Host-page consistency — name the sibling screen/component (or N/A with why)\n" +
-		"- Reuse — name existing components; a new one needs a stated reason\n" +
+		"- Host-page consistency — name the sibling screen/component\n" +
+		"- Reuse — name what already exists that this uses; something new needs a stated reason\n" +
 		"- Prototype inspected — actually Read the prototype; file existence is not evidence\n" +
 		"- Scope — nothing beyond the request wording\n" +
+		"\n" +
+		"Two of those lines have no referent on a change with no UI surface — a CLI, a\n" +
+		"Go package, a docs edit. Write those as `N/A — <reason>`, which counts as\n" +
+		"filled: only Host-page consistency and Prototype inspected may be declined\n" +
+		"that way, and a bare `N/A` with no reason does not count. Coverage, Reuse and\n" +
+		"Scope always have an answer — they mean as much for a Go package as a screen.\n" +
 		"\n" +
 		"Persist the filled rubric:\n" +
 		"  bbs ticket set-review --skill plan --body-file <review.md>\n"
 	if builder != "" {
 		body += "\n" +
-			"Then:\n" +
-			"- APPROVE (every line filled, no money/auth/irreversible-data path): run\n" +
-			"    bbs autopilot spawn-goal --ticket " + ticket + " --workflow " + workflow + " --agent " + builder + "\n" +
-			"- REDIRECT or BLOCKED: write the gaps into the review; do not spawn-goal.\n"
+			"Then run the gate. It is the only path to the builder — it re-reads the\n" +
+			"design artifacts, checks the non-delegable floor, checks the rubric, logs\n" +
+			"the decision, and starts the builder itself when all three pass:\n" +
+			"  bbs autopilot review-gate --ticket " + ticket + " --workflow " + workflow +
+			" --builder " + builder + " --rubric-file <review.md>\n" +
+			"\n" +
+			"Do not run spawn-goal yourself, and do not decide the outcome in prose —\n" +
+			"the gate decides. Act on what it prints:\n" +
+			"  VERDICT=APPROVE   it already started the builder; you are done\n" +
+			"  VERDICT=REDIRECT  the named lines are unfilled. Re-plan against those gaps\n" +
+			"                    (plan-draft), then run review-gate again. ROUNDS= says\n" +
+			"                    how many you have left\n" +
+			"  VERDICT=BLOCKED   rounds spent — report BLOCKED naming the unfilled lines\n" +
+			"  VERDICT=ESCALATE  money/auth/irreversible-data, or a posture bound.\n" +
+			"                    Report NEEDS_CONTEXT naming the path; never approve it\n"
 	} else {
-		body += "\nDo not spawn-goal. Persist the review and stop.\n"
+		body += "\nRun the gate to record the verdict, then stop — it will not start a builder\n" +
+			"without --builder:\n" +
+			"  bbs autopilot review-gate --ticket " + ticket + " --workflow " + workflow +
+			" --rubric-file <review.md>\n"
 	}
 	return body + "\nPrint a STATUS block. Do not invoke " + prof.SkillRef("autopilot") + "."
 }

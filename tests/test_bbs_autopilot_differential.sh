@@ -29,7 +29,7 @@ mask() { sed -E 's/[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z/<TS>/g
 # a reworded or reordered usage line still fails. Every entry needs a reason.
 #   bs-85spcpj3: `git-flow` prints the profile-derived policy (BBS_MODE, …).
 #   spawn-goal: `--auto` launches /goal on the start agent (post-port).
-#   spawn-review: `--reviewer claude|grok` reviews plan + prototype (post-port).
+#   spawn-review: `--reviewer <agent>` reviews plan + prototype (post-port).
 mask_usage() { sed -E 's/\|git-flow\|/|/; s/\|spawn-goal\|spawn-review\}/}/'; }
 cmp_case() { # name  expected(masked)  actual(masked)  ec_e  ec_a
   if [ "$2" = "$3" ] && [ "$4" = "$5" ]; then

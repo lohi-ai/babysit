@@ -216,7 +216,7 @@ func TestSpawnGoalReadsWorkflowFromCheckpoint(t *testing.T) {
 	}
 }
 
-func TestReviewPromptAsksToPersistThenSpawnGoal(t *testing.T) {
+func TestReviewPromptAsksToPersistThenRunTheGate(t *testing.T) {
 	a := spawnState(t)
 	got := a.reviewPrompt(mustAgent(t, "claude"), "bs-ab123", "builder", "")
 	for _, want := range []string{
@@ -226,23 +226,93 @@ func TestReviewPromptAsksToPersistThenSpawnGoal(t *testing.T) {
 		"Coverage",
 		"Prototype inspected",
 		"bbs ticket set-review --skill plan",
-		"Do not spawn-goal",
+		"bbs autopilot review-gate --ticket bs-ab123",
 		"Do not invoke /bbs:autopilot",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("review prompt missing %q\n%s", want, got)
 		}
 	}
-	if strings.Contains(got, "bbs autopilot spawn-goal") {
-		t.Error("review-only prompt must not tell the reviewer to spawn-goal")
+	// Without a builder the gate records the verdict and stops. Nothing here
+	// may start a build.
+	if strings.Contains(got, "spawn-goal") {
+		t.Error("review-only prompt must not mention spawn-goal at all")
+	}
+	// The gate invocation itself must carry no builder — mentioning the flag
+	// while explaining that it was not passed is fine.
+	if strings.Contains(got, "review-gate --ticket bs-ab123 --workflow builder --builder") {
+		t.Error("review-only prompt pinned a builder it was not given")
 	}
 }
 
-func TestReviewPromptPinsTheBuilderOnGreenlight(t *testing.T) {
+// The core of the reviewer-parity fix: approval is not something the reviewer
+// asserts in prose, it is something the gate grants. The prompt must route the
+// decision through review-gate and must not hand the reviewer spawn-goal, or
+// the floor is back to being asked for politely.
+func TestReviewPromptRoutesTheGreenlightThroughTheGate(t *testing.T) {
 	a := spawnState(t)
 	got := a.reviewPrompt(mustAgent(t, "claude"), "bs-ab123", "builder", "grok")
-	if !strings.Contains(got, "bbs autopilot spawn-goal --ticket bs-ab123 --workflow builder --agent grok") {
-		t.Errorf("greenlight missing --agent grok\n%s", got)
+	if !strings.Contains(got, "bbs autopilot review-gate --ticket bs-ab123 --workflow builder --builder grok") {
+		t.Errorf("greenlight does not run the gate\n%s", got)
+	}
+	if strings.Contains(got, "bbs autopilot spawn-goal") {
+		t.Error("the reviewer was handed spawn-goal — that is the unchecked path the gate replaces")
+	}
+	for _, want := range []string{"VERDICT=APPROVE", "VERDICT=REDIRECT", "VERDICT=BLOCKED", "VERDICT=ESCALATE"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("prompt does not say how to act on %s\n%s", want, got)
+		}
+	}
+}
+
+// The rubric was authored for user-facing work, and this very ticket is
+// CLI/Go/markdown: three of five lines have no referent. The prompt has to say
+// how to answer those honestly, or a non-UI ticket redirects forever.
+func TestReviewPromptExplainsHowANonUITicketFillsTheRubric(t *testing.T) {
+	a := spawnState(t)
+	got := a.reviewPrompt(mustAgent(t, "claude"), "bs-ab123", "builder", "")
+	for _, want := range []string{
+		"N/A — <reason>",
+		"Host-page consistency and Prototype inspected",
+		"bare `N/A`",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("prompt missing the non-UI rubric form (%q)\n%s", want, got)
+		}
+	}
+}
+
+// Independence is the only thing --reviewer buys. A plan graded by the model
+// that wrote it satisfies the flag and delivers nothing.
+func TestSpawnReviewRefusesAReviewerThatIsAlsoTheBuilder(t *testing.T) {
+	fakeWorker(t, "claude")
+	a := spawnState(t)
+	_, err := a.runSpawnReview(spawnOpts{
+		ticket: "bs-x1", workflow: "builder", agentFlag: "claude", builder: "claude",
+	})
+	if err == nil {
+		t.Fatal("self-review was accepted")
+	}
+	if !strings.Contains(err.Error(), "independent read") {
+		t.Errorf("refusal does not say why: %v", err)
+	}
+	if exitStatus(err) != 2 {
+		t.Errorf("exit %d, want 2", exitStatus(err))
+	}
+}
+
+// The agent list must come from the registry, or it goes stale the moment one
+// is added.
+func TestSpawnReviewNamesEveryRegisteredAgentWhenAgentIsMissing(t *testing.T) {
+	a := spawnState(t)
+	_, err := a.runSpawnReview(spawnOpts{ticket: "bs-x1"})
+	if err == nil {
+		t.Fatal("want an error when --agent is missing")
+	}
+	for _, name := range agent.Names() {
+		if !strings.Contains(err.Error(), name) {
+			t.Errorf("error does not offer %q: %v", name, err)
+		}
 	}
 }
 

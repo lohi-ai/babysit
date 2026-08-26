@@ -29,12 +29,13 @@ const configHeader = `# babysit configuration — edit freely, changes take effe
 #
 # ─── Coding agent ────────────────────────────────────────────────────
 # worker_agent: claude      # which CLI foreman dispatches workers on:
-#                           #   claude | grok
+#                           #   claude | omp | grok | codex
 # foreman_agent: claude     # which CLI the foreman itself runs on. Separate
 #                           # from worker_agent on purpose — the foreman audits
 #                           # its workers, so moving them does not move the audit.
-#                           # Non-claude agents need babysit in their own plugin
-#                           # store (grok: grok plugin install <babysit url>).
+#                           # Non-claude agents need babysit's skills reachable
+#                           # from their own store; an unmet one fails fast at
+#                           # spawn with the setup step it needs.
 #
 # ─── Telemetry ───────────────────────────────────────────────────────
 # telemetry: local          # off | local

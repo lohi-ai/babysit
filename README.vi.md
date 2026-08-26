@@ -49,7 +49,7 @@ Từng bước:
 
 - `--stop-after=plan` — duyệt hướng đi trước khi viết một dòng code.
 - `--auto` — bỏ bước dán; spawn `/goal` trên đúng agent bạn đang chạy (Grok thì Grok, Claude thì Claude).
-- `--reviewer claude|grok` — spawn agent đó review plan và prototype. Bỏ qua thì không review bằng agent. Kèm `--auto`, approve sẽ start `/goal` trên agent lúc bắt đầu.
+- `--reviewer <agent>` — spawn agent đó review plan và prototype. Agent nào cũng được — `claude`, `omp`, `grok`, `codex` — miễn không phải agent đang build. Bỏ qua thì không review bằng agent. Kèm `--auto`, approve sẽ start `/goal` trên agent lúc bắt đầu.
 - *mặc định* — dừng ở trạng thái QA-xong, bạn review bằng chứng.
 - **`/bbs:create-pr`** — bạn tự gọi; autopilot không bao giờ tự mở PR.
 
@@ -233,7 +233,7 @@ Các lệnh chuyển việc giữa worktree và bề mặt dùng chung — `merg
 /bbs:autopilot "add a settings page with dark mode toggle"
 ```
 
-Autopilot init ticket — requirement, plan, branch — rồi dừng lại và in ra một block `/goal` làm **tin nhắn cuối cùng**. Block đó chính là việc duy nhất bạn làm tiếp theo: **copy nó, dán lại vào Claude Code, rồi đi chơi.** Session goal sẽ viết code, review, chạy QA, và push branch. Review xong thì tự mở PR. Truyền `--auto` để bỏ bước dán: `/goal` chạy trên đúng agent bạn đang chạy. Truyền `--reviewer claude` hoặc `--reviewer grok` nếu muốn agent khác review plan trước.
+Autopilot init ticket — requirement, plan, branch — rồi dừng lại và in ra một block `/goal` làm **tin nhắn cuối cùng**. Block đó chính là việc duy nhất bạn làm tiếp theo: **copy nó, dán lại vào Claude Code, rồi đi chơi.** Session goal sẽ viết code, review, chạy QA, và push branch. Review xong thì tự mở PR. Truyền `--auto` để bỏ bước dán: `/goal` chạy trên đúng agent bạn đang chạy. Truyền `--reviewer codex` (hoặc agent nào khác đã đăng ký) nếu muốn một agent thứ hai review plan trước — bắt buộc khác agent đang build, để cái nhìn đó thực sự độc lập.
 
 > **Bản bàn giao trông như vầy** — autopilot kết thúc bằng một đoạn dẫn bằng lời thường, rồi tới block để copy:
 >
@@ -302,7 +302,7 @@ Mỗi khi một stage xong, ticket có thêm một dòng `Next:` — đúng ngh�
 /bbs:autopilot                       # resume — nối lại từ checkpoint của branch hiện tại
 ```
 
-Cả bề mặt chỉ có vậy. Bốn flag mở rộng thêm — `--stop-after=requirement|plan` để dừng ở checkpoint sớm hơn, `--auto` để spawn `/goal` trên agent lúc bắt đầu, `--reviewer claude|grok` để thêm bước review plan bằng agent, và `--mode=worktree` để chạy riêng ticket này trong worktree của nó dù profile không bắt (repo `pet`, hoặc repo đã chọn `mode: branch`). Không có token động từ nào cả.
+Cả bề mặt chỉ có vậy. Bốn flag mở rộng thêm — `--stop-after=requirement|plan` để dừng ở checkpoint sớm hơn, `--auto` để spawn `/goal` trên agent lúc bắt đầu, `--reviewer <agent>` để thêm bước review plan độc lập bằng agent khác, và `--mode=worktree` để chạy riêng ticket này trong worktree của nó dù profile không bắt (repo `pet`, hoặc repo đã chọn `mode: branch`). Không có token động từ nào cả.
 
 ### Làm nhiều ticket song song (mode `worktree`)
 
