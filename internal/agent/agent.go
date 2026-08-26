@@ -1,12 +1,26 @@
 // Package agent resolves which coding-agent CLI a foreman and its workers run
-// on. Claude Code is the default; grok is the second supported agent.
+// on. Claude Code is the default; grok, omp and codex are the other supported
+// agents.
 //
-// The two CLIs are close enough that a profile is data, not a template
-// language: they differ only in the binary name and the flag that turns off
-// permission prompts. Everything else a spawn needs — the `/bbs:<skill>`
-// prompt, the session flags, the Orca terminal around it — is identical,
-// because grok reads babysit's plugin manifest and namespaces its skills the
-// same way.
+// A profile is data, not a template language: the CLIs differ in the binary
+// name, the flag that turns off permission prompts, how (or whether) a
+// conversation can be given a durable handle, and how they namespace babysit's
+// skills. Everything else a spawn needs — the prompt, the Orca terminal around
+// it — is identical.
+//
+// Two of those axes are where the registry stopped being a pure widening
+// exercise, and both are load-bearing:
+//
+//   - Not every agent can mint a session id. claude and grok take
+//     `--session-id <uuid>`; omp and codex have no such flag. An agent without
+//     one must never render a flagless command line, and must not have a uuid
+//     recorded against it that it has never heard of — a later resume would
+//     hand it an id it cannot find. See MintsSessionID and SessionDir.
+//   - Not every agent namespaces skills the same way. claude and grok read
+//     babysit's plugin manifest and expose `bbs:autopilot`; omp finds skills
+//     through `skills.customDirectories`, which is a flat list, so the same
+//     skill is bare `autopilot` there. A `/bbs:autopilot` prompt sent to omp
+//     resolves to nothing at all. See SkillPrefix and SkillRef.
 //
 // Foremen and workers are chosen separately, by two config keys that do not
 // inherit from each other:
@@ -59,14 +73,35 @@ type Profile struct {
 	// sidebar is the approver.
 	Yolo string
 	// Session is the flag binding a NEW conversation to a uuid we minted, and
-	// Resume re-opens one by that uuid. Both CLIs happen to spell these the
-	// same; they are fields rather than constants so a third agent that spells
-	// them differently stays a registry entry instead of a code path.
+	// Resume re-opens one by that uuid. claude and grok happen to spell these
+	// the same; they are fields rather than constants so an agent that spells
+	// them differently stays a registry entry instead of a code path. Empty
+	// Session means the agent cannot be told which conversation to start —
+	// see MintsSessionID, and never render Session unset.
 	Session string
-	Resume  string
+	// Resume re-opens a conversation by the token recorded for it. It is not
+	// necessarily a flag: codex spells it as the subcommand `codex resume
+	// <id>`, which renders identically because the token follows the word.
+	Resume string
+	// SessionDir is the flag pointing an agent at a private conversation store
+	// (omp: --session-dir). It is the weaker durable handle for an agent that
+	// cannot mint an id: give one foreman its own directory and "the most
+	// recent conversation in there" is unambiguously that foreman's, which is
+	// the property Continue alone does not have in a shared checkout.
+	SessionDir string
+	// Continue re-opens the most recent conversation without naming it (omp:
+	// --continue, codex: `resume --last`). It is the fallback for an agent with
+	// no Session, and is only trustworthy when paired with SessionDir.
+	Continue string
+	// SkillPrefix is how this agent namespaces babysit's skills in a prompt.
+	// "bbs:" for agents that read the plugin manifest; "" for agents that
+	// discover skills through a flat directory list and expose them bare.
+	// Getting this wrong is silent: the agent starts fine and then resolves
+	// the prompt to no skill at all.
+	SkillPrefix string
 	// Install is the hint printed when Bin is not on PATH. It names what to
 	// install, and for agents with their own plugin store, what else they need
-	// before a `/bbs:` prompt resolves.
+	// before a babysit skill prompt resolves.
 	Install string
 	// TrustFile, when non-empty, is a path under $HOME recording the directories
 	// the agent has been told to trust. Agents that keep one refuse to touch an
@@ -84,13 +119,15 @@ var profiles = map[string]Profile{
 	"claude": {
 		Name: "claude", Bin: "claude",
 		Yolo:    "--dangerously-skip-permissions",
-		Session: "--session-id", Resume: "--resume",
-		Install: "install Claude Code: https://claude.com/product/claude-code",
+		Session: "--session-id", Resume: "--resume", Continue: "--continue",
+		SkillPrefix: "bbs:",
+		Install:     "install Claude Code: https://claude.com/product/claude-code",
 	},
 	"grok": {
 		Name: "grok", Bin: "grok",
 		Yolo:    "--always-approve",
 		Session: "--session-id", Resume: "--resume",
+		SkillPrefix: "bbs:",
 		// The second half is the failure this hint exists to prevent: grok finds
 		// babysit's skills in the babysit repo itself (they are project skills
 		// there) and nowhere else, so a worker dispatched in a product repo
@@ -105,6 +142,48 @@ var profiles = map[string]Profile{
 		TrustFile: ".grok/trusted_folders.toml",
 		TrustHint: "run `grok` there once and answer the trust prompt, " +
 			"or add a `[folders.\"<dir>\"]` stanza with `trusted = true`",
+	},
+	"omp": {
+		Name: "omp", Bin: "omp",
+		Yolo: "--auto-approve",
+		// No --session-id: omp resumes by id-prefix or path only, so a uuid we
+		// minted would name a conversation it has never heard of. --session-dir
+		// is the handle that does work — one directory per foreman makes
+		// --continue unambiguous. Verified by round-trip on omp v18.0.6.
+		Session: "", Resume: "--resume",
+		SessionDir: "--session-dir", Continue: "--continue",
+		// omp discovers Claude *user* and *project* skills but not Claude
+		// *plugin* skills, and skills reached through customDirectories are a
+		// FLAT list — they come out bare, not namespaced. So a `/bbs:autopilot`
+		// prompt resolves to nothing here while `/autopilot` works.
+		SkillPrefix: "",
+		// `omp plugin install <git-url>` looks like the fix and is not: it is an
+		// npm-shaped installer and fails with "package.json not found" on a
+		// Claude plugin repo (--dry-run reports success anyway, which is what
+		// makes it a trap). customDirectories is the verified fix, and it points
+		// at the marketplace checkout rather than plugins/cache/<version>
+		// because that path is stable across upgrades.
+		Install: "install omp, then point it at babysit's skills: " +
+			`omp config set skills.customDirectories '["$HOME/.claude/plugins/marketplaces/babysit/.claude/skills"]' ` +
+			"(omp does not scan ~/.claude/plugins, so without this the worker comes up and " +
+			"then cannot resolve its own prompt; note omp exposes them bare — /autopilot, not /bbs:autopilot)",
+	},
+	"codex": {
+		Name: "codex", Bin: "codex",
+		// Flags are from OpenAI's published CLI reference; codex was not
+		// installed on the machine this profile was written on, so rendering and
+		// quoting are tested but a live spawn is not. Preflight() already fails
+		// loudly with the install hint when the binary is absent, which is the
+		// correct behaviour for an agent nobody has installed.
+		Yolo: "--dangerously-bypass-approvals-and-sandbox",
+		// codex has no mint flag either, and its resume is a SUBCOMMAND taking a
+		// positional id (`codex resume <id>`) rather than a flag — which renders
+		// identically, because the token follows the word either way.
+		Session: "", Resume: "resume", Continue: "resume --last",
+		SkillPrefix: "bbs:",
+		Install: "install codex: https://developers.openai.com/codex/cli " +
+			"(then confirm it can resolve a babysit skill prompt — codex's skill discovery is " +
+			"unverified here, and a worker that cannot resolve /bbs:autopilot comes up fine and then stalls)",
 	},
 }
 
@@ -146,16 +225,46 @@ func Resolve(key, flag string) (Profile, error) {
 	return p, nil
 }
 
-// Current names the CLI this process is running inside, or "". Grok exports
-// GROK_AGENT / GROK_SESSION_ID; Claude Code exports CLAUDE_CODE_SESSION_ID.
-// Grok wins if both look set — a grok session can inherit leftover Claude
-// Code env from the user's shell.
+// currentEnv maps an agent to env vars that prove this process is running
+// inside it. Only agents that actually export a marker appear here, and the
+// list is short on purpose — see Current for why guessing is worse than "".
+//
+// Order is precedence, and claude is deliberately LAST because these
+// environments nest: an omp session started from a Claude Code terminal
+// inherits CLAUDECODE=1 and CLAUDE_CODE_SESSION_ID wholesale (verified by
+// dumping the child env of `omp -p` under Claude Code). Claude Code's marker is
+// therefore the one most likely to be somebody else's leftover, so anything
+// with a marker of its own has to be tested first.
+var currentEnv = []struct {
+	name string
+	vars []string
+}{
+	{"grok", []string{"GROK_AGENT", "GROK_SESSION_ID"}},
+	{"claude", []string{"CLAUDE_CODE_SESSION_ID"}},
+}
+
+// Current names the CLI this process is running inside, or "".
+//
+// omp and codex are absent by design, not by omission: neither exports a
+// session marker (probed — omp's child environment carries only Orca's and the
+// parent CLI's vars), so there is nothing to detect them by. Inventing a
+// plausible-looking variable would be worse than not detecting them at all,
+// because the failure would be silent and wrong rather than silent and safe.
+//
+// The cost of "" is bounded and the callers are built for it: resolveGoalAgent
+// falls through to BABYSIT_AGENT and then to the configured worker_agent, which
+// is a stated preference rather than a guess. And every session babysit itself
+// spawns is stamped with BABYSIT_AGENT=<name>, which outranks this function —
+// so a nested `--auto` inside a babysit-spawned omp worker resolves to omp even
+// though Current() cannot see it. The only case left is a human-started omp or
+// codex session, where the configured default is the right answer anyway.
 func Current() string {
-	if os.Getenv("GROK_AGENT") != "" || os.Getenv("GROK_SESSION_ID") != "" {
-		return "grok"
-	}
-	if os.Getenv("CLAUDE_CODE_SESSION_ID") != "" {
-		return "claude"
+	for _, c := range currentEnv {
+		for _, v := range c.vars {
+			if os.Getenv(v) != "" {
+				return c.name
+			}
+		}
 	}
 	return ""
 }
@@ -283,15 +392,75 @@ func (p Profile) WorkerCommand(prompt string) string {
 	return p.Bin + " " + p.Yolo + " " + shellQuote(prompt)
 }
 
-// NewSessionCommand starts a fresh conversation bound to a uuid we minted, and
-// ResumeCommand re-opens it. These are the foreman's spawn shapes: no Yolo,
-// because a foreman is attended.
+// MintsSessionID reports whether a NEW conversation can be bound to a handle
+// this side chooses. When it is false the caller must not mint a uuid and
+// record it: the agent has never heard of that id and the next resume would
+// hand it one it cannot find. SessionToken says what to record instead.
+func (p Profile) MintsSessionID() bool { return p.Session != "" }
+
+// SessionToken is the durable handle to record for a foreman's conversation,
+// given a freshly minted uuid and a private directory this foreman may own.
+// Three shapes, strongest first:
+//
+//	uuid  — the agent takes --session-id (claude, grok)
+//	dir   — the agent only has a private session store (omp)
+//	""    — neither; resume falls back to "the most recent conversation" (codex)
+//
+// The caller supplies both candidates rather than this deciding how to build a
+// path, so the directory stays the caller's layout concern.
+func (p Profile) SessionToken(uuid, dir string) string {
+	switch {
+	case p.MintsSessionID():
+		return uuid
+	case p.SessionDir != "":
+		return dir
+	}
+	return ""
+}
+
+// NewSessionCommand starts a fresh conversation carrying the durable handle
+// SessionToken chose, and ResumeCommand re-opens it. These are the foreman's
+// spawn shapes: no Yolo, because a foreman is attended.
 func (p Profile) NewSessionCommand(session, prompt string) string {
-	return p.Bin + " " + p.Session + " " + session + " " + shellQuote(prompt)
+	return p.Bin + p.sessionArgs(session, false) + " " + shellQuote(prompt)
 }
 
 func (p Profile) ResumeCommand(session, prompt string) string {
-	return p.Bin + " " + p.Resume + " " + session + " " + shellQuote(prompt)
+	return p.Bin + p.sessionArgs(session, true) + " " + shellQuote(prompt)
+}
+
+// sessionArgs renders the session half of a foreman command line, and its one
+// hard rule is that it never emits a flag with nothing after it. An agent with
+// no Session used to render `omp  '<prompt>'` — two spaces where a uuid should
+// have been — which starts a conversation nobody can ever find again.
+func (p Profile) sessionArgs(session string, resume bool) string {
+	switch {
+	case p.MintsSessionID() && session != "":
+		flag := p.Session
+		if resume {
+			flag = p.Resume
+		}
+		return " " + flag + " " + session
+	case p.SessionDir != "" && session != "":
+		// The directory is a path we built, but it still reaches a shell.
+		out := " " + p.SessionDir + " " + shellQuote(session)
+		if resume && p.Continue != "" {
+			out += " " + p.Continue
+		}
+		return out
+	case resume && p.Continue != "":
+		return " " + p.Continue
+	}
+	return ""
+}
+
+// SkillRef renders a babysit skill invocation the way THIS agent resolves it —
+// `/bbs:autopilot` where the plugin manifest is read, `/autopilot` where skills
+// arrive through a flat directory list. Every prompt naming a skill must go
+// through here; a hard-coded `/bbs:` prefix is the failure that comes up fine
+// and then resolves to nothing.
+func (p Profile) SkillRef(skill string) string {
+	return "/" + p.SkillPrefix + skill
 }
 
 // shellQuote wraps s in single quotes, ending and reopening the quoted run

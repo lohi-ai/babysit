@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"github.com/reallongnguyen/babysit/internal/agent"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -50,7 +51,7 @@ while [ ! -f "$MARKER/stop" ]; do sleep 0.05; done
 }
 
 func TestGoalPromptMatchesSkillHandoff(t *testing.T) {
-	got := goalPrompt("bs-ab123", "builder")
+	got := goalPrompt(mustAgent(t, "claude"), "bs-ab123", "builder")
 	for _, want := range []string{
 		"/goal bs-ab123 is done: qa verdict PASS/FIXED persisted via bbs ticket set-verdict,",
 		"review-pr verdict persisted, branch pushed, handoff note written — or a",
@@ -217,7 +218,7 @@ func TestSpawnGoalReadsWorkflowFromCheckpoint(t *testing.T) {
 
 func TestReviewPromptAsksToPersistThenSpawnGoal(t *testing.T) {
 	a := spawnState(t)
-	got := a.reviewPrompt("bs-ab123", "builder", "")
+	got := a.reviewPrompt(mustAgent(t, "claude"), "bs-ab123", "builder", "")
 	for _, want := range []string{
 		"Review the plan and prototype for bs-ab123",
 		"plan.md",
@@ -239,7 +240,7 @@ func TestReviewPromptAsksToPersistThenSpawnGoal(t *testing.T) {
 
 func TestReviewPromptPinsTheBuilderOnGreenlight(t *testing.T) {
 	a := spawnState(t)
-	got := a.reviewPrompt("bs-ab123", "builder", "grok")
+	got := a.reviewPrompt(mustAgent(t, "claude"), "bs-ab123", "builder", "grok")
 	if !strings.Contains(got, "bbs autopilot spawn-goal --ticket bs-ab123 --workflow builder --agent grok") {
 		t.Errorf("greenlight missing --agent grok\n%s", got)
 	}
@@ -606,4 +607,16 @@ func TestSpawnGoalHonoursTheLivePIDEvenWhenOrcaIsUp(t *testing.T) {
 	if strings.Contains(readFile(log), "terminal create") {
 		t.Errorf("a second worker was created alongside the live one:\n%s", readFile(log))
 	}
+}
+
+// mustAgent is the profile a prompt test renders against. The prompts now vary
+// by agent (skill prefix), so a test asserting `/bbs:autopilot` has to say
+// which agent it means.
+func mustAgent(t *testing.T, name string) agent.Profile {
+	t.Helper()
+	p, err := agent.ByName(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p
 }

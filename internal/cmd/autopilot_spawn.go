@@ -33,7 +33,7 @@ type spawnResult struct {
 
 type spawnJob struct {
 	kind     string // "goal" or "review" — error prefixes + refuse rules
-	prompt   func(*apState, string, string) string
+	prompt   func(*apState, agent.Profile, string, string) string
 	logName  string
 	pidName  string
 	extraEnv []string
@@ -102,8 +102,10 @@ func (a *apState) spawnReview(args []string) {
 
 func goalJob() spawnJob {
 	return spawnJob{
-		kind:    "goal",
-		prompt:  func(_ *apState, ticket, workflow string) string { return goalPrompt(ticket, workflow) },
+		kind: "goal",
+		prompt: func(_ *apState, prof agent.Profile, ticket, workflow string) string {
+			return goalPrompt(prof, ticket, workflow)
+		},
 		logName: "goal.log",
 		pidName: "goal.pid",
 		extraEnv: []string{
@@ -147,8 +149,8 @@ func reviewJob(builder string) spawnJob {
 	}
 	return spawnJob{
 		kind: "review",
-		prompt: func(a *apState, ticket, workflow string) string {
-			return a.reviewPrompt(ticket, workflow, builder)
+		prompt: func(a *apState, prof agent.Profile, ticket, workflow string) string {
+			return a.reviewPrompt(prof, ticket, workflow, builder)
 		},
 		logName:  "review.log",
 		pidName:  "review.pid",
@@ -181,14 +183,20 @@ func (a *apState) runSpawnReview(o spawnOpts) (spawnResult, error) {
 // goalPrompt is the /goal block the human-handoff template in
 // .claude/skills/autopilot/SKILL.md prints. Keep the condition lines in sync
 // (TestGoalPromptMatchesSkillHandoff).
-func goalPrompt(ticket, workflow string) string {
+//
+// The skill reference comes from the profile rather than being spelled
+// `/bbs:autopilot` here: an agent that discovers skills through a flat
+// directory list exposes them bare, and a prompt naming a prefix that agent
+// does not use resolves to no skill at all — a worker that starts cleanly and
+// then does nothing.
+func goalPrompt(prof agent.Profile, ticket, workflow string) string {
 	return "/goal " + ticket + " is done: qa verdict PASS/FIXED persisted via bbs ticket set-verdict,\n" +
 		"review-pr verdict persisted, branch pushed, handoff note written — or a\n" +
 		"NEEDS_CONTEXT / BLOCKED status block printed verbatim.\n" +
-		"Work it: /bbs:autopilot " + workflow + " " + ticket
+		"Work it: " + prof.SkillRef("autopilot") + " " + workflow + " " + ticket
 }
 
-func (a *apState) reviewPrompt(ticket, workflow, builder string) string {
+func (a *apState) reviewPrompt(prof agent.Profile, ticket, workflow, builder string) string {
 	td, _ := a.ticketDir(ticket)
 	if td == "" {
 		td = filepath.Join("tickets", ticket)
@@ -219,7 +227,7 @@ func (a *apState) reviewPrompt(ticket, workflow, builder string) string {
 	} else {
 		body += "\nDo not spawn-goal. Persist the review and stop.\n"
 	}
-	return body + "\nPrint a STATUS block. Do not invoke /bbs:autopilot."
+	return body + "\nPrint a STATUS block. Do not invoke " + prof.SkillRef("autopilot") + "."
 }
 
 func (a *apState) runSpawn(job spawnJob, o spawnOpts) (spawnResult, error) {
@@ -271,12 +279,20 @@ func (a *apState) runSpawn(job spawnJob, o spawnOpts) (spawnResult, error) {
 		return spawnResult{}, errSpawn{1, prefix + ": " + err.Error()}
 	}
 
-	prompt := job.prompt(a, ticket, workflow)
+	prompt := job.prompt(a, prof, ticket, workflow)
+	// Stamp the agent into the child's environment. agent.Current() cannot see
+	// omp or codex — neither exports a session marker — so without this a
+	// nested `--auto` inside an omp worker would fall through to the configured
+	// worker_agent and quietly spawn a different CLI than the one it is running
+	// in. BABYSIT_AGENT outranks Current() in resolveGoalAgent, so stamping it
+	// makes the answer certain for every agent instead of just the two that
+	// happen to be detectable.
+	env := append([]string{"BABYSIT_AGENT=" + prof.Name}, job.extraEnv...)
 	res := spawnResult{
 		Ticket:   ticket,
 		Workflow: workflow,
 		Agent:    prof.Name,
-		Cmd:      commandWithEnv(ticket, job.extraEnv, prof.WorkerCommand(prompt)),
+		Cmd:      commandWithEnv(ticket, env, prof.WorkerCommand(prompt)),
 		Dir:      dir,
 	}
 	if o.printOnly {
@@ -341,9 +357,9 @@ func (a *apState) runSpawn(job spawnJob, o spawnOpts) (spawnResult, error) {
 	c.Dir = dir
 	c.Stdout = logF
 	c.Stderr = logF
-	env := append(os.Environ(), "BABYSIT_TICKET="+ticket)
-	env = append(env, job.extraEnv...)
-	c.Env = env
+	childEnv := append(os.Environ(), "BABYSIT_TICKET="+ticket)
+	childEnv = append(childEnv, env...)
+	c.Env = childEnv
 	c.SysProcAttr = detachedProcAttr()
 	if err := c.Start(); err != nil {
 		return spawnResult{}, errSpawn{1, prefix + ": " + err.Error()}

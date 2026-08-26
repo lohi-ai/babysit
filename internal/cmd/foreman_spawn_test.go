@@ -63,7 +63,7 @@ esac
 	// Spawn preflights the agent binary before creating a terminal, and PATH
 	// below is only this dir — so the agents have to exist here or every spawn
 	// fails on a missing CLI rather than exercising what the test is about.
-	for _, bin := range []string{"claude", "grok"} {
+	for _, bin := range []string{"claude", "grok", "omp", "codex"} {
 		if err := os.WriteFile(filepath.Join(dir, bin), []byte("#!/bin/sh\n"), 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -343,6 +343,30 @@ func TestWorkerCommandRendersTheConfiguredAgent(t *testing.T) {
 	})
 	if strings.TrimSpace(out) != `grok --always-approve '/bbs:autopilot ship it'` {
 		t.Errorf("worker-command printed %q", out)
+	}
+}
+
+// --skill is how a dispatch names the skill without knowing how the agent
+// namespaces it. omp reaches babysit's skills through a flat directory list and
+// exposes them bare, so a hard-coded `/bbs:autopilot` there resolves to no
+// skill at all — the worker starts cleanly and then does nothing.
+func TestWorkerCommandNamesTheSkillTheWayEachAgentResolvesIt(t *testing.T) {
+	fakeOrcaFor(t)
+	for _, tc := range []struct{ agent, want string }{
+		{"claude", `claude --dangerously-skip-permissions '/bbs:autopilot --mode=worktree ship it'`},
+		{"grok", `grok --always-approve '/bbs:autopilot --mode=worktree ship it'`},
+		{"omp", `omp --auto-approve '/autopilot --mode=worktree ship it'`},
+	} {
+		out := captureStdout(t, func() {
+			if err := foremanWorkerCommand([]string{
+				"--agent", tc.agent, "--skill", "autopilot", "--prompt", "--mode=worktree ship it",
+			}); err != nil {
+				t.Fatal(err)
+			}
+		})
+		if strings.TrimSpace(out) != tc.want {
+			t.Errorf("%s:\n got %s\nwant %s", tc.agent, strings.TrimSpace(out), tc.want)
+		}
 	}
 }
 

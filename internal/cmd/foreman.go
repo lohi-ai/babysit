@@ -28,7 +28,7 @@ const foremanUsage = `Usage:
   bbs foreman register <id> [--dir <path>] [--workspace-title <title>] [--session <uuid>]
   bbs foreman heartbeat <id> [--status <status>] [--session <uuid>]
   bbs foreman spawn [<id>] [--dir <path>] [--command <text>] [--agent <name>]
-  bbs foreman worker-command --prompt <text> [--agent <name>] [--dir <path>]
+  bbs foreman worker-command --prompt <text> [--skill <name>] [--agent <name>] [--dir <path>]
   bbs foreman watch [<id>] [--interval <sec>] [--idle <sec>] [--lines <n>]
                     [--nudge <text>] [--max-nudges <n>] [--once]
   bbs foreman retire <id> [--keep-workspace]
@@ -40,7 +40,7 @@ const foremanUsage = `Usage:
   bbs foreman grant revoke <id>
 `
 
-// foremanSkillPrompt is the opening prompt every spawned foreman gets, and the
+// foremanSkillName names the skill in the opening prompt every spawned foreman gets, and the
 // prefix on every poke sent into a running one. A workspace that comes up on a
 // bare `claude` is just a Claude session sitting in a repo — it does not know
 // it is a foreman until something tells it, and a long-lived one loses the
@@ -49,7 +49,10 @@ const foremanUsage = `Usage:
 // prompt doubles as the refresh.
 //
 // Unquoted: the agent profile shell-quotes it when rendering the command line.
-const foremanSkillPrompt = `/bbs:foreman`
+// The `bbs:` prefix comes from the profile rather than being spelled here —
+// an agent that discovers skills through a flat directory list exposes them
+// bare, and a prompt naming the wrong prefix resolves to nothing at all.
+const foremanSkillName = "foreman"
 
 func newForemanCmd() *cobra.Command {
 	return &cobra.Command{
@@ -321,6 +324,16 @@ func foremanWorkerCommand(args []string) error {
 	if err != nil {
 		return err
 	}
+	// --skill is how a caller names the skill without knowing how this agent
+	// namespaces it. It exists for the same reason agent selection lives here
+	// rather than in SKILL.md: a hard-coded `/bbs:autopilot` in the dispatch
+	// line is a second place the agent's shape can drift, and this particular
+	// drift is silent — an agent that discovers skills through a flat directory
+	// list exposes them bare, so the worker comes up cleanly and resolves the
+	// prompt to nothing.
+	if skill := kv["skill"]; skill != "" {
+		prompt = prof.SkillRef(skill) + " " + prompt
+	}
 	if err := prof.Preflight(); err != nil {
 		return err
 	}
@@ -402,40 +415,69 @@ func spawnForeman(id, dir, command, agentFlag string) (string, error) {
 	// ~/.babysit/sessions by cwd cannot tell two sessions in the same repo
 	// apart, which is exactly the case a foreman lives in.
 	//
-	// A resume with no recorded session (a foreman registered before this, or
-	// by `foreman register`) mints one and starts fresh — there is nothing to
-	// resume, and guessing a uuid would fail at launch.
+	// A resume of a foreman that was registered rather than spawned starts
+	// fresh — there is nothing to resume, and guessing a handle would fail at
+	// launch.
+	//
+	// "Has a conversation to resume" is keyed on the recorded AGENT, not on the
+	// recorded session: an agent with no mint flag records no session id and
+	// would otherwise look, forever, like a foreman that had never run.
 	verb, session := "spawned", r.Session
-	if session == "" {
-		if session, err = newSessionID(); err != nil {
-			return "", err
-		}
-	} else if resuming {
+	resumable := resuming && r.Agent != ""
+	if resumable {
 		verb = "resumed"
 	}
 
 	// Which CLI runs this foreman. On a resume the recorded agent wins over
-	// config: the session uuid above is only meaningful to the CLI that minted
-	// it, so re-resolving from a config that has changed since would hand a
-	// different agent a uuid it has never heard of. An explicit --agent that
-	// contradicts the recording is a mistake worth naming rather than silently
-	// honoring either way.
+	// config: the handle recorded above is only meaningful to the CLI that
+	// minted it, so re-resolving from a config that has changed since would
+	// hand a different agent something it has never heard of. That is true even
+	// for an agent whose handle is empty — resuming "the most recent
+	// conversation" under a different CLI resumes a different conversation. An
+	// explicit --agent that contradicts the recording is a mistake worth naming
+	// rather than silently honoring either way.
 	var prof agent.Profile
-	if resuming && r.Session != "" {
+	if resumable {
 		pinned := r.Agent
-		if pinned == "" {
-			pinned = agent.Default // records written before agents were selectable
-		}
 		if agentFlag != "" && agentFlag != pinned {
 			return "", fmt.Errorf("foreman %s has a %s session — cannot resume it as %s; "+
 				"retire it first to start a fresh conversation", id, pinned, agentFlag)
 		}
 		prof, err = agent.ByName(pinned)
+	} else if resuming && r.Session != "" {
+		// A record written before agents were selectable: it has a session but
+		// no agent, and that session can only have been claude's.
+		if agentFlag != "" && agentFlag != agent.Default {
+			return "", fmt.Errorf("foreman %s has a %s session — cannot resume it as %s; "+
+				"retire it first to start a fresh conversation", id, agent.Default, agentFlag)
+		}
+		verb = "resumed"
+		prof, err = agent.ByName(agent.Default)
 	} else {
 		prof, err = agent.Resolve(agent.ForemanKey, agentFlag)
 	}
 	if err != nil {
 		return "", err
+	}
+
+	// Mint the durable handle only once the profile is known, because what a
+	// handle even IS depends on the agent. claude and grok take a uuid;
+	// omp has no mint flag and gets a private session directory instead, so
+	// that "the most recent conversation in there" is unambiguously this
+	// foreman's rather than whatever else ran in the same checkout; codex has
+	// neither and gets "", resuming by "most recent" alone.
+	//
+	// Recording a uuid against an agent that cannot be told to use it is the
+	// specific bug this ordering prevents: the record would look resumable and
+	// the resume would hand the CLI an id it has never heard of.
+	if session == "" {
+		uuid := ""
+		if prof.MintsSessionID() {
+			if uuid, err = newSessionID(); err != nil {
+				return "", err
+			}
+		}
+		session = prof.SessionToken(uuid, filepath.Join(foreman.Dir(), id+".sessions"))
 	}
 
 	title := "bbs foreman " + id
@@ -450,9 +492,9 @@ func spawnForeman(id, dir, command, agentFlag string) (string, error) {
 			return "", err
 		}
 		if verb == "resumed" {
-			command = prof.ResumeCommand(session, foremanSkillPrompt)
+			command = prof.ResumeCommand(session, prof.SkillRef(foremanSkillName))
 		} else {
-			command = prof.NewSessionCommand(session, foremanSkillPrompt)
+			command = prof.NewSessionCommand(session, prof.SkillRef(foremanSkillName))
 		}
 	}
 	ref, err := client.Create(orca.CreateOpts{Title: title, Cwd: dir, Command: command})

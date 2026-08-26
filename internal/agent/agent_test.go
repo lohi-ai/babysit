@@ -351,7 +351,201 @@ func TestCurrentReadsGrokBeforeClaudeCodeEnv(t *testing.T) {
 
 func TestNamesListsEveryRegisteredAgent(t *testing.T) {
 	got := strings.Join(Names(), ",")
-	if got != "claude,grok" {
-		t.Errorf("Names() = %q, want claude,grok", got)
+	if got != "claude,codex,grok,omp" {
+		t.Errorf("Names() = %q, want claude,codex,grok,omp", got)
+	}
+}
+
+// ── Registry width: omp and codex ────────────────────────────────────────────
+
+// The worker shape is what a foreman actually dispatches, and every agent has
+// to render it with its own yolo flag and a safely quoted requirement. The
+// apostrophe is the case that matters: the command line reaches
+// `orca terminal create --command "<this>"` and is parsed by a shell.
+func TestWorkerCommandRendersPerAgentWithSafeQuoting(t *testing.T) {
+	const prompt = "/bbs:autopilot don't break checkout"
+	for _, tc := range []struct{ name, want string }{
+		{"claude", `claude --dangerously-skip-permissions '/bbs:autopilot don'\''t break checkout'`},
+		{"grok", `grok --always-approve '/bbs:autopilot don'\''t break checkout'`},
+		{"omp", `omp --auto-approve '/bbs:autopilot don'\''t break checkout'`},
+		{"codex", `codex --dangerously-bypass-approvals-and-sandbox '/bbs:autopilot don'\''t break checkout'`},
+	} {
+		p, err := ByName(tc.name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := p.WorkerCommand(prompt); got != tc.want {
+			t.Errorf("%s WorkerCommand:\n got %s\nwant %s", tc.name, got, tc.want)
+		}
+	}
+}
+
+// The bug this pins: an agent with no --session-id used to render
+// `omp  '<prompt>'` — a flag position with nothing in it — and have a uuid
+// recorded against it that it had never heard of.
+func TestNonMintingAgentsNeverRenderAFlaglessSessionSlot(t *testing.T) {
+	for _, name := range Names() {
+		p, err := ByName(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		token := p.SessionToken("11111111-2222-3333-4444-555555555555", "/tmp/fm.sessions")
+		for _, cmd := range []string{
+			p.NewSessionCommand(token, "/bbs:foreman"),
+			p.ResumeCommand(token, "/bbs:foreman"),
+		} {
+			if strings.Contains(cmd, "  ") {
+				t.Errorf("%s rendered an empty argument slot: %q", name, cmd)
+			}
+			if !strings.HasSuffix(cmd, `'/bbs:foreman'`) {
+				t.Errorf("%s lost the prompt: %q", name, cmd)
+			}
+		}
+	}
+}
+
+func TestSessionTokenPicksTheStrongestHandleEachAgentSupports(t *testing.T) {
+	const uuid, dir = "uuid-1", "/tmp/fm.sessions"
+	for _, tc := range []struct{ name, want string }{
+		{"claude", uuid}, // --session-id
+		{"grok", uuid},   // --session-id
+		{"omp", dir},     // no mint flag; --session-dir is the durable handle
+		{"codex", ""},    // neither; resume falls back to "most recent"
+	} {
+		p, err := ByName(tc.name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := p.SessionToken(uuid, dir); got != tc.want {
+			t.Errorf("%s SessionToken = %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}
+
+func TestForemanSessionCommandShapes(t *testing.T) {
+	for _, tc := range []struct{ name, token, wantNew, wantResume string }{
+		{
+			"claude", "u1",
+			`claude --session-id u1 '/bbs:foreman'`,
+			`claude --resume u1 '/bbs:foreman'`,
+		},
+		{
+			"grok", "u1",
+			`grok --session-id u1 '/bbs:foreman'`,
+			`grok --resume u1 '/bbs:foreman'`,
+		},
+		{
+			// omp: private store, then "the most recent conversation in it".
+			"omp", "/tmp/fm.sessions",
+			`omp --session-dir '/tmp/fm.sessions' '/bbs:foreman'`,
+			`omp --session-dir '/tmp/fm.sessions' --continue '/bbs:foreman'`,
+		},
+		{
+			// codex: no handle at all — a fresh session is bare, and resume is
+			// the `resume --last` subcommand.
+			"codex", "",
+			`codex '/bbs:foreman'`,
+			`codex resume --last '/bbs:foreman'`,
+		},
+	} {
+		p, err := ByName(tc.name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := p.NewSessionCommand(tc.token, "/bbs:foreman"); got != tc.wantNew {
+			t.Errorf("%s new:\n got %s\nwant %s", tc.name, got, tc.wantNew)
+		}
+		if got := p.ResumeCommand(tc.token, "/bbs:foreman"); got != tc.wantResume {
+			t.Errorf("%s resume:\n got %s\nwant %s", tc.name, got, tc.wantResume)
+		}
+	}
+}
+
+// omp reaches babysit's skills through skills.customDirectories, which is a
+// FLAT list — the skills come out bare. A `/bbs:autopilot` prompt sent there
+// resolves to no skill at all, and the worker starts cleanly and does nothing.
+func TestSkillRefFollowsEachAgentsNamespacing(t *testing.T) {
+	for _, tc := range []struct{ name, want string }{
+		{"claude", "/bbs:autopilot"},
+		{"grok", "/bbs:autopilot"},
+		{"omp", "/autopilot"},
+		{"codex", "/bbs:autopilot"},
+	} {
+		p, err := ByName(tc.name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := p.SkillRef("autopilot"); got != tc.want {
+			t.Errorf("%s SkillRef = %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}
+
+// A missing binary must name the exact fix, and for an agent whose skills need
+// a separate install step the hint has to name that too — otherwise the worker
+// comes up fine and then cannot resolve its own prompt, which reads as a hung
+// ticket rather than a setup gap.
+func TestPreflightNamesTheFixForEveryAgent(t *testing.T) {
+	isolate(t) // empty PATH: nothing is installed
+	for _, tc := range []struct {
+		name string
+		want []string
+	}{
+		{"claude", []string{"claude.com"}},
+		{"grok", []string{"grok plugin install"}},
+		{"omp", []string{"skills.customDirectories", "/autopilot, not /bbs:autopilot"}},
+		{"codex", []string{"developers.openai.com/codex"}},
+	} {
+		p, err := ByName(tc.name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = p.Preflight()
+		if err == nil {
+			t.Fatalf("%s: Preflight passed on an empty PATH", tc.name)
+		}
+		for _, want := range tc.want {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("%s Preflight message missing %q:\n%s", tc.name, want, err)
+			}
+		}
+	}
+}
+
+// omp's install hint used to be `omp plugin install <git-url>`, which reports
+// success under --dry-run and then fails for real with "package.json not
+// found". Naming a fix that does not work is worse than naming none.
+func TestOmpInstallHintDoesNotNameThePluginInstaller(t *testing.T) {
+	p, err := ByName("omp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(p.Install, "omp plugin install") {
+		t.Errorf("omp hint names the npm-shaped installer, which fails on a Claude plugin repo:\n%s", p.Install)
+	}
+}
+
+// Only agents that actually export a session marker may be detectable. omp and
+// codex export none, and a plausible-looking guess would be silently wrong
+// rather than silently safe.
+func TestCurrentDetectsOnlyAgentsThatExportAMarker(t *testing.T) {
+	for _, v := range []string{"GROK_AGENT", "GROK_SESSION_ID", "CLAUDE_CODE_SESSION_ID"} {
+		t.Setenv(v, "")
+	}
+	if got := Current(); got != "" {
+		t.Errorf("Current() = %q with no markers set, want \"\"", got)
+	}
+
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "abc")
+	if got := Current(); got != "claude" {
+		t.Errorf("Current() = %q, want claude", got)
+	}
+
+	// An omp or codex session started from a Claude Code terminal inherits
+	// CLAUDE_CODE_SESSION_ID wholesale (verified by dumping omp's child env),
+	// so grok's own marker has to win over the inherited one.
+	t.Setenv("GROK_SESSION_ID", "def")
+	if got := Current(); got != "grok" {
+		t.Errorf("Current() = %q with both markers set, want grok — a nested session inherits the parent's", got)
 	}
 }
