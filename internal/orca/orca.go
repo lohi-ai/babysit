@@ -34,6 +34,10 @@ var (
 // zero value cannot run anything.
 type Client struct {
 	bin string
+	// caps is what the runtime advertised at Preflight. Read once rather than
+	// per call: it changes only when the app restarts, and the surface it gates
+	// (see orchestration.go) is on the hot path of a foreman's monitor loop.
+	caps []string
 }
 
 // Preflight returns a usable Client or the reason there isn't one.
@@ -87,7 +91,8 @@ func (c *Client) ready() error {
 	}
 	var st struct {
 		Runtime struct {
-			Reachable bool `json:"reachable"`
+			Reachable    bool     `json:"reachable"`
+			Capabilities []string `json:"capabilities"`
 		} `json:"runtime"`
 	}
 	if err := json.Unmarshal(raw, &st); err != nil {
@@ -96,6 +101,10 @@ func (c *Client) ready() error {
 	if !st.Runtime.Reachable {
 		return errors.New("runtime not reachable")
 	}
+	// The advertised capability list is what gates the orchestration surface.
+	// An older Orca simply does not list it, and the caller falls back to the
+	// pane monitor rather than failing — foreman has to stay usable there.
+	c.caps = st.Runtime.Capabilities
 	return nil
 }
 

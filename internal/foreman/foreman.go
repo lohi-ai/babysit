@@ -59,7 +59,15 @@ type Record struct {
 	// by the session-writer hook, which does not know foremen exist, and a
 	// foreman spawned outside a hooked run would have no file to point at.
 	// Empty for a foreman that was registered rather than spawned.
-	Session   string `yaml:"session,omitempty"`
+	Session string `yaml:"session,omitempty"`
+	// Run is the Orca orchestration Run this foreman's mailbox lives in, bound
+	// fresh per session by `run-create`. It is recorded because coordinator
+	// binding is per-TERMINAL, not per-record: a foreman that resumes in a new
+	// terminal — the normal case after a crash or a closed tab — has to
+	// `run-use` this id to rebind, or its whole mailbox reads as somebody
+	// else's. Empty for a foreman running under the pane-monitor fallback, or
+	// on an Orca that does not serve the orchestration contract.
+	Run       string `yaml:"run,omitempty"`
 	Status    string `yaml:"status"`
 	Heartbeat string `yaml:"heartbeat"`
 	// Unreachable is the RFC3339 stamp of the last poke that could not be
