@@ -29,6 +29,7 @@ const foremanUsage = `Usage:
   bbs foreman heartbeat <id> [--status <status>] [--session <uuid>]
   bbs foreman spawn [<id>] [--dir <path>] [--command <text>] [--agent <name>]
   bbs foreman worker-command --prompt <text> [--skill <name>] [--agent <name>] [--dir <path>]
+  bbs foreman mailbox <status|bind|dispatch|wait|reply> ...
   bbs foreman watch [<id>] [--interval <sec>] [--idle <sec>] [--lines <n>]
                     [--nudge <text>] [--max-nudges <n>] [--once]
   bbs foreman retire <id> [--keep-workspace]
@@ -96,6 +97,8 @@ func dispatchForeman(args []string) error {
 		return err
 	case "worker-command":
 		return foremanWorkerCommand(rest)
+	case "mailbox":
+		return foremanMailbox(rest)
 	case "watch":
 		return foremanWatch(rest)
 	case "retire":
@@ -128,7 +131,7 @@ func foremanFlags(args []string) (id string, kv map[string]string, err error) {
 			return "", nil, fmt.Errorf("foreman: unexpected argument '%s'", a)
 		}
 		key := strings.TrimPrefix(a, "--")
-		if key == "keep-workspace" || key == "unbounded" || key == "once" { // the boolean flags
+		if key == "keep-workspace" || key == "unbounded" || key == "once" || key == "ack" { // the boolean flags
 			kv[key] = "1"
 			continue
 		}

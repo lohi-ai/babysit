@@ -24,26 +24,51 @@ editing tracked state):
 | `worker_agent` | the per-ticket workers | `claude` |
 | `foreman_agent` | the foreman session itself | `claude` |
 
-Supported: `claude`, `grok`. `BABYSIT_AGENT=<name>` overrides both for one run;
-`bbs foreman spawn --agent <name>` overrides everything.
+Supported: `claude`, `omp`, `grok`, `codex`. `BABYSIT_AGENT=<name>` overrides
+both for one run; `bbs foreman spawn --agent <name>` overrides everything.
 
 The two keys do not inherit from each other on purpose. A foreman reviews design
 gates and QA evidence from its workers, so moving workers to another agent is a
 throughput choice that must not silently relocate that audit — `worker_agent:
-grok` alone leaves the foreman on Claude Code.
+omp` alone leaves the foreman on Claude Code.
 
 Adding an agent is a registry entry in `internal/agent`, which owns the binary
-name and the flag that suppresses tool approval. Two things it does not own:
+name, the flag that suppresses tool approval, how (or whether) a conversation
+can be given a durable handle, and how that agent namespaces babysit's skills.
+Two things it does not own:
 
-- **Skills must be installed for that agent.** Non-Claude CLIs have their own
-  plugin stores — for grok, `grok plugin install
-  https://github.com/lohi-ai/babysit`. Without it a worker launches fine and then
-  cannot resolve `/bbs:autopilot`. `bbs foreman worker-command` preflights the
-  binary on PATH; the plugin install is on the operator.
+- **Skills must be reachable by that agent**, and a binary on PATH is not that.
+  Each CLI has its own mechanism, and getting it wrong is silent — the worker
+  launches fine and then cannot resolve its prompt:
+
+  | agent | how it finds babysit's skills | prompt shape |
+  |-------|-------------------------------|--------------|
+  | `claude` | the plugin marketplace | `/bbs:autopilot` |
+  | `grok` | `grok plugin install https://github.com/lohi-ai/babysit` | `/bbs:autopilot` |
+  | `omp` | `omp config set skills.customDirectories '["$HOME/.claude/plugins/marketplaces/babysit/.claude/skills"]'` | `/autopilot` |
+  | `codex` | unverified | `/bbs:autopilot` |
+
+  `bbs foreman worker-command` preflights the binary and names the per-agent
+  fix; the install itself is on the operator. Pass `--skill autopilot` rather
+  than writing the prompt by hand — **omp reaches its skills through a flat
+  directory list, so they have no `bbs:` namespace** and a hard-coded
+  `/bbs:autopilot` resolves to nothing there. (`omp plugin install <git-url>`
+  looks like the fix and is not: it reports success under `--dry-run` and then
+  fails for real, being an npm-shaped installer rather than a plugin store.)
 - **A foreman's session is pinned to the agent that minted it.** `spawn` records
-  it and reuses it on resume, because a session uuid means nothing to a different
-  CLI. Changing `foreman_agent` takes effect on the next *new* foreman, not on a
-  resume; `bbs foreman spawn <id> --agent <other>` refuses rather than guess.
+  it and reuses it on resume, because a conversation handle means nothing to a
+  different CLI. Changing `foreman_agent` takes effect on the next *new*
+  foreman, not on a resume; `bbs foreman spawn <id> --agent <other>` refuses
+  rather than guess.
+
+  What the handle *is* depends on the agent, and only `claude` and `grok` can
+  be told to use one we chose: they take `--session-id <uuid>`. `omp` has no
+  such flag, so a foreman on omp gets a private session directory
+  (`--session-dir`) and resumes with `--continue` — unambiguous because nothing
+  else writes to that directory. `codex` has neither and resumes by "most
+  recent". A uuid is never recorded against an agent that cannot be told to use
+  it: the record would look resumable and the resume would hand the CLI an id
+  it has never heard of.
 
 **grok needs the directory trusted first.** grok keeps a per-folder trust record
 in `~/.grok/trusted_folders.toml`, and it is *separate* from `permission_mode` —

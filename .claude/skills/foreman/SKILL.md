@@ -158,21 +158,49 @@ Two independent config keys, in `<repo>/.babysit/config.yaml` (committed, the
 team default) or `~/.babysit/config.yaml` (this machine, wins over the repo):
 
 ```yaml
-worker_agent: grok    # the per-ticket workers      (default: claude)
+worker_agent: omp     # the per-ticket workers      (default: claude)
 foreman_agent: grok   # this session's own CLI      (default: claude)
 ```
 
+Four agents are registered: `claude` (default), `omp`, `grok`, `codex`.
+`bbs foreman worker-command --agent <name>` renders the right command line for
+each and preflights it, so a wrong name or a missing binary is a `BLOCKED` with
+the fix named, not a pane that never reports.
+
 They do not inherit from each other, deliberately: moving workers to another
 agent is a throughput choice, and you audit their design gates and QA evidence —
-`worker_agent: grok` alone leaves that audit on Claude Code. `BABYSIT_AGENT`
+`worker_agent: omp` alone leaves that audit on Claude Code. `BABYSIT_AGENT`
 overrides both for one run; `--agent <name>` overrides everything.
 
-Non-Claude agents need babysit's skills installed in *their* plugin store, not
-just the binary on PATH — for grok, `grok plugin install
-https://github.com/lohi-ai/babysit`. Without it a worker comes up fine and then
-cannot resolve `/bbs:autopilot`. `worker-command` preflights the binary; the
-plugin is on the human. If a worker's first pane output says the skill is
+**Every agent needs babysit's skills reachable in its own way**, and the binary
+being on PATH is not that. Get it wrong and the worker comes up fine and then
+cannot resolve its own prompt — which reads as a hung ticket, not a setup gap.
+`worker-command` preflights the binary and names the per-agent fix; installing
+the skills is on the human. If a worker's first pane output says the skill is
 unavailable, that is this gap — report it, do not retry on another agent.
+
+| agent | yolo flag | how it finds babysit's skills | prompt |
+|-------|-----------|-------------------------------|--------|
+| `claude` | `--dangerously-skip-permissions` | the plugin marketplace | `/bbs:autopilot` |
+| `grok` | `--always-approve` | `grok plugin install https://github.com/lohi-ai/babysit` | `/bbs:autopilot` |
+| `omp` | `--auto-approve` | `omp config set skills.customDirectories '["$HOME/.claude/plugins/marketplaces/babysit/.claude/skills"]'` | **`/autopilot`** |
+| `codex` | `--dangerously-bypass-approvals-and-sandbox` | unverified — confirm before dispatching a batch | `/bbs:autopilot` |
+
+Two traps in that table worth stating outright:
+
+- **omp exposes the skills bare.** It reaches them through a flat directory
+  list, so there is no `bbs:` namespace and `/bbs:autopilot` resolves to
+  nothing. Never hand-write the prompt: pass `--skill autopilot` to
+  `worker-command` and let it render the prefix that agent actually uses.
+- **`omp plugin install <git-url>` is not the fix.** It reports success under
+  `--dry-run` and then fails for real — it is an npm-shaped installer, not a
+  Claude plugin store. Use `skills.customDirectories`, pointed at the
+  marketplace checkout (that path is stable across upgrades; the
+  `plugins/cache/<version>` one is not).
+
+`codex` is registered from OpenAI's published CLI reference and has not been
+spawned live. Its rendering and quoting are tested; its skill discovery is not.
+Treat the first codex worker in a batch as a probe.
 
 grok also gates on **directory trust**, separately from its permission mode: the
 first run in a directory absent from `~/.grok/trusted_folders.toml` stops on "Do
@@ -197,7 +225,9 @@ is the terminal title plus `worktree set --comment`.
 # Resolution order: --agent > BABYSIT_AGENT > <repo>/.babysit/config.yaml
 # (worker_agent:) > ~/.babysit/config.yaml > claude. It preflights, so BLOCKED
 # means the agent is not installed — report it, do not fall back to another CLI.
-CMD=$(bbs foreman worker-command --prompt "/bbs:autopilot --mode=worktree <requirement>") || {
+# --skill, not a hand-written "/bbs:autopilot": omp exposes skills bare, so the
+# prefix is the agent's business and belongs in exactly one place.
+CMD=$(bbs foreman worker-command --skill autopilot --prompt "--mode=worktree <requirement>") || {
   echo "BLOCKED: $CMD" >&2; exit 1; }
 
 T=$("$ORCA" terminal create --worktree path:"$REPO" --title "bbs <slug>" --command "$CMD" --json \
@@ -239,8 +269,54 @@ truth either way:
 
 ## Monitor
 
-One Monitor per worker (persistent). Ground truth is disk (`bbs ticket board`,
-`verdict-status`, ticket artifacts) — pane text only tells you *when* to look.
+Ground truth is disk (`bbs ticket board`, `verdict-status`, ticket artifacts).
+Everything below only tells you *when* to look.
+
+Pick the path once, at batch start:
+
+```bash
+bbs foreman mailbox status "$FM"      # MAILBOX=on | MAILBOX=off
+```
+
+### `MAILBOX=on` — one blocking read for the whole batch
+
+Orca serves a durable message bus. Bind the run once, dispatch a task per
+ticket, then wait on the batch instead of polling each pane:
+
+```bash
+bbs foreman mailbox bind "$FM" --objective "<what this batch is>"
+# per worker, after its terminal exists:
+bbs foreman mailbox dispatch "$FM" --ticket "$TICKET" --terminal "$T"
+#   → prints TASK= and a PREAMBLE<<EOF … EOF block. Prepend that preamble to
+#     the worker's prompt yourself — babysit delivers prompts, Orca does not
+#     (nothing here is dispatched with --inject).
+
+# the monitor: one call for every worker at once
+bbs foreman mailbox wait "$FM" --timeout-ms 60000
+#   → COUNT=<n> then one JSON line per message:
+#     {"id","type","subject","task","outcome","files","needs_answer","body"}
+```
+
+Act on each line, then acknowledge the batch by passing `--ack` on the *next*
+wait — delivery replays until acknowledged, which is why an event can no longer
+be lost. Never `--ack` before you have acted.
+
+- `type: worker_done` — the **doorbell, not the verdict**. Confirm on disk with
+  `bbs ticket verdict-status` before believing anything finished.
+- `needs_answer: true` (`ask` / `question` / `escalation`) — the worker is
+  blocked until you answer:
+  ```bash
+  bbs foreman mailbox reply "$FM" --message "<id>" --body "<the answer, in words>"
+  ```
+  Addressed by id, so there is no "did the composer submit?" to check.
+
+On resume, `bind` again — coordinator binding is per-terminal, so a foreman
+that comes back in a new tab reads somebody else's mailbox until it rebinds.
+
+### `MAILBOX=off` — the pane monitor (older Orca)
+
+One Monitor per worker (persistent). Same rules, weaker signal: a line that
+scrolls past the tail is gone, so re-read disk more often.
 
 ```bash
 prev=""
