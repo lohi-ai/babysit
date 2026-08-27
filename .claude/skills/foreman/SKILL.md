@@ -302,6 +302,7 @@ bbs foreman mailbox dispatch "$FM" --ticket "$TICKET" --terminal "$T"   # → TA
 bbs foreman mailbox wait "$FM" --timeout-ms 60000
 #   → COUNT=<n>, DELIVERY=<id>, then one JSON line per message:
 #     {"id","type","subject","task","outcome","files","needs_answer","body"}
+#     plus "rejected": <reason> on the rare message orca refused (see below)
 ```
 
 Act on each line, then acknowledge the batch by passing `--ack` on the *next*
@@ -315,6 +316,13 @@ batch after a crash between the two calls.
   it with `bbs foreman mailbox done` at their terminal status
   (references/preamble.md § `AGENT_ROLE=orca`); `outcome` mirrors that status,
   `succeeded` covers `DONE_WITH_CONCERNS` too.
+- `outcome: rejected` with a `rejected` reason — orca refused the report and
+  the task it names never settled, so this is **not** a doorbell: the worker
+  rang and the bus dropped it. Treat that ticket as still outstanding —
+  `verdict-status` on disk is what says whether the work is actually finished,
+  and it usually is, since the worker only reports after QA. Re-dispatching the
+  ticket without settling the task first joins the stale attempt, so settle it
+  (`orca orchestration task-update`) before handing the ticket out again.
 - `needs_answer: true` (`ask` / `question` / `escalation`) — the worker is
   blocked until you answer. This is where a worker's `NEEDS_CONTEXT` arrives
   now: `AGENT_ROLE=orca` routes it to `orca orchestration ask`, which blocks
