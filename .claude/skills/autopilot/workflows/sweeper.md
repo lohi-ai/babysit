@@ -32,5 +32,5 @@ should get smaller or faster without changing behavior.
 STATUS: DONE | DONE_WITH_CONCERNS | NEEDS_CONTEXT | BLOCKED
 VERDICT: SWEPT
 SUMMARY: <what shrank + line delta + QA evidence>
-NEXT: human review, then /bbs:create-pr
+NEXT: per the repo's finish policy — by default, human review then /bbs:create-pr
 ```

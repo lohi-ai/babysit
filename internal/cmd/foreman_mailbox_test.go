@@ -38,9 +38,16 @@ case "$1" in
       run-current) echo '{"ok":true,"result":{"run":{"id":"run_rec"}}}' ;;
       run-use)     echo '{"ok":true,"result":{}}' ;;
       task-create) echo '{"ok":true,"result":{"task":{"id":"task_1"}}}' ;;
-      dispatch)    echo '{"ok":true,"result":{"preamble":"PRE"}}' ;;
-      reply)       echo '{"ok":true,"result":{}}' ;;
+      dispatch)    echo '{"ok":true,"result":{}}' ;;
+      reply|send)  echo '{"ok":true,"result":{}}' ;;
+      # Real task rows, down to the field names: a task carries the title it was
+      # created with and no dispatch id at all.
+      task-list)   echo '{"ok":true,"result":{"tasks":[{"id":"task_1","task_title":"bs-x1","display_name":"bs-x1","status":"dispatched"},{"id":"task_other","task_title":"bs-other","status":"dispatched"}]}}' ;;
+      dispatch-show) echo '{"ok":true,"result":{"dispatch":{"id":"ctx_1","task_id":"task_1","status":"dispatched"}}}' ;;
       check)
+        # The worker's own read of the bus. --peek answers "which run am I on?"
+        # without marking the coordinator's queued messages read.
+        case "$*" in *--peek*) echo '{"ok":true,"result":{"runId":"run_rec","messages":[],"count":0}}'; exit 0 ;; esac
         # The runtime validates --types against a fixed enum and rejects the
         # whole call on an unknown one ("Invalid --types: ask") rather than
         # ignoring it. The fake used to accept anything, which is exactly how a
@@ -258,7 +265,12 @@ func TestMailboxWaitAcknowledgesThePreviousBatchByIdAcrossProcesses(t *testing.T
 
 // babysit delivers the prompt itself. --inject would cede that, and with it
 // make babysit's tabs reachable by Orca's worker lifecycle.
-func TestMailboxDispatchReturnsThePreambleAndNeverInjects(t *testing.T) {
+//
+// It also asserts the preamble is gone. Asking for it produced a block the
+// skill was told to prepend to a prompt that had already been sent — an
+// instruction with no moment left to carry it out, which is why no worker ever
+// reported done.
+func TestMailboxDispatchNeverInjectsAndAsksForNoPreamble(t *testing.T) {
 	log := fakeOrcaMailbox(t, `"orchestration.contract.v1"`)
 	seedForeman(t, "fm-a", "run_rec")
 
@@ -267,12 +279,15 @@ func TestMailboxDispatchReturnsThePreambleAndNeverInjects(t *testing.T) {
 			t.Fatal(err)
 		}
 	})
-	if !strings.Contains(out, "TASK=task_1") || !strings.Contains(out, "PRE") {
+	if !strings.Contains(out, "TASK=task_1") {
 		t.Errorf("dispatch = %q", out)
 	}
+	if strings.Contains(out, "PREAMBLE") {
+		t.Errorf("dispatch still prints a preamble nobody can deliver:\n%s", out)
+	}
 	got := readCalls(t, log)
-	if !strings.Contains(got, "--return-preamble") {
-		t.Errorf("dispatch did not ask for the preamble:\n%s", got)
+	if strings.Contains(got, "--return-preamble") {
+		t.Errorf("dispatch still asks for the preamble:\n%s", got)
 	}
 	if strings.Contains(got, "--inject") {
 		t.Fatalf("dispatch injected:\n%s", got)
@@ -297,5 +312,100 @@ func TestMailboxReplyAddressesTheMessageById(t *testing.T) {
 	}
 	if !strings.Contains(readCalls(t, log), "reply --id msg_2 --body reject with 409") {
 		t.Errorf("reply not addressed by id:\n%s", readCalls(t, log))
+	}
+}
+
+// The worker half of the doorbell. Everything it needs is on the bus already —
+// no id is delivered to it, which is the whole point: there is no delivery step
+// left to forget. The join is the ticket, because that is the task's title.
+func TestMailboxDoneFindsItsOwnTaskByTicket(t *testing.T) {
+	log := fakeOrcaMailbox(t, `"orchestration.contract.v1"`)
+	t.Setenv("BABYSIT_TICKET", "bs-x1")
+	t.Setenv("ORCA_TERMINAL_HANDLE", "term_9")
+
+	out := captureStdout(t, func() {
+		if err := foremanMailbox([]string{"done", "--status", "DONE", "--body", "Did. Found. Left.", "--files", "a.go,b.go"}); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if !strings.Contains(out, "DONE=succeeded") || !strings.Contains(out, "TASK=task_1") {
+		t.Errorf("done = %q", out)
+	}
+	got := readCalls(t, log)
+	if !strings.Contains(got, "check --peek") {
+		t.Errorf("done marked the coordinator's queued messages read:\n%s", got)
+	}
+	// The one field a real task row does not have. Matching on it is how this
+	// went out as a silent no-op the first time.
+	if strings.Contains(got, "dispatch_id") {
+		t.Errorf("done joined on a field orca task rows do not carry:\n%s", got)
+	}
+	for _, want := range []string{"--type worker_done", "--task-id task_1", "--dispatch-id ctx_1", "--outcome succeeded", "--from term_9", "--files-modified a.go,b.go", "--subject bs-x1 DONE"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("worker_done missing %q:\n%s", want, got)
+		}
+	}
+}
+
+// A concerned pass is still a pass; a block is a failure. Orca has two values
+// and babysit has four, and this is the only place that knows it.
+func TestMailboxDoneMapsBabysitStatusOntoOrcaOutcome(t *testing.T) {
+	for status, want := range map[string]string{
+		"DONE": "succeeded", "DONE_WITH_CONCERNS": "succeeded",
+		"BLOCKED": "failed", "NEEDS_CONTEXT": "failed",
+	} {
+		fakeOrcaMailbox(t, `"orchestration.contract.v1"`)
+		t.Setenv("BABYSIT_TICKET", "bs-x1")
+		out := captureStdout(t, func() {
+			if err := foremanMailbox([]string{"done", "--status", status, "--body", "b"}); err != nil {
+				t.Fatal(err)
+			}
+		})
+		if !strings.Contains(out, "DONE="+want) {
+			t.Errorf("%s → %q, want DONE=%s", status, out, want)
+		}
+	}
+}
+
+// Reporting completion must never be the thing that fails a finished ticket.
+// A worker nobody dispatched, or an Orca too old to serve the contract, gets
+// MAILBOX=off and exit 0 — the verdicts are on disk either way.
+func TestMailboxDoneIsANoOpWhenNobodyIsSupervising(t *testing.T) {
+	fakeOrcaMailbox(t, `"terminal.multiplex.v1"`) // no orchestration contract
+	t.Setenv("BABYSIT_TICKET", "bs-x1")
+	out := captureStdout(t, func() {
+		if err := foremanMailbox([]string{"done", "--status", "DONE", "--body", "b"}); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if !strings.Contains(out, "MAILBOX=off") {
+		t.Errorf("done on an older Orca = %q", out)
+	}
+}
+
+// A ticket nobody made a task for is a worker outside the batch, not a fault:
+// same MAILBOX=off, same exit 0. Same for a worker with no ticket at all.
+func TestMailboxDoneIsANoOpForATicketNobodyDispatched(t *testing.T) {
+	fakeOrcaMailbox(t, `"orchestration.contract.v1"`)
+	for _, ticket := range []string{"bs-nobody", ""} {
+		t.Setenv("BABYSIT_TICKET", ticket)
+		out := captureStdout(t, func() {
+			if err := foremanMailbox([]string{"done", "--status", "DONE", "--body", "b"}); err != nil {
+				t.Fatal(err)
+			}
+		})
+		if !strings.Contains(out, "MAILBOX=off") {
+			t.Errorf("done with ticket %q = %q", ticket, out)
+		}
+	}
+}
+
+// A status outside the terminal set is a caller bug. Guessing an outcome would
+// ring the doorbell for a run that has not finished.
+func TestMailboxDoneRefusesANonTerminalStatus(t *testing.T) {
+	fakeOrcaMailbox(t, `"orchestration.contract.v1"`)
+	err := foremanMailbox([]string{"done", "--status", "IN_PROGRESS", "--body", "b"})
+	if err == nil || !strings.Contains(err.Error(), "--status") {
+		t.Errorf("err = %v", err)
 	}
 }

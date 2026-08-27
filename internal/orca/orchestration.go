@@ -177,19 +177,69 @@ func (c *Client) TaskCreate(runID, title, spec string) (string, error) {
 	return "", fmt.Errorf("orca task-create: no task id in response")
 }
 
-// Dispatch binds a task to a terminal and returns Orca's lifecycle preamble as
-// plain text. It NEVER passes --inject.
+// Dispatch binds a task to a terminal. It NEVER passes --inject, and it never
+// asks for Orca's lifecycle preamble.
 //
-// The preamble is prompt text, which is why this composes with every agent in
-// babysit's registry: it carries no dependence on Orca recognizing the CLI, so
-// adopting the mailbox does not narrow the agent set. babysit delivers it by
-// its own path — prepended to the worker's prompt — which is the same half of
-// the job it already owned.
-func (c *Client) Dispatch(runID, taskID, toHandle string) (string, error) {
+// The preamble was a dead end. It names the task id a worker needs to report
+// worker_done, but it can only be fetched once the terminal exists — by which
+// point babysit has already delivered the prompt, so there is nothing left to
+// prepend it to. The worker joins the same ids itself (Self + TaskFor), which
+// is one fewer thing to deliver and one fewer way to deliver it wrong.
+func (c *Client) Dispatch(runID, taskID, toHandle string) error {
+	if !c.Orchestration() {
+		return ErrNoOrchestration
+	}
+	args := []string{"orchestration", "dispatch", "--task", taskID, "--to", toHandle}
+	if runID != "" {
+		args = append(args, "--run", runID)
+	}
+	_, err := c.run(args...)
+	return err
+}
+
+// Self reports the Run this terminal is working under, read from the worker's
+// own side of the bus. An empty run is the honest answer for a terminal bound
+// to no Run — task-list then falls back to whatever binding orca resolves.
+//
+// --peek is load-bearing: a plain check marks the batch read, so a worker
+// ringing the doorbell on its way out would swallow whatever the coordinator
+// had queued for it.
+func (c *Client) Self() (runID string, err error) {
 	if !c.Orchestration() {
 		return "", ErrNoOrchestration
 	}
-	args := []string{"orchestration", "dispatch", "--task", taskID, "--to", toHandle, "--return-preamble"}
+	raw, err := c.run("orchestration", "check", "--peek")
+	if err != nil {
+		return "", err
+	}
+	var self struct {
+		RunID string `json:"runId"`
+	}
+	if err := json.Unmarshal(raw, &self); err != nil {
+		return "", fmt.Errorf("orca check: %w", err)
+	}
+	return self.RunID, nil
+}
+
+// TaskFor finds the task a ticket was dispatched as, by the title foreman gave
+// it (TaskCreate sets --task-title and --display-name to the ticket id).
+//
+// The ticket is the join key because it is the only one both halves of the bus
+// agree on: a task row carries `task_title`, and the worker carries
+// BABYSIT_TICKET. Orca's task rows carry no dispatch id — a dispatch is a
+// separate record keyed the other way, by task — so a worker cannot start from
+// "which dispatch am I?" and arrive anywhere.
+//
+// A ticket re-dispatched inside one run has more than one row; the live one
+// wins, and the newest row otherwise.
+func (c *Client) TaskFor(runID, ticket string) (string, error) {
+	if !c.Orchestration() {
+		return "", ErrNoOrchestration
+	}
+	if ticket == "" {
+		return "", errors.New("orca task-list: needs a ticket")
+	}
+	args := []string{"orchestration", "task-list", "--brief"}
 	if runID != "" {
 		args = append(args, "--run", runID)
 	}
@@ -197,17 +247,100 @@ func (c *Client) Dispatch(runID, taskID, toHandle string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	var list struct {
+		Tasks []struct {
+			ID     string `json:"id"`
+			Title  string `json:"task_title"`
+			Name   string `json:"display_name"`
+			Status string `json:"status"`
+		} `json:"tasks"`
+	}
+	if err := json.Unmarshal(raw, &list); err != nil {
+		return "", fmt.Errorf("orca task-list: %w", err)
+	}
+	var newest, live string
+	for _, t := range list.Tasks {
+		if t.Title != ticket && t.Name != ticket {
+			continue
+		}
+		newest = t.ID
+		if t.Status != "completed" && t.Status != "failed" {
+			live = t.ID
+		}
+	}
+	if live != "" {
+		return live, nil
+	}
+	if newest != "" {
+		return newest, nil
+	}
+	return "", fmt.Errorf("orca task-list: no task titled %s", ticket)
+}
+
+// DispatchFor reads the dispatch a task is currently assigned as. Orca marks
+// the dispatch completed alongside the task when worker_done carries both ids,
+// so it is worth one extra call — but not worth failing over: a worker_done
+// with only the task id still lands, matched on the sender handle.
+func (c *Client) DispatchFor(taskID string) (string, error) {
+	if !c.Orchestration() {
+		return "", ErrNoOrchestration
+	}
+	if taskID == "" {
+		return "", errors.New("orca dispatch-show: needs a task")
+	}
+	raw, err := c.run("orchestration", "dispatch-show", "--task", taskID)
+	if err != nil {
+		return "", err
+	}
 	var wrap struct {
-		Preamble string `json:"preamble"`
 		Dispatch struct {
-			Preamble string `json:"preamble"`
+			ID string `json:"id"`
 		} `json:"dispatch"`
 	}
-	_ = json.Unmarshal(raw, &wrap)
-	if wrap.Preamble != "" {
-		return wrap.Preamble, nil
+	if err := json.Unmarshal(raw, &wrap); err != nil {
+		return "", fmt.Errorf("orca dispatch-show: %w", err)
 	}
-	return wrap.Dispatch.Preamble, nil
+	return wrap.Dispatch.ID, nil
+}
+
+// DoneOpts is the doorbell a worker rings on its way out.
+type DoneOpts struct {
+	Run, Task, Dispatch string
+	// From is the worker's own terminal handle. Orca falls back to matching the
+	// sender against the dispatch assignee when pane identity is unstable, so
+	// passing it is cheap insurance against a rejected report.
+	From    string
+	Subject string
+	Body    string
+	// Outcome is Orca's vocabulary — succeeded or failed, nothing else.
+	Outcome string
+	Files   []string
+}
+
+// WorkerDone reports a finished dispatch. It is the doorbell and not the
+// verdict: the coordinator still reads `bbs ticket verdict-status` off disk
+// before believing any of it.
+func (c *Client) WorkerDone(o DoneOpts) error {
+	if !c.Orchestration() {
+		return ErrNoOrchestration
+	}
+	args := []string{"orchestration", "send", "--type", "worker_done",
+		"--subject", o.Subject, "--body", o.Body,
+		"--task-id", o.Task, "--outcome", o.Outcome}
+	if o.Dispatch != "" {
+		args = append(args, "--dispatch-id", o.Dispatch)
+	}
+	if o.Run != "" {
+		args = append(args, "--run", o.Run)
+	}
+	if o.From != "" {
+		args = append(args, "--from", o.From)
+	}
+	if len(o.Files) > 0 {
+		args = append(args, "--files-modified", strings.Join(o.Files, ","))
+	}
+	_, err := c.run(args...)
+	return err
 }
 
 // CheckOpts describes one mailbox read.

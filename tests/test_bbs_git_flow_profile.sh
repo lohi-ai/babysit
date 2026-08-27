@@ -97,14 +97,19 @@ expect_gf "profile-startup-derives-trunk-pr" "profile: startup" \
   BBS_PROFILE=startup BBS_MODE=trunk BBS_LAND=pr \
   BBS_RIGOR=standard BBS_REVIEW_EFFORT=medium
 
-# auto_land is off in every preset and opt-in per repo: it is the one key that
-# moves the local base with nobody watching.
-expect_gf "auto-land-is-off-by-default" "profile: enterprise" \
-  BBS_AUTO_LAND=false
+# finish is `review` in every preset and opt-in per repo: it is the one key that
+# lets a run act on its own verdicts — moving the local base, or opening a PR —
+# with nobody watching.
+expect_gf "finish-is-review-by-default" "profile: enterprise" \
+  BBS_FINISH=review
 
-expect_gf "auto-land-opt-in-is-exported" "profile: startup
-auto_land: true" \
-  BBS_PROFILE=startup BBS_AUTO_LAND=true
+expect_gf "finish-land-opt-in-is-exported" "profile: startup
+finish: land" \
+  BBS_PROFILE=startup BBS_FINISH=land
+
+expect_gf "finish-pr-opt-in-is-exported" "profile: startup
+finish: pr" \
+  BBS_PROFILE=startup BBS_LAND=pr BBS_FINISH=pr
 
 expect_gf "profile-enterprise-derives-strict" "profile: enterprise" \
   BBS_PROFILE=enterprise BBS_MODE=trunk BBS_LAND=pr \
@@ -146,7 +151,7 @@ rm -rf "$T"
 
 # ── hand-written-mode-and-land-still-resolve ──────────────────────────
 # The profile derives no mode and no coherence rules stand between the human
-# and the keys they wrote: an explicit `mode:`/`land:`/`auto_land:` pair is the
+# and the keys they wrote: an explicit `mode:`/`land:`/`finish:` pair is the
 # escape hatch, and it must resolve rather than exit 2.
 T="$(mktemp -d)"
 (
@@ -160,10 +165,22 @@ T="$(mktemp -d)"
     || { echo "lone mode: branch derived $BBS_MODE/$BBS_LAND, want branch/pr"; exit 1; }
 
   # the composed-review shape, written out by hand
-  set_git_flow "$(printf 'profile: startup\nmode: worktree\nland: local\nauto_land: true')"
-  eval "$("$BBS_BIN" autopilot git-flow)" || { echo "worktree/local/auto_land failed to resolve"; exit 1; }
-  [ "$BBS_MODE" = worktree ] && [ "$BBS_LAND" = local ] && [ "$BBS_AUTO_LAND" = true ] \
-    || { echo "derived $BBS_MODE/$BBS_LAND/$BBS_AUTO_LAND"; exit 1; }
+  set_git_flow "$(printf 'profile: startup\nmode: worktree\nland: local\nfinish: land')"
+  eval "$("$BBS_BIN" autopilot git-flow)" || { echo "worktree/local/finish failed to resolve"; exit 1; }
+  [ "$BBS_MODE" = worktree ] && [ "$BBS_LAND" = local ] && [ "$BBS_FINISH" = land ] \
+    || { echo "derived $BBS_MODE/$BBS_LAND/$BBS_FINISH"; exit 1; }
+
+  # finish: pr with no PR venue is the one incoherent pair — named at config
+  # read, not three hours into a batch.
+  set_git_flow "$(printf 'profile: pet\nfinish: pr')"
+  "$BBS_BIN" autopilot git-flow >/dev/null 2>&1 && { echo "finish: pr under land: none resolved"; exit 1; }
+
+  # auto_land was folded into finish: the old key fails with the rewrite rather
+  # than silently changing what the repo does.
+  set_git_flow "$(printf 'profile: startup\nauto_land: true')"
+  "$BBS_BIN" autopilot git-flow >/dev/null 2>&1 && { echo "auto_land still resolved"; exit 1; }
+  "$BBS_BIN" autopilot git-flow 2>&1 | grep -q "finish: land" \
+    || { echo "auto_land error did not name the rewrite"; exit 1; }
 ) && ok "hand-written-mode-and-land-still-resolve" || fail "hand-written-mode-and-land-still-resolve"
 rm -rf "$T"
 
@@ -306,6 +323,13 @@ SK="$SCRIPT_DIR/.claude/skills"
   grep -q 'bbs autopilot git-flow' "$pr" || { echo "create-pr does not read the derived policy"; exit 1; }
   awk '/land: none/{f=1} f&&/STATUS: BLOCKED/{found=1} END{exit !found}' "$pr" \
     || { echo "create-pr does not BLOCK under land: none"; exit 1; }
+
+  # finish is one rule with two callers: a single ticket and a batch must close
+  # out the same way, or the flow a repo configured depends on how it was run.
+  for skill in autopilot foreman; do
+    grep -q 'BBS_FINISH' "$SK/$skill/SKILL.md" \
+      || { echo "$skill does not close out per the repo's finish policy"; exit 1; }
+  done
 
   rv="$SK/review-pr/SKILL.md"
   grep -q 'BBS_REVIEW_EFFORT' "$rv" || { echo "review-pr does not fall back to the repo's effort"; exit 1; }

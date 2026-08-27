@@ -146,5 +146,5 @@ land and QA each repo's change against *its own* base, once per repo touched.
 STATUS: DONE | DONE_WITH_CONCERNS | NEEDS_CONTEXT | BLOCKED
 VERDICT: BUILT
 SUMMARY: <mode, branch, files, QA evidence>
-NEXT: human review, then /bbs:create-pr
+NEXT: per the repo's finish policy — by default, human review then /bbs:create-pr
 ```

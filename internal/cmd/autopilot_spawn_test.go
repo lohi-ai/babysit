@@ -54,8 +54,9 @@ func TestGoalPromptMatchesSkillHandoff(t *testing.T) {
 	got := goalPrompt(mustAgent(t, "claude"), "bs-ab123", "builder")
 	for _, want := range []string{
 		"/goal bs-ab123 is done: qa verdict PASS/FIXED persisted via bbs ticket set-verdict,",
-		"review-pr verdict persisted, branch pushed, handoff note written — or a",
-		"NEEDS_CONTEXT / BLOCKED status block printed verbatim.",
+		"review-pr verdict persisted, branch pushed, closed out per the repo's finish",
+		"policy, handoff note written — or a NEEDS_CONTEXT / BLOCKED status block",
+		"printed verbatim.",
 		"Work it: /bbs:autopilot builder bs-ab123",
 	} {
 		if !strings.Contains(got, want) {
@@ -70,9 +71,12 @@ func TestGoalPromptMatchesSkillHandoff(t *testing.T) {
 	body := string(skill)
 	for _, want := range []string{
 		"qa verdict PASS/FIXED persisted via bbs ticket set-verdict,",
-		"review-pr verdict persisted, branch pushed, handoff note written — or a",
-		"NEEDS_CONTEXT / BLOCKED status block printed verbatim.",
+		"review-pr verdict persisted, branch pushed, closed out per the repo's finish",
+		"policy, handoff note written — or a NEEDS_CONTEXT / BLOCKED status block",
+		"printed verbatim.",
 		"Work it: /bbs:autopilot <workflow> <ticket>",
+		// finish is part of a full run, not a foreman-only extra.
+		"BBS_FINISH",
 		"--auto",
 		"bbs autopilot spawn-goal",
 		"--reviewer",

@@ -7,7 +7,7 @@ base_branch: main     # what work compares against and PRs into
 Read the derived set — never re-parse the yaml — with:
 ```bash
 eval "$(bbs autopilot git-flow)"
-# BBS_PROFILE BBS_BASE_BRANCH BBS_MODE BBS_LAND BBS_PUSH BBS_RIGOR BBS_REVIEW_EFFORT
+# BBS_PROFILE BBS_BASE_BRANCH BBS_MODE BBS_LAND BBS_FINISH BBS_PUSH BBS_RIGOR BBS_REVIEW_EFFORT
 ```
 ## Profiles — `setup-project` asks *what does a mistake cost in this repo?*
 | | **pet** (hobby) | **startup** (small team) | **enterprise** (team) |
@@ -20,7 +20,7 @@ eval "$(bbs autopilot git-flow)"
 Rigor scales *breadth* only — `PASS` means the same thing in all three tiers
 (`../qa/SKILL.md § Rigor tiers`). Under `land: none` `create-pr` BLOCKs: the
 qa + review-pr verdicts are the only gate before the push. An explicit
-`mode:`/`land:`/`push:`/`auto_land:` key always wins over the profile.
+`mode:`/`land:`/`push:`/`finish:` key always wins over the profile.
 
 ## Work rides the current branch
 `BBS_MODE` is `trunk` under every profile: babysit never cuts a branch or
@@ -33,7 +33,7 @@ run, never inherited from a config file:
 - `--mode=worktree` — cut into `.babysit/worktrees/<ticket>_<slug>/`, primary
   checkout untouched. `foreman` passes this for every worker in a batch. The
   machinery that shape needs — `merge-base`, qa-lease, `switch`/`serve`,
-  `land: local`, `auto_land` — lives in [worktrees.md](worktrees.md).
+  `land: local`, `finish` — lives in [worktrees.md](worktrees.md).
 
 ## When something does get a branch
 Ticket branches are cut and refreshed against `origin/<base>` (fetch-first) —

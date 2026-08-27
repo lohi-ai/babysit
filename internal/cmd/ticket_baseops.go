@@ -1146,7 +1146,7 @@ func runLand(args []string) { os.Exit(landTickets(args)) }
 // `land: local` (or `land: none`, where the base branch is the only venue there
 // is) does when review is over and the work should stay.
 //
-// Three things make it safe enough to run unattended behind `auto_land: true`:
+// Three things make it safe enough to run unattended behind `finish: land`:
 //
 //   - It gates on the same verdicts `serve` gates on — qa AND review-pr DONE,
 //     per ticket, with no override flag. Landing unverified work is the whole

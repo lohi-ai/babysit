@@ -285,7 +285,7 @@ All of them refuse loudly rather than losing work.
 5. After PRs merge: `bbs ticket reset-base` from the primary; in-flight
    worktrees re-run `merge-base`.
 
-### `auto_land` — let finished tickets merge themselves
+### `finish` — let a verified ticket close itself out
 
 `serve` is a *look*, not a landing: it resets base and re-composes from scratch
 each time, so nothing it puts there survives the next `reset-base`. `land` is
@@ -295,23 +295,35 @@ A repo can ask for that to happen by itself:
 
 ```yaml
 profile: startup
-auto_land: true
+finish: land          # review (default) | land | pr
 ```
 
 Now foreman merges each ticket into local base as its worker finishes, instead
 of leaving a pile of branches for you to compose. You review the base branch —
 which is already running on the dev server — and push it.
 
-It is off by default and opt-in per repo, because it is the one key that moves
-your base branch while you are asleep. The guards that make that survivable:
+`finish: pr` is the other half of the same key: foreman runs `create-pr` per
+ticket as it finishes, so the batch ends with open PRs instead of a pile of
+branches. It needs a PR venue — under `land: none` the config is rejected when
+it is read, because `create-pr` BLOCKs there by design.
 
-- **qa + review-pr must both be `DONE`**, per ticket, with no `--force` flag to
-  reach for. Unverified work does not land, ever.
+`finish` is `review` by default and opt-in per repo, because it is the one key
+that lets a run act on its own verdicts while you are asleep — moving your base
+branch, or pushing where your team can see it. Both values gate on the same
+thing: **qa + review-pr must both be `DONE`**, per ticket, with no `--force`
+flag to reach for. Unverified work never closes out.
+
+The rest of the guards are `land`'s, and they are what make a merge you did not
+watch survivable:
+
 - **The whole batch is checked before any of it merges** — a blocked third
   ticket doesn't leave the first two on a base you never asked for.
 - **It takes the QA lease**, so it can't move base under a running QA session.
 - **It never pushes.** Base ends up ahead of origin and the push stays yours.
 - **Re-running is a no-op** (`LANDED=0 … already on main`).
+
+`finish: pr` is the one that does push — that is what opening a PR is — but it
+opens a PR and nothing more: the review, and the merge, stay human.
 
 Don't run `serve` after landing: `serve` calls `reset-base`, which snaps base to
 origin and discards the merges — the ticket branches keep the work, but your
@@ -333,7 +345,7 @@ push it from `main` **before** the switch, or the first cut finds no
 git switch -c develop main && git push -u origin develop
 ```
 
-Setting `mode:`, `land:`, `push:` or `auto_land:` by hand overrides the
+Setting `mode:`, `land:`, `push:` or `finish:` by hand overrides the
 profile's preset. That's the escape hatch, not the normal shape — a knob written
 out by hand stops tracking its profile. `mode:` is read at branch-cut time, so
 adding or removing it affects new tickets only; before moving *into* worktree

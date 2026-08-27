@@ -205,8 +205,9 @@ func (a *apState) runSpawnReview(o spawnOpts) (spawnResult, error) {
 // then does nothing.
 func goalPrompt(prof agent.Profile, ticket, workflow string) string {
 	return "/goal " + ticket + " is done: qa verdict PASS/FIXED persisted via bbs ticket set-verdict,\n" +
-		"review-pr verdict persisted, branch pushed, handoff note written — or a\n" +
-		"NEEDS_CONTEXT / BLOCKED status block printed verbatim.\n" +
+		"review-pr verdict persisted, branch pushed, closed out per the repo's finish\n" +
+		"policy, handoff note written — or a NEEDS_CONTEXT / BLOCKED status block\n" +
+		"printed verbatim.\n" +
 		"Work it: " + prof.SkillRef("autopilot") + " " + workflow + " " + ticket
 }
 

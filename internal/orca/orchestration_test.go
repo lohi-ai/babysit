@@ -20,10 +20,15 @@ func orchestrationBody(caps string) string {
       run-current) echo '{"ok":true,"result":{"run":{"id":"run_abc123"}}}' ;;
       run-use)     echo '{"ok":true,"result":{}}' ;;
       task-create) echo '{"ok":true,"result":{"task":{"id":"task_def456"}}}' ;;
-      dispatch)    echo '{"ok":true,"result":{"preamble":"LIFECYCLE PREAMBLE"}}' ;;
-      reply)       echo '{"ok":true,"result":{}}' ;;
+      dispatch)    echo '{"ok":true,"result":{}}' ;;
+      reply|send)  echo '{"ok":true,"result":{}}' ;;
+      # Real task rows: the title the task was created with, a status, and no
+      # dispatch id — a dispatch is a separate record keyed the other way.
+      task-list)   echo '{"ok":true,"result":{"tasks":[{"id":"task_other","task_title":"bs-other","status":"dispatched"},{"id":"task_stale","task_title":"bs-x1","status":"completed"},{"id":"task_def456","task_title":"bs-x1","display_name":"bs-x1","status":"dispatched"}]}}' ;;
+      dispatch-show) echo '{"ok":true,"result":{"dispatch":{"id":"ctx_9","task_id":"task_def456","status":"dispatched"}}}' ;;
       ask)         echo '{"ok":true,"result":{"messageId":"msg_q1","answer":"option B"}}' ;;
       check)
+        case "$*" in *--peek*) echo '{"ok":true,"result":{"runId":"run_abc123","messages":[],"count":0}}'; exit 0 ;; esac
         echo '{"ok":true,"result":{"runId":"run_abc123","deliveryId":"delivery_1","messages":[{"id":"msg_1","type":"worker_done","subject":"bs-x1 done","body":"QA passed","from_handle":"term_9","sequence":88,"payload":"{\"taskId\":\"task_def456\",\"dispatchId\":\"ctx_9\",\"outcome\":\"succeeded\",\"filesModified\":[\"a.go\",\"b.go\"]}"}],"count":1}}' ;;
       *) echo '{"ok":true,"result":{}}' ;;
     esac ;;
@@ -82,8 +87,14 @@ func TestWithoutTheCapabilityEveryMailboxCallRefusesDistinguishably(t *testing.T
 	assertNoOrchestration(t, "RunCurrent", err)
 	_, err = c.TaskCreate("run_1", "t", "spec")
 	assertNoOrchestration(t, "TaskCreate", err)
-	_, err = c.Dispatch("run_1", "task_1", "term_1")
-	assertNoOrchestration(t, "Dispatch", err)
+	assertNoOrchestration(t, "Dispatch", c.Dispatch("run_1", "task_1", "term_1"))
+	_, err = c.Self()
+	assertNoOrchestration(t, "Self", err)
+	_, err = c.TaskFor("run_1", "bs-x1")
+	assertNoOrchestration(t, "TaskFor", err)
+	_, err = c.DispatchFor("task_1")
+	assertNoOrchestration(t, "DispatchFor", err)
+	assertNoOrchestration(t, "WorkerDone", c.WorkerDone(DoneOpts{Task: "task_1", Outcome: "succeeded"}))
 	_, err = c.Check(CheckOpts{}) //nolint:errcheck // the error IS the assertion
 	assertNoOrchestration(t, "Check", err)
 	assertNoOrchestration(t, "Reply", c.Reply("run_1", "msg_1", "yes"))
@@ -102,18 +113,14 @@ func assertNoOrchestration(t *testing.T, name string, err error) {
 // dispatch hands Orca's lifecycle the job of delivering the prompt — the exact
 // half babysit keeps — and makes babysit's tabs reachable by worker-stop /
 // worker-release.
-func TestDispatchReturnsThePreambleAndNeverInjects(t *testing.T) {
+func TestDispatchNeverInjectsAndAsksForNoPreamble(t *testing.T) {
 	c, log := withOrchestration(t)
-	preamble, err := c.Dispatch("run_abc123", "task_def456", "term_9")
-	if err != nil {
+	if err := c.Dispatch("run_abc123", "task_def456", "term_9"); err != nil {
 		t.Fatal(err)
 	}
-	if preamble != "LIFECYCLE PREAMBLE" {
-		t.Errorf("preamble = %q", preamble)
-	}
 	got := calls(t, log)
-	if !strings.Contains(got, "--return-preamble") {
-		t.Errorf("dispatch did not ask for the preamble:\n%s", got)
+	if strings.Contains(got, "--return-preamble") {
+		t.Errorf("dispatch still asks for a preamble that cannot be delivered:\n%s", got)
 	}
 	if strings.Contains(got, "--inject") {
 		t.Fatalf("dispatch injected — babysit delivers the prompt itself:\n%s", got)
@@ -294,5 +301,51 @@ func TestAskNeedsAQuestionOrAnIdToResume(t *testing.T) {
 	c, _ := withOrchestration(t)
 	if _, err := c.Ask(AskOpts{}); err == nil {
 		t.Error("want an error for an ask with neither a question nor a resume id")
+	}
+}
+
+// Self and TaskFor are the join that lets a worker report done with nothing
+// handed to it. The key is the ticket, because that is the task's title —
+// orca's task rows carry no dispatch id to start from, so a worker that asked
+// "which dispatch am I?" would never find its task at all.
+func TestSelfAndTaskForLetAWorkerFindItsOwnTask(t *testing.T) {
+	c, log := withOrchestration(t)
+	run, err := c.Self()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run != "run_abc123" {
+		t.Fatalf("Self = %q", run)
+	}
+	if !strings.Contains(calls(t, log), "check --peek") {
+		t.Errorf("Self marked the coordinator's messages read:\n%s", calls(t, log))
+	}
+	task, err := c.TaskFor(run, "bs-x1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// task_stale carries the same title and is completed: a re-dispatched
+	// ticket must report against the attempt that is still running.
+	if task != "task_def456" {
+		t.Errorf("TaskFor = %q, want the live attempt", task)
+	}
+	dispatch, err := c.DispatchFor(task)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dispatch != "ctx_9" {
+		t.Errorf("DispatchFor = %q", dispatch)
+	}
+}
+
+// A worker with no ticket has no join key, and TaskFor says so rather than
+// guessing at the first task in the run.
+func TestTaskForRefusesToGuessWithoutATicket(t *testing.T) {
+	c, _ := withOrchestration(t)
+	if _, err := c.TaskFor("run_abc123", ""); err == nil {
+		t.Error("TaskFor guessed a task for a worker with no ticket")
+	}
+	if _, err := c.TaskFor("run_abc123", "bs-nope"); err == nil {
+		t.Error("TaskFor matched a ticket that is not in the run")
 	}
 }

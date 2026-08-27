@@ -79,8 +79,9 @@ Redirect the design now if it's wrong — otherwise you're one paste from done.
 👉 Copy the block below and paste it into Claude Code to build it:
 
 /goal <ticket> is done: qa verdict PASS/FIXED persisted via bbs ticket set-verdict,
-review-pr verdict persisted, branch pushed, handoff note written — or a
-NEEDS_CONTEXT / BLOCKED status block printed verbatim.
+review-pr verdict persisted, branch pushed, closed out per the repo's finish
+policy, handoff note written — or a NEEDS_CONTEXT / BLOCKED status block
+printed verbatim.
 Work it: /bbs:autopilot <workflow> <ticket>
 ```
 The preamble is mandatory whenever `plan-draft`/`design-ui` produced those
@@ -107,8 +108,8 @@ installed as the plugin, bare `<name>` inside the babysit repo), never doing
 its job inline — the invocation fires the hooks.
 Planning: `plan-draft`. Coding: `implement`. Landing review: `review-pr`.
 QA: `qa` (no runnable target → record the fallback, use `browse` or a narrow
-local check). Debug: `investigate`. `create-pr` never runs inside autopilot —
-the human runs it after reviewing the handoff.
+local check). Debug: `investigate`. Closing out: `create-pr`, and only when the
+repo asked for it (below).
 ## Rules
 - Disk state must always be enough for a cold session to resume — but disk is
   the backup, not the brain; in a live session use everything already learned.
@@ -122,7 +123,21 @@ the human runs it after reviewing the handoff.
   status — with one plain-language sentence saying what happened and the
   exact next command to paste; a non-technical user must be able to keep
   the build moving without knowing git.
-- Never force-push, drop data, send external messages, or create PRs.
+- Never force-push, drop data, or send external messages.
+- **Close out per the repo's policy**, as the last step before the handoff and
+  only once qa and review-pr are both persisted DONE:
+  ```bash
+  eval "$(bbs autopilot git-flow)"     # → BBS_FINISH: review | land | pr
+  ```
+  `land` → `bbs ticket land "$TICKET"` (merge into local `$BBS_BASE_BRANCH`).
+  `pr` → run `create-pr` — a Skill-tool invocation, not a shell command (push +
+  open the PR against base). `review` (default) → the human closes it out.
+  The key is the repo's standing authorization and the only thing that decides
+  this — never close out on your own initiative. Never with a verdict missing
+  either: `land` refuses unverified work outright, and the PR hook *asks* on a
+  missing verdict, which with nobody at the pane is a stall rather than a stop.
+  Report what happened on the `NEXT:` line: `LANDED: <branch> → <base>`,
+  `PR: <url>`, or the human's `/bbs:create-pr`.
 - Always run QA before final handoff and persist the verdict with
   `bbs ticket set-verdict --skill qa` (real PASS/FIXED, or
   DONE_WITH_CONCERNS naming the blocker). "Implemented but not QA'd" is
@@ -139,5 +154,6 @@ the human runs it after reviewing the handoff.
 STATUS: DONE | DONE_WITH_CONCERNS | NEEDS_CONTEXT | BLOCKED
 VERDICT: PLANNED | BUILT | FIXED | HANDOFF
 SUMMARY: <branch, QA evidence, concerns>
-NEXT: human review, then /bbs:create-pr
+NEXT: what the finish policy left for the human — review + /bbs:create-pr
+(`review`), review the landed base + push (`land`), or review the PR (`pr`)
 ```

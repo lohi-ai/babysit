@@ -256,7 +256,7 @@ profile defaults to worktrees — they cost a commit + `merge-base` per test
 iteration and buy only parallelism, which is exactly what a batch needs and a
 serial ticket doesn't. Parallelism is foreman's to request, per dispatch;
 rigor stays whatever the repo's profile says. The machinery that shape brings
-with it — `merge-base`, the qa-lease, `switch`/`serve`, `auto_land` — is
+with it — `merge-base`, the qa-lease, `switch`/`serve`, `finish` — is
 [references/worktrees.md](../references/worktrees.md).
 
 **Every worker is a todo** — the task list is the user's live board and must
@@ -292,11 +292,11 @@ ticket, then wait on the batch instead of polling each pane:
 
 ```bash
 bbs foreman mailbox bind "$FM" --objective "<what this batch is>"
-# per worker, after its terminal exists:
-bbs foreman mailbox dispatch "$FM" --ticket "$TICKET" --terminal "$T"
-#   → prints TASK= and a PREAMBLE<<EOF … EOF block. Prepend that preamble to
-#     the worker's prompt yourself — babysit delivers prompts, Orca does not
-#     (nothing here is dispatched with --inject).
+# per worker, after its terminal exists. Nothing has to reach the worker for
+# this to work: it rings the doorbell with `bbs foreman mailbox done`, which
+# joins its own dispatch to this task off the bus. Never --inject — babysit
+# delivers prompts, Orca does not.
+bbs foreman mailbox dispatch "$FM" --ticket "$TICKET" --terminal "$T"   # → TASK=
 
 # the monitor: one call for every worker at once
 bbs foreman mailbox wait "$FM" --timeout-ms 60000
@@ -311,7 +311,10 @@ yourself: it is recorded on the foreman, so `--ack` still acknowledges the right
 batch after a crash between the two calls.
 
 - `type: worker_done` — the **doorbell, not the verdict**. Confirm on disk with
-  `bbs ticket verdict-status` before believing anything finished.
+  `bbs ticket verdict-status` before believing anything finished. Workers send
+  it with `bbs foreman mailbox done` at their terminal status
+  (references/preamble.md § `AGENT_ROLE=orca`); `outcome` mirrors that status,
+  `succeeded` covers `DONE_WITH_CONCERNS` too.
 - `needs_answer: true` (`ask` / `question` / `escalation`) — the worker is
   blocked until you answer. This is where a worker's `NEEDS_CONTEXT` arrives
   now: `AGENT_ROLE=orca` routes it to `orca orchestration ask`, which blocks
@@ -528,53 +531,55 @@ the next queued assignment. QA across workers
 serializes on `bbs ticket qa-lease` — workers handle that themselves;
 `board` shows who holds it.
 
-**Auto-land, if the repo asked for it.** Read the policy, don't assume it:
+**Close each ticket out the way the repo says.** One key decides it, and it
+names a whole handler — never branch on `land`/`push`/profile yourself:
 
 ```bash
-eval "$(bbs autopilot git-flow)"
-[ "$BBS_AUTO_LAND" = true ] && bbs ticket land "$TICKET"
+eval "$(bbs autopilot git-flow)"     # → BBS_FINISH: review | land | pr
 ```
+`land` → `bbs ticket land "$TICKET"` (merge into local `$BBS_BASE_BRANCH`).
+`pr` → run `create-pr` for that ticket — a Skill-tool invocation, not a shell
+command (push + open the PR against base). `review` (default) → the human
+closes it out.
 
-`auto_land: true` in `.babysit/git-flow.yaml` is off in every profile and opt-in
-per repo, so most batches still end at the human's `serve`. Where it *is* on,
-land each ticket as it finishes rather than in a batch at the end: a worker whose
-branch is already on base frees the next one from merging around it. `land`
-re-checks qa + review-pr on disk itself and BLOCKs rather than merging
-unverified work, so calling it on a ticket you believe is done is safe — a
-BLOCK means your read of the verdicts was wrong, and is a row to report, not a
-thing to work around. It never pushes: base ends up ahead of origin and the
-human still owns the push.
+Close out per ticket as it finishes, never batched at the end: a worker whose
+branch is already on base frees the next one from merging around it, and a PR
+opened early is one the reviewer sees early. Run the handler only on a ticket
+whose `qa` + `review-pr` you just read as `DONE` — that read is the gate. Both
+handlers re-check behind you (`land` refuses unverified work; the PR hook
+denies a `BLOCKED` verdict), but a *missing* verdict makes the PR hook **ask**,
+and an `ask` with nobody at the pane is a stalled worker, not a safe stop. A
+refusal is a row to report, not a thing to work around: there is no override.
 
-Report a landing on the ticket's row (`LANDED: <branch> → <base>`). If a land
-conflicts, that ticket stays unlanded and the batch continues — relay the
-conflict to its worker as feedback (merge `origin/<base>` in the worktree,
-resolve, commit) and re-run `land` for it after.
+Each value also decides the batch's aggregate `NEXT:`:
 
-Batch done → `eval "$(bbs autopilot git-flow)"` and branch on `$BBS_LAND`.
-
-**`$BBS_AUTO_LAND=true` short-circuits this**: the finished tickets are already
-merged into local `$BBS_BASE_BRANCH`, so the base branch *is* the composed
-surface and the dev server already serves it. Do **not** run `serve` after
-landing — it calls `reset-base`, which resets base to origin and discards every
-merge (the ticket branches keep the work, but the human's review surface
-vanishes mid-look). The NEXT is: review the running base, then push it.
-
-`local` → `bbs ticket serve` (bare) composes every finished ticket on the
-shared dev server for combined review; ticket branches stay the source of
-truth, `reset-base` discards the pile. The aggregate NEXT offers
-`/bbs:create-pr <t>` per ticket or one compose PR (create-pr § Compose PR).
-`pr` (the `startup`/`enterprise` default) → NEXT is per-ticket
-`/bbs:create-pr`; that skips the composed *checkpoint*, not local review — for
-UI work offer `bbs ticket serve <t…>` → browser → `serve --release` first.
-`none` (a pet
-project) → there are no PRs: compose with bare `serve` for one look, then the
-NEXT is landing the branches on `$BBS_BASE_BRANCH` — say so plainly rather
-than pointing at `create-pr`, which BLOCKs under this policy.
+- **`land`** — never pushes: base ends up ahead of origin and the human owns
+  the push. Report `LANDED: <branch> → <base>`; a conflict leaves that ticket
+  unlanded and the batch continues — relay it to its worker as feedback (merge
+  `origin/<base>` in the worktree, resolve, commit), then re-run `land`. Base
+  *is* the composed surface, so never `serve` after landing — `reset-base`
+  discards every merge mid-look ([worktrees.md](../references/worktrees.md)).
+  NEXT: review the running base, then push it.
+- **`pr`** — the `create-pr` skill, one PR per ticket, which persists the
+  pointer. Report `PR: <url>`; one PR for the whole batch stays a human ask,
+  not a default (create-pr § Compose PR). NEXT: review on GitHub — for UI work
+  offer `bbs ticket serve <t…>` → browser → `serve --release` first, so the
+  human sees the combined product before the reviews land.
+- **`review`** (default, and every unconfigured repo) — stop at QA-ready and
+  leave checkpoint 4 to the human. `bbs ticket serve` (bare) composes every
+  finished ticket on the shared dev server for combined review; ticket branches
+  stay the source of truth, `reset-base` discards the pile. NEXT then depends
+  on `$BBS_LAND`: `pr` (the `startup`/`enterprise` default) → `/bbs:create-pr
+  <t>` per ticket, or one compose PR; `none` (a pet project) → there are no
+  PRs, so land the branches on `$BBS_BASE_BRANCH` — say so plainly rather than
+  pointing at `create-pr`, which BLOCKs under that policy.
 
 ## Rules
 
-- foreman never edits worker code and never creates PRs — `NEXT:
-  /bbs:create-pr` stays with the human (checkpoint 4).
+- foreman never edits worker code. Whether it closes a ticket out at all —
+  `bbs ticket land`, or the `create-pr` skill — is the repo's `finish:` key,
+  never your call. Unset (the default) means checkpoint 4 stays the human's
+  and the NEXT is `/bbs:create-pr`.
 - `orca terminal stop --worktree …` and `orca worktree rm` close **every**
   terminal in that worktree — never use them on the primary checkout. Retire
   workers one at a time with `orca terminal close --terminal "$T" --tab`.
@@ -595,5 +600,7 @@ than pointing at `create-pr`, which BLOCKs under this policy.
 STATUS: DONE | DONE_WITH_CONCERNS | NEEDS_CONTEXT | BLOCKED
 TICKET: <id>  BRANCH: <branch>  QA: <verdict>  REVIEW: <verdict>  PUSHED: <bool>
 SUMMARY: <one line per ticket>
-NEXT: human review + /bbs:create-pr per ticket
+NEXT: what the finish policy left for the human — review + /bbs:create-pr per
+ticket (`review`), review the landed base + push (`land`), or review the open
+PRs (`pr`)
 ```
