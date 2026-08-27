@@ -13,107 +13,107 @@ func TestGitFlowFrom(t *testing.T) {
 	}{
 		{
 			"pet", "profile: pet\n",
-			gitFlowPolicy{"pet", "main", "trunk", "none", "false", "true", "smoke", "low"},
+			gitFlowPolicy{"pet", "main", "trunk", "none", "review", "true", "smoke", "low"},
 		},
 		{
 			// No profile derives a mode: the work rides the branch the user is
 			// standing on, and isolation is asked for per run (--mode).
 			"startup", "profile: startup\n",
-			gitFlowPolicy{"startup", "main", "trunk", "pr", "false", "true", "standard", "medium"},
+			gitFlowPolicy{"startup", "main", "trunk", "pr", "review", "true", "standard", "medium"},
 		},
 		{
 			"enterprise", "profile: enterprise\n",
-			gitFlowPolicy{"enterprise", "main", "trunk", "pr", "false", "true", "strict", "high"},
+			gitFlowPolicy{"enterprise", "main", "trunk", "pr", "review", "true", "strict", "high"},
 		},
 		{
 			// No profile key means nobody configured this repo, so it behaves
 			// like plain git: work rides the current branch, nothing is cut.
 			"no-profile-defaults-to-pet", "base_branch: main\n",
-			gitFlowPolicy{"pet", "main", "trunk", "none", "false", "true", "smoke", "low"},
+			gitFlowPolicy{"pet", "main", "trunk", "none", "review", "true", "smoke", "low"},
 		},
 		{
 			"legacy-trunk", "profile: trunk\n",
-			gitFlowPolicy{"pet", "main", "trunk", "none", "false", "true", "smoke", "low"},
+			gitFlowPolicy{"pet", "main", "trunk", "none", "review", "true", "smoke", "low"},
 		},
 		{
 			"legacy-branch-pr", "profile: branch-pr\n",
-			gitFlowPolicy{"startup", "main", "branch", "pr", "false", "true", "standard", "medium"},
+			gitFlowPolicy{"startup", "main", "branch", "pr", "review", "true", "standard", "medium"},
 		},
 		{
 			// worktree-pr keeps its PRs — an alias pins the shape its name
 			// promises, it does not inherit what the profile derives today.
 			"legacy-worktree-pr", "profile: worktree-pr\n",
-			gitFlowPolicy{"enterprise", "main", "worktree", "pr", "false", "true", "strict", "high"},
+			gitFlowPolicy{"enterprise", "main", "worktree", "pr", "review", "true", "strict", "high"},
 		},
 		{
 			"legacy-worktree-review", "profile: worktree-review\n",
-			gitFlowPolicy{"enterprise", "main", "worktree", "local", "false", "true", "strict", "high"},
+			gitFlowPolicy{"enterprise", "main", "worktree", "local", "review", "true", "strict", "high"},
 		},
 		{
 			"explicit-keys-win", "profile: pet\nmode: branch\nland: pr\npush: false\n",
-			gitFlowPolicy{"pet", "main", "branch", "pr", "false", "false", "smoke", "low"},
+			gitFlowPolicy{"pet", "main", "branch", "pr", "review", "false", "smoke", "low"},
 		},
 		{
 			// The parallel shape, written out by hand: the mode key is the only
 			// thing that turns worktrees on, and it does not drag land with it.
 			"hand-written-worktree-keeps-profile-land", "profile: enterprise\nmode: worktree\n",
-			gitFlowPolicy{"enterprise", "main", "worktree", "pr", "false", "true", "strict", "high"},
+			gitFlowPolicy{"enterprise", "main", "worktree", "pr", "review", "true", "strict", "high"},
 		},
 		{
 			"hand-written-worktree-and-land-local", "profile: enterprise\nmode: worktree\nland: local\n",
-			gitFlowPolicy{"enterprise", "main", "worktree", "local", "false", "true", "strict", "high"},
+			gitFlowPolicy{"enterprise", "main", "worktree", "local", "review", "true", "strict", "high"},
 		},
 		{
 			"worktree-explicit-land-pr", "profile: enterprise\nmode: worktree\nland: pr\n",
-			gitFlowPolicy{"enterprise", "main", "worktree", "pr", "false", "true", "strict", "high"},
+			gitFlowPolicy{"enterprise", "main", "worktree", "pr", "review", "true", "strict", "high"},
 		},
 		{
 			// A pet repo that wants separable parallel tickets keeps its
 			// land: none — worktrees compose onto local base and the push is
 			// still the release. Nothing may promote it to a PR flow.
 			"pet-worktree-keeps-land-none", "profile: pet\nmode: worktree\n",
-			gitFlowPolicy{"pet", "main", "worktree", "none", "false", "true", "smoke", "low"},
+			gitFlowPolicy{"pet", "main", "worktree", "none", "review", "true", "smoke", "low"},
 		},
 		{
 			// The documented opt-out, written in full.
 			"solo-loop-opt-out", "profile: startup\nmode: branch\nland: pr\n",
-			gitFlowPolicy{"startup", "main", "branch", "pr", "false", "true", "standard", "medium"},
+			gitFlowPolicy{"startup", "main", "branch", "pr", "review", "true", "standard", "medium"},
 		},
 		{
 			// …and written the short way: the profile's own landing applies.
 			"lone-mode-branch-keeps-profile-land", "profile: enterprise\nmode: branch\n",
-			gitFlowPolicy{"enterprise", "main", "branch", "pr", "false", "true", "strict", "high"},
+			gitFlowPolicy{"enterprise", "main", "branch", "pr", "review", "true", "strict", "high"},
 		},
 		{
 			// An unconfigured repo that still writes `mode: branch` keeps the
 			// key it wrote and `pet`'s landing: the branch is cut, and the push
 			// is still the release. Nothing promotes it to a PR flow.
 			"lone-mode-branch-no-profile", "base_branch: main\nmode: branch\n",
-			gitFlowPolicy{"pet", "main", "branch", "none", "false", "true", "smoke", "low"},
+			gitFlowPolicy{"pet", "main", "branch", "none", "review", "true", "smoke", "low"},
 		},
 		{
 			"legacy-ticket-branch-optional", "ticket_branch: optional\n",
-			gitFlowPolicy{"pet", "main", "trunk", "none", "false", "true", "smoke", "low"},
+			gitFlowPolicy{"pet", "main", "trunk", "none", "review", "true", "smoke", "low"},
 		},
 		{
 			"legacy-ticket-branch-required", "profile: pet\nticket_branch: required\n",
-			gitFlowPolicy{"pet", "main", "branch", "none", "false", "true", "smoke", "low"},
+			gitFlowPolicy{"pet", "main", "branch", "none", "review", "true", "smoke", "low"},
 		},
 		{
-			// auto_land is opt-in per repo and off in every preset, so a bare
-			// profile never lands anything by itself.
-			"auto-land-opt-in", "profile: startup\nauto_land: true\n",
-			gitFlowPolicy{"startup", "main", "trunk", "pr", "true", "true", "standard", "medium"},
+			// finish is opt-in per repo and unset in every preset, so a bare
+			// profile never closes a ticket out by itself.
+			"finish-land-opt-in", "profile: startup\nfinish: land\n",
+			gitFlowPolicy{"startup", "main", "trunk", "pr", "land", "true", "standard", "medium"},
 		},
 		{
 			// land: none is the pet shape where the base branch IS the venue —
 			// exactly the repo that wants its finished tickets landed for it.
-			"auto-land-under-land-none", "profile: pet\nmode: worktree\nauto_land: true\n",
-			gitFlowPolicy{"pet", "main", "worktree", "none", "true", "true", "smoke", "low"},
+			"finish-land-under-land-none", "profile: pet\nmode: worktree\nfinish: land\n",
+			gitFlowPolicy{"pet", "main", "worktree", "none", "land", "true", "smoke", "low"},
 		},
 		{
 			"comments-and-quotes", "# profile: enterprise\nprofile: 'pet'   # hobby\n",
-			gitFlowPolicy{"pet", "main", "trunk", "none", "false", "true", "smoke", "low"},
+			gitFlowPolicy{"pet", "main", "trunk", "none", "review", "true", "smoke", "low"},
 		},
 	}
 	for _, c := range cases {
@@ -135,7 +135,15 @@ func TestGitFlowFromInvalid(t *testing.T) {
 		"profile: pet\nmode: bogus\n",
 		"profile: pet\nland: sometimes\n",
 		"profile: pet\npush: maybe\n",
-		"profile: pet\nauto_land: sometimes\n",
+		"profile: pet\nfinish: someday\n",
+		// auto_land was folded into finish. Erroring with the rewrite beats an
+		// alias (two keys for one decision) and beats silence (a repo that used
+		// to land quietly stops landing).
+		"profile: pet\nauto_land: true\n",
+		"profile: pet\nauto_land: false\n",
+		// finish: pr with no PR venue — create-pr BLOCKs under land: none, so
+		// the contradiction is named here instead of after a batch has run.
+		"profile: pet\nfinish: pr\n",
 	} {
 		if _, err := gitFlowFrom(yaml, "main"); err == nil {
 			t.Errorf("expected an error for %q", yaml)

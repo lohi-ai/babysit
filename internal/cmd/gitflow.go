@@ -27,15 +27,17 @@ import (
 // having (or not having) a config file. A tool that silently moves the user
 // off their branch is a tool they cannot manage.
 //
-// `auto_land` is likewise opt-in per repo: it is the one key that moves the
-// local base branch with nobody watching.
+// `finish` is likewise opt-in per repo. It is the one key that lets a run close
+// a ticket out by itself — merging into the local base, or opening the PR —
+// and it stays unset by default because both are decisions somebody should
+// have written down rather than inherited from a profile.
 
 type gitFlowPolicy struct {
 	Profile      string // pet | startup | enterprise
 	BaseBranch   string
 	Mode         string // trunk | branch | worktree
 	Land         string // none | local | pr
-	AutoLand     string // true | false
+	Finish       string // review | land | pr — who closes a verified ticket
 	Push         string // true | false
 	Rigor        string // smoke | standard | strict
 	ReviewEffort string // low | medium | high
@@ -95,12 +97,23 @@ func gitFlowFrom(content, base string) (gitFlowPolicy, error) {
 	// The git shape every profile shares, stated once: stay on the branch the
 	// user is standing on, push it, never move the local base unattended. Only
 	// a legacy alias or an explicit key below changes it.
-	p.Mode, p.Push, p.AutoLand = "trunk", "true", "false"
+	p.Mode, p.Push, p.Finish = "trunk", "true", "review"
 	if aliasMode != "" {
 		p.Mode = aliasMode
 	}
 	if aliasLand != "" {
 		p.Land = aliasLand
+	}
+	// `auto_land` was the boolean half of what `finish` now says in one word.
+	// Keeping it as a silent alias would leave two keys for one decision — and
+	// dropping it silently would turn a repo that lands into one that stops. So
+	// it fails loudly with the one-line rewrite, once, per repo.
+	if v := gfScalar(content, "auto_land"); v != "" {
+		want := "review"
+		if v == "true" {
+			want = "land"
+		}
+		return p, fmt.Errorf("auto_land is gone from .babysit/git-flow.yaml — replace 'auto_land: %s' with 'finish: %s' (review|land|pr)", v, want)
 	}
 	if aliasMode == "" && gfScalar(content, "mode") == "" {
 		switch gfScalar(content, "ticket_branch") { // legacy alias for mode
@@ -120,7 +133,7 @@ func gitFlowFrom(content, base string) (gitFlowPolicy, error) {
 		{"mode", "trunk|branch|worktree", &p.Mode},
 		{"land", "none|local|pr", &p.Land},
 		{"push", "true|false", &p.Push},
-		{"auto_land", "true|false", &p.AutoLand},
+		{"finish", "review|land|pr", &p.Finish},
 	} {
 		if v := gfScalar(content, k.key); v != "" {
 			*k.dst = v
@@ -128,6 +141,13 @@ func gitFlowFrom(content, base string) (gitFlowPolicy, error) {
 		if !slices.Contains(strings.Split(k.allowed, "|"), *k.dst) {
 			return p, fmt.Errorf("invalid %s '%s' in .babysit/git-flow.yaml (%s)", k.key, *k.dst, k.allowed)
 		}
+	}
+	// The one combination that cannot be honoured. `create-pr` BLOCKs under
+	// `land: none` by design — the push is the release there — so a repo asking
+	// foreman to finish by PR would discover the contradiction only after a
+	// batch had already run. Say it at config-read instead.
+	if p.Finish == "pr" && p.Land == "none" {
+		return p, fmt.Errorf("finish 'pr' needs a PR venue, but land is 'none' in .babysit/git-flow.yaml — set land: pr (or profile: startup) to open PRs, or finish: land to merge into %s locally", p.BaseBranch)
 	}
 	return p, nil
 }
@@ -149,7 +169,7 @@ func printGitFlow() {
 	fmt.Printf("BBS_BASE_BRANCH=%s\n", shq(p.BaseBranch))
 	fmt.Printf("BBS_MODE=%s\n", shq(p.Mode))
 	fmt.Printf("BBS_LAND=%s\n", shq(p.Land))
-	fmt.Printf("BBS_AUTO_LAND=%s\n", shq(p.AutoLand))
+	fmt.Printf("BBS_FINISH=%s\n", shq(p.Finish))
 	fmt.Printf("BBS_PUSH=%s\n", shq(p.Push))
 	fmt.Printf("BBS_RIGOR=%s\n", shq(p.Rigor))
 	fmt.Printf("BBS_REVIEW_EFFORT=%s\n", shq(p.ReviewEffort))

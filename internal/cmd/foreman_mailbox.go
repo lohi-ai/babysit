@@ -33,6 +33,7 @@ const foremanMailboxUsage = `Usage:
   bbs foreman mailbox dispatch <id> --ticket <t> --terminal <handle> [--spec <text>]
   bbs foreman mailbox wait <id> [--timeout-ms <n>] [--types <a,b>] [--ack]
   bbs foreman mailbox reply <id> --message <msg_id> --body <text>
+  bbs foreman mailbox done --status <STATUS> --body <text> [--ticket <t>] [--files <a,b>]
 `
 
 // mailboxTypes are the message kinds a foreman acts on. Everything else on the
@@ -64,6 +65,8 @@ func foremanMailbox(args []string) error {
 		return foremanMailboxWait(rest)
 	case "reply":
 		return foremanMailboxReply(rest)
+	case "done":
+		return foremanMailboxDone(rest)
 	case "help", "--help", "-h":
 		fmt.Print(foremanMailboxUsage)
 		return nil
@@ -160,9 +163,14 @@ func foremanMailboxBind(args []string) error {
 }
 
 // foremanMailboxDispatch creates this ticket's task and binds it to the
-// worker's terminal, printing the lifecycle preamble for babysit to deliver
-// itself. One task per ticket, never with --deps: a foreman batch is
+// worker's terminal. One task per ticket, never with --deps: a foreman batch is
 // independent tickets by construction.
+//
+// Nothing has to be delivered to the worker for this to work: the task is
+// titled with the ticket, and the ticket is what the worker already knows. It
+// rings the doorbell with `mailbox done`, which finds this task by that title —
+// so dispatch stays a coordinator-side call with no second half the skill could
+// forget.
 func foremanMailboxDispatch(args []string) error {
 	id, kv, err := foremanFlags(args)
 	if err != nil {
@@ -189,16 +197,92 @@ func foremanMailboxDispatch(args []string) error {
 	if err != nil {
 		return err
 	}
-	preamble, err := c.Dispatch(rec.Run, taskID, handle)
-	if err != nil {
+	if err := c.Dispatch(rec.Run, taskID, handle); err != nil {
 		return err
 	}
 	fmt.Printf("MAILBOX=on\nRUN=%s\nTASK=%s\n", rec.Run, taskID)
-	if preamble != "" {
-		fmt.Println("PREAMBLE<<EOF")
-		fmt.Println(preamble)
-		fmt.Println("EOF")
+	return nil
+}
+
+// doneOutcome maps babysit's terminal status onto Orca's two-valued outcome.
+//
+// The worker reports in the vocabulary it already prints — the STATUS line at
+// the end of every skill — and this is the only place that knows Orca has a
+// different one. A status outside that set is a caller bug rather than a
+// default to guess at: ringing the doorbell early is worse than not ringing it.
+var doneOutcome = map[string]string{
+	"DONE":               "succeeded",
+	"DONE_WITH_CONCERNS": "succeeded",
+	"BLOCKED":            "failed",
+	"NEEDS_CONTEXT":      "failed",
+}
+
+// foremanMailboxDone is the worker half of the doorbell, and the only verb here
+// a worker runs. It takes no foreman id and no task id: a worker knows its
+// ticket, which is the title foreman gave the task, and that is the whole join.
+//
+// Everything about it is best-effort by design. A worker that was never
+// dispatched over the bus, or is running under an Orca too old to serve the
+// contract, prints MAILBOX=off and exits 0 — reporting completion must never be
+// the thing that fails a finished ticket.
+func foremanMailboxDone(args []string) error {
+	_, kv, err := foremanFlags(args)
+	if err != nil {
+		return err
 	}
+	status := strings.ToUpper(kv["status"])
+	outcome, ok := doneOutcome[status]
+	if !ok {
+		return fmt.Errorf("foreman mailbox done: --status must be one of DONE, DONE_WITH_CONCERNS, BLOCKED, NEEDS_CONTEXT")
+	}
+	body := kv["body"]
+	if body == "" {
+		return errors.New("foreman mailbox done: needs a --body (what you did, what you found, what is left)")
+	}
+	ticket := kv["ticket"]
+	if ticket == "" {
+		ticket = os.Getenv("BABYSIT_TICKET")
+	}
+	// Every way this can fail lands here: say so on stderr, stay silent about it
+	// on stdout beyond MAILBOX=off, and exit 0.
+	off := func(err error) error {
+		fmt.Println("MAILBOX=off")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "foreman mailbox done: %v\n", err)
+		}
+		return nil
+	}
+	c := mailboxClient()
+	if c == nil || ticket == "" {
+		return off(nil)
+	}
+	run, err := c.Self()
+	if err != nil {
+		return off(nil)
+	}
+	task, err := c.TaskFor(run, ticket)
+	if err != nil {
+		// No task titled for this ticket is the ordinary shape for a worker
+		// nobody dispatched over the bus, not a fault to report.
+		return off(nil)
+	}
+	// Best-effort: a worker_done carrying only the task id still lands.
+	dispatch, _ := c.DispatchFor(task)
+	subject := strings.TrimSpace(ticket + " " + status)
+	var files []string
+	for _, f := range strings.Split(kv["files"], ",") {
+		if f = strings.TrimSpace(f); f != "" {
+			files = append(files, f)
+		}
+	}
+	if err := c.WorkerDone(orca.DoneOpts{
+		Run: run, Task: task, Dispatch: dispatch,
+		From:    os.Getenv("ORCA_TERMINAL_HANDLE"),
+		Subject: subject, Body: body, Outcome: outcome, Files: files,
+	}); err != nil {
+		return off(err)
+	}
+	fmt.Printf("MAILBOX=on\nDONE=%s\nTASK=%s\n", outcome, task)
 	return nil
 }
 

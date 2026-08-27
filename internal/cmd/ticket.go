@@ -223,7 +223,7 @@ standing on, so none of the next seven apply:
                                  merge finished ticket branches into the LOCAL
                                  base and KEEP the merge (--no-ff); gates on qa
                                  + review-pr DONE, no override; never pushes.
-                                 Opt in per repo with auto_land: true so a
+                                 Opt in per repo with finish: land so a
                                  foreman lands a worker as it finishes
 
   board [--all] [--pr]           read-only ticket board: status, branch, qa/

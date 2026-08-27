@@ -41,5 +41,5 @@ production system safe as it scales. Two modes, chosen from the invocation:
 STATUS: DONE | DONE_WITH_CONCERNS | NEEDS_CONTEXT | BLOCKED
 VERDICT: AUDITED | HARDENED | FIXED
 SUMMARY: <mode + top finding/root-cause + fix/verification + backlog size>
-NEXT: triage backlog; human review, then /bbs:create-pr
+NEXT: triage backlog; then the repo's finish policy — by default, human review then /bbs:create-pr
 ```

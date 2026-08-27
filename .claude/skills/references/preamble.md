@@ -72,6 +72,21 @@ ANSWER=$(orca orchestration ask --question "<the one question, in one line>" \
   structured block below. A dispatched worker that cannot reach its foreman is
   in the orchestrator case, and the block is what an orchestrator reads.
 
+Ring the doorbell in the same breath as printing your terminal status block —
+a coordinator waiting on the bus has no other way to learn the run ended:
+```bash
+bbs foreman mailbox done --status <the STATUS you just printed> \
+  --body "<3 sentences: what you did, what you found, what is left>" \
+  --files "<comma-separated paths you changed>"
+```
+- Nothing is handed to you for this. Your foreman titled the task with your
+  ticket, so `done` finds it from `BABYSIT_TICKET` alone — no id to carry and
+  none to lose. Pass `--ticket` only when that env var is not set.
+- It is the **doorbell, not the verdict**: the coordinator still reads
+  `bbs ticket verdict-status` off disk. Print the status block either way.
+- Best-effort by construction — a worker nobody dispatched, or an Orca too old
+  to serve the bus, gets `MAILBOX=off` and exit 0. Never let it gate a handoff.
+
 ### `NEEDS_CONTEXT` shape
 ```
 STATUS: NEEDS_CONTEXT
