@@ -25,7 +25,12 @@ func orchestrationBody(caps string) string {
       # Real task rows: the title the task was created with, a status, and no
       # dispatch id — a dispatch is a separate record keyed the other way.
       task-list)   echo '{"ok":true,"result":{"tasks":[{"id":"task_other","task_title":"bs-other","status":"dispatched"},{"id":"task_stale","task_title":"bs-x1","status":"completed"},{"id":"task_def456","task_title":"bs-x1","display_name":"bs-x1","status":"dispatched"}]}}' ;;
-      dispatch-show) echo '{"ok":true,"result":{"dispatch":{"id":"ctx_9","task_id":"task_def456","status":"dispatched"}}}' ;;
+      # A task nobody dispatched answers ok with a null dispatch, not an error.
+      dispatch-show)
+        case "$*" in
+          *task_undispatched*) echo '{"ok":true,"result":{"dispatch":null}}' ;;
+          *) echo '{"ok":true,"result":{"dispatch":{"id":"ctx_9","task_id":"task_def456","status":"dispatched"}}}' ;;
+        esac ;;
       ask)         echo '{"ok":true,"result":{"messageId":"msg_q1","answer":"option B"}}' ;;
       check)
         case "$*" in *--peek*) echo '{"ok":true,"result":{"runId":"run_abc123","messages":[],"count":0}}'; exit 0 ;; esac
@@ -335,6 +340,21 @@ func TestSelfAndTaskForLetAWorkerFindItsOwnTask(t *testing.T) {
 	}
 	if dispatch != "ctx_9" {
 		t.Errorf("DispatchFor = %q", dispatch)
+	}
+}
+
+// `"dispatch": null` arrives inside an ok envelope, so nothing errors on its
+// own — the id just unmarshals empty. Returning that as a success would hand
+// the caller an id orca refuses to accept in a worker_done, which is the same
+// shape of silent no-op the ticket join already went out as once.
+func TestDispatchForSaysWhenATaskIsNotDispatched(t *testing.T) {
+	c, _ := withOrchestration(t)
+	got, err := c.DispatchFor("task_undispatched")
+	if err == nil {
+		t.Fatalf("DispatchFor = %q, want an error for a null dispatch", got)
+	}
+	if !strings.Contains(err.Error(), "not dispatched") {
+		t.Errorf("DispatchFor err = %v", err)
 	}
 }
 

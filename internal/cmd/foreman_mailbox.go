@@ -266,8 +266,12 @@ func foremanMailboxDone(args []string) error {
 		// nobody dispatched over the bus, not a fault to report.
 		return off(nil)
 	}
-	// Best-effort: a worker_done carrying only the task id still lands.
-	dispatch, _ := c.DispatchFor(task)
+	// Not optional: orca refuses a worker_done with no dispatch id, so failing
+	// here means no doorbell — off() reports that rather than swallowing it.
+	dispatch, err := c.DispatchFor(task)
+	if err != nil {
+		return off(err)
+	}
 	subject := strings.TrimSpace(ticket + " " + status)
 	var files []string
 	for _, f := range strings.Split(kv["files"], ",") {
@@ -345,12 +349,18 @@ func foremanMailboxWait(args []string) error {
 	for _, m := range msgs {
 		// worker_done is the doorbell, not the verdict: the skill still reads
 		// `bbs ticket verdict-status` before believing anything finished.
-		line, _ := json.Marshal(map[string]any{
+		fields := map[string]any{
 			"id": m.ID, "type": m.Type, "subject": m.Subject,
 			"task": m.TaskID, "dispatch": m.DispatchID,
 			"outcome": m.Outcome, "files": m.FilesModified,
 			"needs_answer": m.NeedsAnswer(), "body": m.Body,
-		})
+		}
+		// Only present when orca threw the report away. Absent on every ordinary
+		// message, so a reader that has never seen one is not asked to care.
+		if m.Rejected != "" {
+			fields["rejected"] = m.Rejected
+		}
+		line, _ := json.Marshal(fields)
 		fmt.Println(string(line))
 	}
 	return nil

@@ -82,6 +82,14 @@ type Message struct {
 	DispatchID    string
 	Outcome       string
 	FilesModified []string
+
+	// Rejected is orca's reason for refusing the lifecycle event this message
+	// reports, empty when it accepted one. A refusal is still delivered, still
+	// typed worker_done, and still carries `"outcome":"succeeded"` — the
+	// refusal lives only in `_orcaLifecycleRejection`. Reading the outcome
+	// without this field is how a worker whose report orca threw away looks
+	// exactly like one that finished.
+	Rejected string
 }
 
 // Done reports a worker that finished, successfully or not. It is the doorbell
@@ -277,10 +285,11 @@ func (c *Client) TaskFor(runID, ticket string) (string, error) {
 	return "", fmt.Errorf("orca task-list: no task titled %s", ticket)
 }
 
-// DispatchFor reads the dispatch a task is currently assigned as. Orca marks
-// the dispatch completed alongside the task when worker_done carries both ids,
-// so it is worth one extra call — but not worth failing over: a worker_done
-// with only the task id still lands, matched on the sender handle.
+// DispatchFor reads the dispatch a task is currently assigned as. The extra
+// call is not an optimization: orca rejects a worker_done that carries no
+// dispatch id ("worker_done requires dispatchId") — the task id alone will not
+// settle a dispatch — so a caller that cannot read this rings no doorbell and
+// should say so, not proceed as if it had.
 func (c *Client) DispatchFor(taskID string) (string, error) {
 	if !c.Orchestration() {
 		return "", ErrNoOrchestration
@@ -299,6 +308,13 @@ func (c *Client) DispatchFor(taskID string) (string, error) {
 	}
 	if err := json.Unmarshal(raw, &wrap); err != nil {
 		return "", fmt.Errorf("orca dispatch-show: %w", err)
+	}
+	// A task nobody dispatched answers ok with `"dispatch": null`, which
+	// unmarshals to an empty id. Handing that back as a success would send the
+	// caller on to a worker_done orca is going to refuse anyway — say there is
+	// no dispatch instead, the way task-list says there is no task.
+	if wrap.Dispatch.ID == "" {
+		return "", fmt.Errorf("orca dispatch-show: task %s is not dispatched", taskID)
 	}
 	return wrap.Dispatch.ID, nil
 }
@@ -538,12 +554,29 @@ func applyPayload(m *Message, raw interface{}) {
 		DispatchID    string   `json:"dispatchId"`
 		Outcome       string   `json:"outcome"`
 		FilesModified []string `json:"filesModified"`
+		Rejection     *struct {
+			Code   string `json:"code"`
+			Reason string `json:"reason"`
+		} `json:"_orcaLifecycleRejection"`
 	}
 	if err := json.Unmarshal(body, &p); err != nil {
 		return
 	}
 	m.TaskID, m.DispatchID = p.TaskID, p.DispatchID
 	m.Outcome, m.FilesModified = p.Outcome, p.FilesModified
+	if p.Rejection != nil {
+		m.Rejected = p.Rejection.Reason
+		if m.Rejected == "" {
+			m.Rejected = p.Rejection.Code
+		}
+		if m.Rejected == "" {
+			m.Rejected = "orca refused this lifecycle event"
+		}
+		// The payload still says "succeeded" — orca reports what the sender
+		// claimed, not what it accepted. Leaving that word in place would let
+		// every consumer that reads `outcome` alone believe the report landed.
+		m.Outcome = "rejected"
+	}
 }
 
 func runIDFrom(raw json.RawMessage) (string, error) {

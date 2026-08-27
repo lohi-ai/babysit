@@ -39,11 +39,29 @@ case "$1" in
       run-use)     echo '{"ok":true,"result":{}}' ;;
       task-create) echo '{"ok":true,"result":{"task":{"id":"task_1"}}}' ;;
       dispatch)    echo '{"ok":true,"result":{}}' ;;
-      reply|send)  echo '{"ok":true,"result":{}}' ;;
+      reply)       echo '{"ok":true,"result":{}}' ;;
+      # The runtime refuses a worker_done that carries no dispatch id
+      # ("worker_done requires dispatchId") — a task id alone will not settle a
+      # dispatch. Reject it here too, so the doorbell's dependency on
+      # dispatch-show stays load-bearing in the suite instead of reading like an
+      # optimization someone could drop.
+      send)
+        case "$*" in
+          *"--type worker_done"*)
+            case "$*" in
+              *--dispatch-id*) ;;
+              *) echo "orca orchestration: worker_done requires dispatchId." >&2; exit 1 ;;
+            esac ;;
+        esac
+        echo '{"ok":true,"result":{}}' ;;
       # Real task rows, down to the field names: a task carries the title it was
       # created with and no dispatch id at all.
       task-list)   echo '{"ok":true,"result":{"tasks":[{"id":"task_1","task_title":"bs-x1","display_name":"bs-x1","status":"dispatched"},{"id":"task_other","task_title":"bs-other","status":"dispatched"}]}}' ;;
-      dispatch-show) echo '{"ok":true,"result":{"dispatch":{"id":"ctx_1","task_id":"task_1","status":"dispatched"}}}' ;;
+      dispatch-show)
+        # $FAKE_NO_DISPATCH stands in for a task whose dispatch orca cannot
+        # produce — released, fenced, or never dispatched at all.
+        [ -n "${FAKE_NO_DISPATCH:-}" ] && { echo "orca orchestration: no dispatch for task" >&2; exit 1; }
+        echo '{"ok":true,"result":{"dispatch":{"id":"ctx_1","task_id":"task_1","status":"dispatched"}}}' ;;
       check)
         # The worker's own read of the bus. --peek answers "which run am I on?"
         # without marking the coordinator's queued messages read.
@@ -60,7 +78,10 @@ case "$1" in
             *) echo "orca orchestration: Invalid --types: $t" >&2; exit 1 ;;
           esac
         done
-        echo '{"ok":true,"result":{"deliveryId":"delivery_1","messages":[{"id":"msg_1","type":"worker_done","subject":"bs-x1","from_handle":"term_9","payload":"{\"taskId\":\"task_1\",\"outcome\":\"succeeded\",\"filesModified\":[\"a.go\"]}"},{"id":"msg_2","type":"question","subject":"409 or merge?","from_handle":"dispatch:ctx_1"}],"count":2}}' ;;
+        # msg_3 is a refusal exactly as the runtime delivers one: still typed
+        # worker_done, still claiming "succeeded", with the refusal only in
+        # _orcaLifecycleRejection. Captured from a live run.
+        echo '{"ok":true,"result":{"deliveryId":"delivery_1","messages":[{"id":"msg_1","type":"worker_done","subject":"bs-x1","from_handle":"term_9","payload":"{\"taskId\":\"task_1\",\"outcome\":\"succeeded\",\"filesModified\":[\"a.go\"]}"},{"id":"msg_2","type":"question","subject":"409 or merge?","from_handle":"dispatch:ctx_1"},{"id":"msg_3","type":"worker_done","subject":"Rejected worker_done: bs-x9 DONE","from_handle":"term_9","payload":"{\"taskId\":\"task_9\",\"outcome\":\"succeeded\",\"_orcaLifecycleRejection\":{\"code\":\"missing_dispatch_id\",\"reason\":\"worker_done requires dispatchId.\"}}"}],"count":3}}' ;;
       *) echo '{"ok":true,"result":{}}' ;;
     esac ;;
   *) echo '{"ok":true,"result":{}}' ;;
@@ -184,7 +205,7 @@ func TestMailboxWaitReturnsTypedMessagesForTheWholeBatch(t *testing.T) {
 			t.Fatal(err)
 		}
 	})
-	if !strings.Contains(out, "COUNT=2") {
+	if !strings.Contains(out, "COUNT=3") {
 		t.Errorf("wait = %q", out)
 	}
 	// The payload the pane monitor could never have: typed, and not lost when
@@ -315,6 +336,48 @@ func TestMailboxReplyAddressesTheMessageById(t *testing.T) {
 	}
 }
 
+// The receive half of the dispatch-id defect. Orca does not drop a worker_done
+// it refuses — it delivers it, typed worker_done, with the sender's own
+// "succeeded" still in the payload and the refusal buried in
+// _orcaLifecycleRejection. A foreman reading `outcome` alone therefore counts a
+// thrown-away report as a finished worker, and the task it names never settles.
+// Rendering it as anything but succeeded is the whole fix.
+func TestMailboxWaitNeverRendersARefusedReportAsSuccess(t *testing.T) {
+	fakeOrcaMailbox(t, `"orchestration.contract.v1"`)
+	seedForeman(t, "fm-a", "run_rec")
+
+	out := captureStdout(t, func() {
+		if err := foremanMailbox([]string{"wait", "fm-a", "--timeout-ms", "45000"}); err != nil {
+			t.Fatal(err)
+		}
+	})
+	var refused string
+	for _, ln := range strings.Split(out, "\n") {
+		if strings.Contains(ln, `"id":"msg_3"`) {
+			refused = ln
+		}
+	}
+	if refused == "" {
+		t.Fatalf("refused message not surfaced at all:\n%s", out)
+	}
+	if strings.Contains(refused, `"outcome":"succeeded"`) {
+		t.Errorf("a report orca threw away still reads as succeeded:\n%s", refused)
+	}
+	if !strings.Contains(refused, `"outcome":"rejected"`) {
+		t.Errorf("refusal not in the outcome:\n%s", refused)
+	}
+	if !strings.Contains(refused, "requires dispatchId") {
+		t.Errorf("refusal surfaced without orca's reason:\n%s", refused)
+	}
+	// The ordinary messages must be untouched — `rejected` appears only on the
+	// one that carries a refusal, so nothing else has to learn a new field.
+	for _, ln := range strings.Split(out, "\n") {
+		if strings.Contains(ln, `"id":"msg_1"`) && strings.Contains(ln, "rejected") {
+			t.Errorf("accepted report tagged as rejected:\n%s", ln)
+		}
+	}
+}
+
 // The worker half of the doorbell. Everything it needs is on the bus already —
 // no id is delivered to it, which is the whole point: there is no delivery step
 // left to forget. The join is the ticket, because that is the task's title.
@@ -344,6 +407,36 @@ func TestMailboxDoneFindsItsOwnTaskByTicket(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Errorf("worker_done missing %q:\n%s", want, got)
 		}
+	}
+}
+
+// Reading the dispatch is load-bearing, not a nicety: orca refuses a
+// worker_done that carries no dispatch id, so a task whose dispatch cannot be
+// read rings no doorbell at all. The run still ends DONE — the ticket is
+// finished either way, and the foreman falls back to the pane monitor — but
+// the reason is reported rather than swallowed. Pins the dispatch-show call
+// against a later "best-effort, drop it" simplification, which would put the
+// doorbell back to the silent no-op it shipped as the first time.
+func TestMailboxDoneNeedsItsDispatchToRing(t *testing.T) {
+	log := fakeOrcaMailbox(t, `"orchestration.contract.v1"`)
+	t.Setenv("FAKE_NO_DISPATCH", "1")
+	t.Setenv("BABYSIT_TICKET", "bs-x1")
+	t.Setenv("ORCA_TERMINAL_HANDLE", "term_9")
+
+	out := captureStdout(t, func() {
+		if err := foremanMailbox([]string{"done", "--status", "DONE", "--body", "Did. Found. Left."}); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if !strings.Contains(out, "MAILBOX=off") {
+		t.Errorf("a dispatch-less worker_done should degrade, got %q", out)
+	}
+	// The reason itself goes to stderr; stdout stays the machine-readable line.
+	if strings.Contains(out, "DONE=succeeded") {
+		t.Errorf("reported a doorbell orca rejected:\n%s", out)
+	}
+	if !strings.Contains(readCalls(t, log), "dispatch-show --task task_1") {
+		t.Errorf("never tried to read the dispatch:\n%s", readCalls(t, log))
 	}
 }
 
