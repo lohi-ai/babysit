@@ -341,6 +341,15 @@ that comes back in a new tab reads somebody else's mailbox until it rebinds.
 One Monitor per worker (persistent). Same rules, weaker signal: a line that
 scrolls past the tail is gone, so re-read disk more often.
 
+**The pattern below is Claude Code's pane, not every agent's.** `STATUS:` is
+babysit's own and matches on any agent; `Enter to select`, `Copy the block
+below` and `API Error` are Claude Code's UI strings, so on an omp / grok / codex
+worker the design checkpoint and the API-error signal simply never fire — the
+monitor looks healthy while the pane sits on the `/goal` handoff. On a non-claude
+`worker_agent`, read that worker's first checkpoint by eye, add the string it
+actually prints, and prefer `MAILBOX=on`, which is agent-agnostic because the
+worker rings its own doorbell rather than being read.
+
 ```bash
 prev=""
 while true; do
@@ -532,12 +541,19 @@ BABYSIT_TICKET=<id> bbs ticket verdict-status --skill qa        # DONE|…
 BABYSIT_TICKET=<id> bbs ticket verdict-status --skill review-pr
 ```
 
-then report the row (ticket, branch, verdicts, pushed, one-line summary),
-archive the pane (`"$ORCA" terminal read --terminal "$T" --limit 2000 --json > <scratch>/$T.json`),
-close the tab (`"$ORCA" terminal close --terminal "$T" --tab`), and dispatch
-the next queued assignment. QA across workers
-serializes on `bbs ticket qa-lease` — workers handle that themselves;
-`board` shows who holds it.
+then report the row (ticket, branch, verdicts, pushed, one-line summary) and
+archive the pane (`"$ORCA" terminal read --terminal "$T" --limit 2000 --json > <scratch>/$T.json`).
+QA across workers serializes on `bbs ticket qa-lease` — workers handle that
+themselves; `board` shows who holds it.
+
+**Close the tab last — after the finish handler below has succeeded**
+(`"$ORCA" terminal close --terminal "$T" --tab`), then dispatch the next queued
+assignment. The order is load-bearing on the `land` path: a merge conflict is
+relayed back to *that worker* as feedback, and a worker whose tab you already
+closed cannot take it — the ticket then costs a fresh dispatch to recover work
+that was one message away. Archiving is not closing; archive as soon as the
+verdicts read `DONE`, so a pane lost to a crash between the two is still on
+disk.
 
 **Close each ticket out the way the repo says.** One key decides it, and it
 names a whole handler — never branch on `land`/`push`/profile yourself:
@@ -563,10 +579,11 @@ Each value also decides the batch's aggregate `NEXT:`:
 
 - **`land`** — never pushes: base ends up ahead of origin and the human owns
   the push. Report `LANDED: <branch> → <base>`; a conflict leaves that ticket
-  unlanded and the batch continues — relay it to its worker as feedback (merge
-  `origin/<base>` in the worktree, resolve, commit), then re-run `land`. Base
-  *is* the composed surface, so never `serve` after landing — `reset-base`
-  discards every merge mid-look ([worktrees.md](../references/worktrees.md)).
+  unlanded and the batch continues — keep that worker's tab open and relay it as
+  feedback (merge `origin/<base>` in the worktree, resolve, commit), then re-run
+  `land` and close the tab on the pass. Base *is* the composed surface, so never
+  `serve` after landing — `reset-base` discards every merge mid-look
+  ([worktrees.md](../references/worktrees.md)).
   NEXT: review the running base, then push it.
 - **`pr`** — the `create-pr` skill, one PR per ticket, which persists the
   pointer. Report `PR: <url>`; one PR for the whole batch stays a human ask,
