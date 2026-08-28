@@ -9,8 +9,10 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
+	"github.com/reallongnguyen/babysit/internal/git"
 	"github.com/reallongnguyen/babysit/internal/identity"
 	"github.com/reallongnguyen/babysit/internal/ticket"
 )
@@ -519,8 +521,19 @@ func findFiles(root string) []string {
 	return out
 }
 
+// The ladder, in order. Membership means two things: a rung reconcile can
+// derive *into*, and a rung it will move a ticket *out of*.
+//
+// `in_progress` is never derived — nothing on disk distinguishes it — but it
+// has to be listed, or a ticket somebody set to in_progress is read as
+// terminal and freezes there, unreachable by the landing it later gets.
+// `done` is here for the same reason in reverse: it is a target a landed
+// ticket must be able to reach, and as a current status it simply never
+// advances. Genuinely terminal states (`cancelled`, `duplicate`, `blocked`)
+// stay out — those are a human's word about the ticket, not a rung.
 var reconcileRank = map[string]int{
-	"triage": 0, "backlog": 1, "planned": 2, "decomposed": 3, "in_review": 5,
+	"triage": 0, "backlog": 1, "planned": 2, "decomposed": 3,
+	"in_progress": 4, "in_review": 5, "done": 6,
 }
 
 // runReconcile ports `reconcile` (bbs-ticket.bash:3144-3267): advance
@@ -635,13 +648,22 @@ func reconcileOne(out io.Writer, env identity.Env, tid string, dry, quiet bool) 
 	return nil
 }
 
-// reconcileTarget derives the ladder rung from filesystem signals, matching the
-// embedded python: pushed manifest → in_review, else manifest.md → decomposed,
-// plan.md → planned, requirement.md → backlog, else triage.
+// reconcileTarget derives the ladder rung from filesystem signals: branch
+// merged into base → done, pushed manifest or a PR pointer → in_review, else
+// manifest.md → decomposed, plan.md → planned, requirement.md → backlog, else
+// triage.
+//
+// Every rung stays a *fact* — a file on disk, a pushed flag, a merge in git.
+// The qa and review-pr verdicts are deliberately not read here (ticket-layout.md
+// § Status enum): a verified ticket nobody closed out is not finished, and
+// deriving from verdicts would hide exactly that gap.
 func reconcileTarget(th string) string {
 	has := func(name string) bool {
 		info, err := os.Stat(filepath.Join(th, name))
 		return err == nil && info.Size() > 0
+	}
+	if landed(th) {
+		return "done"
 	}
 	if my, err := os.ReadFile(filepath.Join(th, "manifest.yaml")); err == nil {
 		for _, ln := range strings.Split(string(my), "\n") {
@@ -651,6 +673,13 @@ func reconcileTarget(th string) string {
 				}
 			}
 		}
+	}
+	// A PR pointer is the same rung as pushed: the change is out for review.
+	// Whether that PR merged is a network question, and reconcile runs over
+	// every ticket on every inbox tick — the merge shows up locally as
+	// `landed` above, once the human pulls it.
+	if idx := ticket.ReadIndex(filepath.Join(th, "index.json")); idx.Pointers.PR != "" {
+		return "in_review"
 	}
 	switch {
 	case has("manifest.md"):
@@ -796,4 +825,80 @@ Examples:
 	default:
 		fmt.Fprintf(os.Stderr, retarget("bbs-ticket path: %s: unknown kind (try: bbs-ticket path)\n"), kind)
 	}
+}
+
+// landed reports whether the ticket's work is already merged into its base in
+// every repo the manifest names — the top rung of the ladder, and the signal
+// that a run actually crossed its finish handler (`bbs ticket land`, or a merge
+// commit the human pulled) rather than stopping at QA-ready.
+//
+// Every unknown answers false. No manifest, a repo whose checkout is gone, a
+// git that failed: reconcile only advances, so a missed landing costs one tick
+// and is picked up by the next, while a wrong one strands a live ticket at a
+// terminal rung that reconcile will never move again. That asymmetry is why the
+// test is "base merged this exact commit" and not "base can reach it" — see
+// git.MergedTips for the vacuous cases the loose form reports as finished.
+//
+// A branch equal to its base (trunk mode) is skipped outright: the work went
+// straight onto base, so there is no merge to find and never will be.
+func landed(th string) bool {
+	m, err := ticket.ReadManifest(filepath.Join(th, "manifest.yaml"))
+	if err != nil || m.Version != "1" || len(m.Repos) == 0 {
+		return false
+	}
+	for _, r := range m.Repos {
+		if r.Branch == "" || r.Base == "" || r.Branch == r.Base {
+			return false
+		}
+		// The worktree is the only absolute path a manifest row carries
+		// (`canonical` is the marker "."), and every worktree of a repo shares
+		// its refs. Once it is cleaned up, fall back to the process cwd — which
+		// is the repo whenever this runs from a board or inbox tick, and simply
+		// fails to resolve the branch when it isn't.
+		dir := r.Worktree
+		if dir != "" {
+			if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
+				dir = ""
+			}
+		}
+		tip := git.RevParseIn(dir, r.Branch)
+		if tip == "" || !mergedTips(dir, r.Base)[tip] {
+			return false
+		}
+	}
+	return true
+}
+
+// mergedTips memoizes one `git rev-list --merges` per (dir, base). reconcile
+// runs over every ticket in a project, so without this a 135-ticket board would
+// fork git 135 times for the same answer. A nil result is cached too: a repo
+// that failed once fails the same way for the rest of the sweep.
+//
+// Locked, and expiring: reconcileProjects runs inside the dashboard's snapshot
+// handler, so two concurrent polls touch this map on different goroutines. The
+// TTL is what keeps that server honest — a CLI process is gone long before it
+// matters, but a dashboard left running for a day would otherwise answer every
+// snapshot from the git it read at boot, and never notice a branch landing.
+const mergedTTL = 5 * time.Second
+
+var (
+	mergedMu    sync.Mutex
+	mergedCache = map[string]mergedEntry{}
+)
+
+type mergedEntry struct {
+	tips map[string]bool
+	at   time.Time
+}
+
+func mergedTips(dir, base string) map[string]bool {
+	key := dir + "\x00" + base
+	mergedMu.Lock()
+	defer mergedMu.Unlock()
+	if e, ok := mergedCache[key]; ok && time.Since(e.at) < mergedTTL {
+		return e.tips
+	}
+	tips := git.MergedTips(dir, base)
+	mergedCache[key] = mergedEntry{tips: tips, at: time.Now()}
+	return tips
 }

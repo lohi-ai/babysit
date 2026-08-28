@@ -274,6 +274,20 @@ truth either way:
 - bare resume → reconcile the list against `orca terminal list --json` + `board`
   first.
 
+**Claim the ticket the moment it has an id.** The worker creates it, so
+dispatch cannot — do it the first time you read one (the pane's handoff,
+`bbs ticket board`, or the design checkpoint below):
+
+```bash
+BABYSIT_TICKET=<id> bbs ticket assign "$FM"
+```
+
+`assignee` is the only thing that makes `bbs foreman inbox` *your* batch.
+Skip it and the inbox reads "no tickets assigned" while three workers run:
+the batch then lives only in this session's memory and its open tabs, so one
+compaction or a restarted Orca leaves tickets nobody owns — and disk being
+sufficient on its own is the thing this skill promises.
+
 ## Monitor
 
 Ground truth is disk (`bbs ticket board`, `verdict-status`, ticket artifacts).

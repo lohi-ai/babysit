@@ -21,7 +21,7 @@ Re-read ticket state, checkpoint, and git status; choose the **first** match:
 | **verify** | none of the above, but a non-base branch has commits | QA-only pass on existing work. |
 If none match and there is no ticket/requirement, stop with `NEEDS_CONTEXT`.
 ## run
-> produces: verdict:builder + qa:checked + git:branch-ready
+> produces: verdict:builder + qa:checked + git:branch-ready + finish:closed-out
 1. Ensure ticket, branch, and checkpoint exist; record the mode in the
    checkpoint.
    **Bootstrap gate:** `bbs autopilot probe` reporting
@@ -82,7 +82,18 @@ If none match and there is no ticket/requirement, stop with `NEEDS_CONTEXT`.
    fallback (`browse` for UI, else a narrow local check). Persist the verdict
    with `bbs ticket set-verdict --skill qa`.
 7. Commit and push when policy allows.
-8. Write a handoff: mode, branch, changed files, deviations from the plan
+8. **Close out per the repo's policy** — only once `qa` and `review-pr` are
+   both persisted DONE, and never on your own initiative:
+   ```bash
+   eval "$(bbs autopilot git-flow)"   # → BBS_FINISH: review | land | pr
+   ```
+   `land` → `bbs ticket land "$TICKET"`; `pr` → run the `create-pr` skill
+   (a Skill-tool invocation, not a shell command); `review` (the default, and
+   every repo that never opted in) → stop here, the human owns it. The repo's
+   standing authorization is the only thing that decides this. A missing
+   verdict is not a case to work around: `land` refuses outright, and the PR
+   hook *asks* — which with nobody at the pane is a stall, not a safe stop.
+9. Write a handoff: mode, branch, changed files, deviations from the plan
    (the implement handoff's `## Deviations`), prototype path when `design-ui`
    produced one, QA evidence, concerns, next action — and, when a signal
    warrants, the forward lifecycle edge after `create-pr` (leftover cruft →

@@ -62,3 +62,51 @@ func PrimaryWorktreeIn(dir string) (string, bool) {
 	}
 	return "", true
 }
+
+// MergedTips is the set of commits that base took in through a merge: every
+// non-first parent of every merge commit reachable from base, run in dir.
+//
+// This is the "landed" signal, and it is deliberately narrower than
+// `git branch --merged`. That command answers "is this branch's tip reachable
+// from base", which is vacuously true for a branch freshly cut from base and
+// for one that never got a commit — so it reports every ticket as finished the
+// moment its branch exists. A branch appears here only if base actually merged
+// it, which is exactly what `bbs ticket land` does (--no-ff, so the merge is
+// never fast-forwarded away).
+//
+// A squash-merged PR is not in this set: squashing discards the second parent,
+// so nothing local records where the commit came from. Those tickets rest at
+// in_review on their PR pointer.
+//
+// nil on any failure (not a repo, no such base) and callers must read that as
+// "unknown", never as "not merged": reconcile only ever advances a status, so a
+// missed signal costs one tick while a wrong one strands a live ticket at done.
+func MergedTips(dir, base string) map[string]bool {
+	if base == "" {
+		return nil
+	}
+	out, ok := runIn(dir, "rev-list", "--merges", "--parents", base)
+	if !ok {
+		return nil
+	}
+	set := map[string]bool{}
+	for _, ln := range strings.Split(out, "\n") {
+		// "<merge> <parent1> <parent2>…" — parent1 is base's own history.
+		if f := strings.Fields(ln); len(f) > 2 {
+			for _, p := range f[2:] {
+				set[p] = true
+			}
+		}
+	}
+	return set
+}
+
+// RevParseIn is `git rev-parse <ref>` in dir, or "" when the ref does not
+// resolve.
+func RevParseIn(dir, ref string) string {
+	out, ok := runIn(dir, "rev-parse", "--verify", "--quiet", ref)
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(out)
+}
