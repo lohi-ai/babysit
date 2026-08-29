@@ -607,6 +607,10 @@ func TestVerifyPromptFeedsTheCriteriaAndTheDiffButNotTheRationale(t *testing.T) 
 		// a repo with no remote collapses that range to nothing; a verifier
 		// that reads an empty diff as "clean" passes vacuously.
 		"An empty diff means you have the wrong",
+		// three "pre-existing" claims in the first live run, two of them
+		// provably wrong: the rule is reproduce-at-base, not argue-from-age.
+		"only \"pre-existing\" if you watched it fail at the base commit",
+		"git worktree add /tmp/bbs-base",
 		"/bbs:review-pr",
 		"/bbs:qa",
 		"bbs ticket set-verdict --skill review-pr",

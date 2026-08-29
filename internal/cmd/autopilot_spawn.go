@@ -351,6 +351,14 @@ func (a *apState) verifyPrompt(prof agent.Profile, ticket string) string {
 		"   validation/error/empty/responsive case, not only the path the criteria describe.\n" +
 		"Fix what either one finds, re-verify, and commit the fixes here in this worktree.\n" +
 		"\n" +
+		"A failure is only \"pre-existing\" if you watched it fail at the base commit.\n" +
+		"Check it in a scratch worktree so this one is untouched:\n" +
+		"  git worktree add /tmp/bbs-base $(git merge-base origin/" + base + " HEAD)\n" +
+		"  # run the same check there, then: git worktree remove /tmp/bbs-base\n" +
+		"Passes there and fails here means this change caused it: fix it, do not carry it\n" +
+		"as a concern. Arguing from how old the code looks is not evidence, and\n" +
+		"\"pre-existing\" is the most common sentence a real regression ships behind.\n" +
+		"\n" +
 		"Persist both verdicts. They are your only output channel — nothing you print is\n" +
 		"read by the session that started you:\n" +
 		"  bbs ticket set-verdict --skill review-pr --body-file <review.md>\n" +
