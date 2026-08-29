@@ -336,6 +336,9 @@ func (a *apState) verifyPrompt(prof agent.Profile, ticket string) string {
 		"Read:\n" +
 		"  requirement: " + filepath.Join(td, "requirement.md") + "   ← the acceptance criteria you must prove\n" +
 		"  the change:  git diff $(git merge-base origin/" + base + " HEAD)\n" +
+		"               No origin? Use this branch's own commits (git log --oneline,\n" +
+		"               then git diff HEAD~<n>). An empty diff means you have the wrong\n" +
+		"               range, not a clean change — find the range before you judge it.\n" +
 		"\n" +
 		"Do NOT read " + filepath.Join(td, "handoffs") + "/ or " + filepath.Join(td, "plan.md") + ".\n" +
 		"They carry the builder's reasoning, and a verifier that has read them grades the\n" +

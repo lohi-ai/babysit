@@ -604,6 +604,9 @@ func TestVerifyPromptFeedsTheCriteriaAndTheDiffButNotTheRationale(t *testing.T) 
 		"Verify bs-ab123",
 		filepath.Join(td, "requirement.md"),
 		"git diff $(git merge-base origin/",
+		// a repo with no remote collapses that range to nothing; a verifier
+		// that reads an empty diff as "clean" passes vacuously.
+		"An empty diff means you have the wrong",
 		"/bbs:review-pr",
 		"/bbs:qa",
 		"bbs ticket set-verdict --skill review-pr",
