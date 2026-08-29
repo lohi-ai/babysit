@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bufio"
+	"bytes"
 	"fmt"
 	"os"
 	"regexp"
@@ -50,24 +51,38 @@ func runSetVerdict(args []string) {
 	st.EnsureDirs()
 	vp := st.VerdictPath(skill)
 
+	var out []byte
+	placeholder := false
 	if bodyFile != "" {
 		b, err := os.ReadFile(bodyFile)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "set-verdict: --body-file '%s' not found\n", bodyFile)
 			os.Exit(2)
 		}
-		if err := os.WriteFile(vp, b, 0o644); err != nil {
-			fmt.Fprintf(os.Stderr, "set-verdict: cannot write %s: %v\n", vp, err)
-			os.Exit(1)
-		}
+		out = b
 	} else {
 		if !haveBody || body == "" {
-			body = "<no verdict>"
+			body, placeholder = "<no verdict>", true
 		}
-		if err := os.WriteFile(vp, []byte(body+"\n"), 0o644); err != nil {
-			fmt.Fprintf(os.Stderr, "set-verdict: cannot write %s: %v\n", vp, err)
-			os.Exit(1)
-		}
+		out = []byte(body + "\n")
+	}
+
+	// A body with no STATUS: line reads as none — the same as never having run,
+	// and worse than nothing: a "VERDICT: PASS" line looks done to a human
+	// reading the file while every gate still treats the skill as unrun, so the
+	// stall surfaces later at a push gate with nobody at the pane to explain it.
+	// Refuse at the write, where the producer is still around to fix it. The
+	// empty-body placeholder is exempt — that caller is explicitly recording the
+	// absence of a verdict rather than fumbling the format of a real one.
+	if !placeholder && !bodyHasStatus(out) {
+		fmt.Fprintf(os.Stderr, "set-verdict: %s body has no STATUS: line, refusing to write a verdict every gate reads as 'none'\n", skill)
+		fmt.Fprintln(os.Stderr, "  add a first-column line: STATUS: DONE | DONE_WITH_CONCERNS | BLOCKED | NEEDS_CONTEXT")
+		fmt.Fprintln(os.Stderr, "  (a 'VERDICT: PASS' line is not a status - the gates do not parse it)")
+		os.Exit(2)
+	}
+	if err := os.WriteFile(vp, out, 0o644); err != nil {
+		fmt.Fprintf(os.Stderr, "set-verdict: cannot write %s: %v\n", vp, err)
+		os.Exit(1)
 	}
 
 	st.HistoryAppend("verdict", skill)
@@ -116,6 +131,20 @@ func verdictStatus(st *ticket.Store, skill string) string {
 		}
 	}
 	return "none"
+}
+
+// bodyHasStatus reports whether a verdict body carries a status line, scanned
+// with the same matcher verdictStatus reads by — so the write guard can never
+// disagree with the gate it exists to protect.
+func bodyHasStatus(body []byte) bool {
+	sc := bufio.NewScanner(bytes.NewReader(body))
+	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	for sc.Scan() {
+		if statusRe.MatchString(sc.Text()) {
+			return true
+		}
+	}
+	return false
 }
 
 // valueOf returns the value following a flag. A flag in last position is where
