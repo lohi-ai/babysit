@@ -14,6 +14,7 @@ func spawnState(t *testing.T) *apState {
 	t.Helper()
 	t.Setenv("BABYSIT_SPAWNED", "")
 	t.Setenv("BABYSIT_REVIEWER", "")
+	t.Setenv("BABYSIT_VERIFIER", "")
 	t.Setenv("BABYSIT_BUILDER", "")
 	t.Setenv("BABYSIT_AGENT", "")
 	t.Setenv("GROK_AGENT", "")
@@ -36,6 +37,7 @@ printf '%s\n' "$*" > "$MARKER/argv"
 {
   printf 'BABYSIT_SPAWNED=%s\n' "$BABYSIT_SPAWNED"
   printf 'BABYSIT_REVIEWER=%s\n' "$BABYSIT_REVIEWER"
+  printf 'BABYSIT_VERIFIER=%s\n' "$BABYSIT_VERIFIER"
   printf 'BABYSIT_TICKET=%s\n' "$BABYSIT_TICKET"
   printf 'AGENT_ROLE=%s\n' "$AGENT_ROLE"
 } > "$MARKER/env"
@@ -81,6 +83,8 @@ func TestGoalPromptMatchesSkillHandoff(t *testing.T) {
 		"bbs autopilot spawn-goal",
 		"--reviewer",
 		"bbs autopilot spawn-review",
+		"--verify",
+		"bbs autopilot spawn-verify",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("SKILL.md missing %q", want)
@@ -573,6 +577,220 @@ func TestSpawnReviewRefusesFromAGoalSession(t *testing.T) {
 	_, err := a.runSpawnReview(spawnOpts{ticket: "bs-x1", agentFlag: "claude"})
 	if err == nil || !strings.Contains(err.Error(), "already inside a spawned session") {
 		t.Fatalf("want a refuse, got %v", err)
+	}
+}
+
+// Criterion 2 of the requirement, as a test: the verifier is handed the
+// acceptance criteria and the code, and nothing that says why the code looks
+// like that. The sentinels are what a leak would smuggle in.
+func TestVerifyPromptFeedsTheCriteriaAndTheDiffButNotTheRationale(t *testing.T) {
+	a := spawnState(t)
+	td := filepath.Join(a.stateRoot, "tickets", "bs-ab123")
+	if err := os.MkdirAll(filepath.Join(td, "handoffs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for path, body := range map[string]string{
+		"requirement.md":        "SENTINEL_CRITERIA",
+		"plan.md":               "SENTINEL_APPROACH",
+		"handoffs/implement.md": "SENTINEL_RATIONALE",
+	} {
+		if err := os.WriteFile(filepath.Join(td, path), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	got := a.verifyPrompt(mustAgent(t, "claude"), "bs-ab123")
+	for _, want := range []string{
+		"Verify bs-ab123",
+		filepath.Join(td, "requirement.md"),
+		"git diff $(git merge-base origin/",
+		"/bbs:review-pr",
+		"/bbs:qa",
+		"bbs ticket set-verdict --skill review-pr",
+		"bbs ticket set-verdict --skill qa",
+		"STATUS: DONE",
+		// the withholding has to be stated, not merely practised: the child
+		// can open any file it likes, so the instruction is the enforcement.
+		"Do NOT read " + filepath.Join(td, "handoffs") + "/",
+		filepath.Join(td, "plan.md"),
+		"Do not push",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("prompt missing %q\n%s", want, got)
+		}
+	}
+	for _, leak := range []string{"SENTINEL_RATIONALE", "SENTINEL_APPROACH", "SENTINEL_CRITERIA"} {
+		if strings.Contains(got, leak) {
+			t.Errorf("prompt inlined %s — it names paths, it does not paste contents\n%s", leak, got)
+		}
+	}
+}
+
+func TestSpawnVerifyPrintRendersTheVerifierCommand(t *testing.T) {
+	fakeWorker(t, "claude")
+	a := spawnState(t)
+	res, err := a.runSpawnVerify(spawnOpts{ticket: "bs-x1", workflow: "builder", printOnly: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.PID != 0 {
+		t.Fatalf("--print spawned pid %d", res.PID)
+	}
+	if !strings.Contains(res.Cmd, "BABYSIT_VERIFIER=true") {
+		t.Errorf("cmd missing the verifier marker: %s", res.Cmd)
+	}
+	if !strings.Contains(res.Cmd, "claude --dangerously-skip-permissions 'Verify bs-x1") {
+		t.Errorf("cmd = %s", res.Cmd)
+	}
+	if strings.Contains(res.Cmd, "/goal bs-x1 is done:") {
+		t.Error("verify spawn used the /goal prompt")
+	}
+}
+
+func TestSpawnVerifyStartsADetachedVerifier(t *testing.T) {
+	marker := fakeWorker(t, "claude")
+	a := spawnState(t)
+	res, err := a.runSpawnVerify(spawnOpts{ticket: "bs-x1", workflow: "builder", dir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = os.WriteFile(filepath.Join(marker, "stop"), []byte("1"), 0o644)
+		if res.PID != 0 {
+			if p, err := os.FindProcess(res.PID); err == nil {
+				_ = p.Kill()
+			}
+		}
+	})
+	if res.PID == 0 || res.AlreadyRunning {
+		t.Fatalf("expected a new pid, got %+v", res)
+	}
+
+	argv := waitFile(t, filepath.Join(marker, "argv"))
+	if !strings.Contains(argv, "Verify bs-x1") {
+		t.Errorf("verifier not started on the verify prompt: %s", argv)
+	}
+
+	env := waitFile(t, filepath.Join(marker, "env"))
+	for _, want := range []string{"BABYSIT_VERIFIER=true", "BABYSIT_TICKET=bs-x1", "AGENT_ROLE=mayor"} {
+		if !strings.Contains(env, want) {
+			t.Errorf("env missing %s\n%s", want, env)
+		}
+	}
+
+	pidBytes, err := os.ReadFile(filepath.Join(a.stateRoot, "tickets", "bs-x1", "verify.pid"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(string(pidBytes)) != strconv.Itoa(res.PID) {
+		t.Errorf("pid file %q != %d", pidBytes, res.PID)
+	}
+}
+
+func TestSpawnVerifyIsIdempotentWhileTheVerifierLives(t *testing.T) {
+	marker := fakeWorker(t, "claude")
+	a := spawnState(t)
+	first, err := a.runSpawnVerify(spawnOpts{ticket: "bs-x1", dir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = os.WriteFile(filepath.Join(marker, "stop"), []byte("1"), 0o644)
+		if p, err := os.FindProcess(first.PID); err == nil {
+			_ = p.Kill()
+		}
+	})
+	waitFile(t, filepath.Join(marker, "argv"))
+
+	second, err := a.runSpawnVerify(spawnOpts{ticket: "bs-x1", dir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !second.AlreadyRunning || second.PID != first.PID {
+		t.Fatalf("want the live pid %d reused, got %+v", first.PID, second)
+	}
+}
+
+// The whole point of the flag under --auto: the goal worker is itself spawned,
+// and the verifier is the one child it is still allowed to start.
+func TestSpawnVerifyRunsFromASpawnedGoalSession(t *testing.T) {
+	fakeWorker(t, "claude")
+	a := spawnState(t)
+	t.Setenv("BABYSIT_SPAWNED", "true")
+	if _, err := a.runSpawnVerify(spawnOpts{ticket: "bs-x1", printOnly: true}); err != nil {
+		t.Fatalf("a spawned builder must be able to reach its gates: %v", err)
+	}
+}
+
+func TestSpawnVerifyRefusesFromAVerifierSession(t *testing.T) {
+	t.Setenv("BABYSIT_VERIFIER", "true")
+	a := &apState{stateRoot: t.TempDir()}
+	_, err := a.runSpawnVerify(spawnOpts{ticket: "bs-x1"})
+	if err == nil || !strings.Contains(err.Error(), "already inside a verifier session") {
+		t.Fatalf("want a refuse, got %v", err)
+	}
+	if exitStatus(err) != 2 {
+		t.Errorf("exit %d, want 2", exitStatus(err))
+	}
+}
+
+// A verifier that can start a builder is a verifier that can implement its way
+// out of its own findings.
+func TestSpawnGoalAndReviewRefuseFromAVerifierSession(t *testing.T) {
+	t.Setenv("BABYSIT_VERIFIER", "true")
+	a := &apState{stateRoot: t.TempDir()}
+	if _, err := a.runSpawnGoal(spawnOpts{ticket: "bs-x1"}); err == nil ||
+		!strings.Contains(err.Error(), "already inside a verifier session") {
+		t.Errorf("spawn-goal from a verifier: %v", err)
+	}
+	if _, err := a.runSpawnReview(spawnOpts{ticket: "bs-x1", agentFlag: "claude"}); err == nil ||
+		!strings.Contains(err.Error(), "already inside a verifier session") {
+		t.Errorf("spawn-review from a verifier: %v", err)
+	}
+}
+
+// Same agent by default (fresh context is the independence axis), a different
+// one on request (model diversity on top).
+func TestSpawnVerifyDefaultsToTheStartAgentAndHonoursAgent(t *testing.T) {
+	fakeWorker(t, "claude")
+	a := spawnState(t)
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "cc-1")
+	res, err := a.runSpawnVerify(spawnOpts{ticket: "bs-x1", printOnly: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Agent != "claude" {
+		t.Errorf("agent = %q, want the start agent", res.Agent)
+	}
+
+	fakeWorker(t, "grok")
+	dir := t.TempDir()
+	trustDir(t, dir)
+	res, err = a.runSpawnVerify(spawnOpts{ticket: "bs-x1", agentFlag: "grok", dir: dir, printOnly: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Agent != "grok" {
+		t.Errorf("agent = %q, want the named --agent", res.Agent)
+	}
+}
+
+func TestSpawnVerifyOpensAnOrcaTerminal(t *testing.T) {
+	a := spawnState(t)
+	log, _ := fakeOrcaFor(t)
+	res, err := a.runSpawnVerify(spawnOpts{ticket: "bs-x1", workflow: "builder", dir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Orca != "bbs verify bs-x1" {
+		t.Errorf("ORCA = %q", res.Orca)
+	}
+	calls := readFile(log)
+	if !strings.Contains(calls, "--title bbs verify bs-x1") {
+		t.Errorf("missing title:\n%s", calls)
+	}
+	if !strings.Contains(calls, "Verify bs-x1") {
+		t.Errorf("orca command missing the verify prompt:\n%s", calls)
 	}
 }
 

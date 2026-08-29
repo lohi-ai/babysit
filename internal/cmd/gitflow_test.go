@@ -169,3 +169,26 @@ func TestGitFlowBase(t *testing.T) {
 		}
 	}
 }
+
+// The mechanical half of "the verifier does not close out". A prompt asking a
+// spawned verifier not to push is prose; the policy it reads when it consults
+// git-flow says the same thing, and that is what the run acts on.
+func TestVerifierClampsFinishAndPush(t *testing.T) {
+	p := gitFlowPolicy{Profile: "startup", BaseBranch: "main", Mode: "trunk",
+		Land: "pr", Finish: "land", Push: "true", Rigor: "standard", ReviewEffort: "medium"}
+
+	t.Setenv("BABYSIT_VERIFIER", "")
+	if got := verifierClamp(p); got != p {
+		t.Errorf("clamped outside a verifier: %+v", got)
+	}
+
+	t.Setenv("BABYSIT_VERIFIER", "true")
+	got := verifierClamp(p)
+	if got.Finish != "review" || got.Push != "false" {
+		t.Errorf("finish/push = %s/%s, want review/false", got.Finish, got.Push)
+	}
+	// Everything else is the repo's answer, not the verifier's business.
+	if got.BaseBranch != "main" || got.Rigor != "standard" || got.Land != "pr" {
+		t.Errorf("clamp touched more than finish/push: %+v", got)
+	}
+}

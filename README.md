@@ -50,6 +50,7 @@ Step by step:
 - `--stop-after=plan` — approve the approach before any code is written.
 - `--auto` — skip the paste; spawn `/goal` on the agent you started in (Grok stays Grok, Claude stays Claude).
 - `--reviewer <agent>` — spawn that agent to review the plan and prototype. Any registered agent — `claude`, `omp`, `grok`, `codex` — and never the one building. Omit it: no agent review. With `--auto`, approve starts `/goal` on the start agent.
+- `--verify` — grade the finished code in a fresh context: once the work is committed, review and QA run in a separate process that never saw the diff being written, and only its verdict files come back. Same agent by default — forgetting *why* the code looks like that is the point; add `--agent` to grade on a different model too.
 - *default* — stops QA-ready, you review the evidence.
 - **`/bbs:create-pr`** — you invoke it; autopilot never opens PRs itself.
 
@@ -305,7 +306,7 @@ When a stage finishes, the ticket gets a `Next:` line — literally what to do n
 /bbs:autopilot                       # resume — picks up from the current branch's checkpoint
 ```
 
-That's the whole surface. Four flags extend it — `--stop-after=requirement|plan` to stop at an earlier checkpoint, `--auto` to spawn `/goal` on the agent you started in, `--reviewer <agent>` to add an independent agent review of the plan, and `--mode=worktree` (or `--mode=branch`) to isolate this one ticket, which no profile does for you. Verb tokens don't exist.
+That's the whole surface. Five flags extend it — `--stop-after=requirement|plan` to stop at an earlier checkpoint, `--auto` to spawn `/goal` on the agent you started in, `--reviewer <agent>` to add an independent agent review of the plan, `--verify` to move review and QA into a fresh-context process that never saw the code being written, and `--mode=worktree` (or `--mode=branch`) to isolate this one ticket, which no profile does for you. Verb tokens don't exist.
 
 ### Working tickets in parallel (worktree mode)
 

@@ -50,6 +50,7 @@ Từng bước:
 - `--stop-after=plan` — duyệt hướng đi trước khi viết một dòng code.
 - `--auto` — bỏ bước dán; spawn `/goal` trên đúng agent bạn đang chạy (Grok thì Grok, Claude thì Claude).
 - `--reviewer <agent>` — spawn agent đó review plan và prototype. Agent nào cũng được — `claude`, `omp`, `grok`, `codex` — miễn không phải agent đang build. Bỏ qua thì không review bằng agent. Kèm `--auto`, approve sẽ start `/goal` trên agent lúc bắt đầu.
+- `--verify` — chấm code đã viết xong bằng một context mới: commit xong, review và QA chạy trong một process riêng chưa từng thấy diff này được viết ra, và chỉ file verdict quay về. Mặc định vẫn agent đó — quên *lý do* code trông như vậy mới là điểm chính; thêm `--agent` nếu muốn chấm bằng model khác.
 - *mặc định* — dừng ở trạng thái QA-xong, bạn review bằng chứng.
 - **`/bbs:create-pr`** — bạn tự gọi; autopilot không bao giờ tự mở PR.
 
@@ -302,7 +303,7 @@ Mỗi khi một stage xong, ticket có thêm một dòng `Next:` — đúng ngh�
 /bbs:autopilot                       # resume — nối lại từ checkpoint của branch hiện tại
 ```
 
-Cả bề mặt chỉ có vậy. Bốn flag mở rộng thêm — `--stop-after=requirement|plan` để dừng ở checkpoint sớm hơn, `--auto` để spawn `/goal` trên agent lúc bắt đầu, `--reviewer <agent>` để thêm bước review plan độc lập bằng agent khác, và `--mode=worktree` để chạy riêng ticket này trong worktree của nó dù profile không bắt (repo `pet`, hoặc repo đã chọn `mode: branch`). Không có token động từ nào cả.
+Cả bề mặt chỉ có vậy. Năm flag mở rộng thêm — `--stop-after=requirement|plan` để dừng ở checkpoint sớm hơn, `--auto` để spawn `/goal` trên agent lúc bắt đầu, `--reviewer <agent>` để thêm bước review plan độc lập bằng agent khác, `--verify` để đẩy review và QA sang một process context mới chưa từng thấy code được viết, và `--mode=worktree` để chạy riêng ticket này trong worktree của nó dù profile không bắt (repo `pet`, hoặc repo đã chọn `mode: branch`). Không có token động từ nào cả.
 
 ### Làm nhiều ticket song song (mode `worktree`)
 

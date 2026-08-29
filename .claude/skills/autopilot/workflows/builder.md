@@ -64,6 +64,15 @@ If none match and there is no ticket/requirement, stop with `NEEDS_CONTEXT`.
 5. Run `review-pr --fix` (applies fixes to the working tree) and persist the
    verdict with `bbs ticket set-verdict --skill review-pr` — the push gate
    reads it. (Skip in verify mode.)
+   **Under `--verify`** (the flag, or `bbs ticket get-pointer verify` = true),
+   steps 5 and 6 are not run here at all. Commit the implementation first, then
+   `bbs autopilot spawn-verify --ticket "$TICKET" --workflow builder` and wait:
+   a process that never saw this diff being written re-runs both gates, commits
+   its own fixes, and persists both verdicts. Read them back with
+   `bbs ticket verdict-status --skill review-pr` / `--skill qa` and continue at
+   step 7. Do not also run them here — `set-verdict` is last-writer-wins, so a
+   second in-session pass replaces the independent verdict with the biased one.
+   No verdict means the verifier died: `BLOCKED` naming `verify.log`.
 6. Run `qa` against the requirement's acceptance criteria, the plan's
    `**Verify:**` line, and the implement handoff — not just the diff. Default
    (no `--mode`): the change is on the branch this checkout already serves, so

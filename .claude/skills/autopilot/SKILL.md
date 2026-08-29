@@ -51,7 +51,8 @@ the handoff and stop (`developer`: the human copy-pastes it; orchestrators put
 the `/goal` block at the front of the spawn prompt). Two independent flags
 replace that paste; `--stop-after` still wins. If `SPAWNED` is already true,
 you are that process: skip the handoff and work. Start-agent is this
-session (`GROK_SESSION_ID`/`GROK_AGENT` → grok, else claude).
+session (`GROK_SESSION_ID`/`GROK_AGENT` → grok, else claude). A third flag,
+`--verify`, does not touch the paste — it changes how the loop's gates run.
 - `--reviewer <agent>` (alias `--review`) — spawn that agent to review
   the plan and prototype. Omit it: no agent review. From the worktree:
   `bbs autopilot spawn-review --ticket "$TICKET" --workflow "$WF" --agent <name>`
@@ -62,6 +63,22 @@ session (`GROK_SESSION_ID`/`GROK_AGENT` → grok, else claude).
   `bbs autopilot spawn-goal --ticket "$TICKET" --workflow "$WF"` (no
   `--agent` — spawn-goal uses the start agent). Print pid/log and stop.
   Never the copy-paste handoff.
+- `--verify` — grade the finished code in a fresh context. At init, record it
+  on the ticket (`bbs ticket set-pointer verify true`) so every later path
+  reads it back — the paste, `--auto`, a reviewer's greenlight, a cold resume;
+  the loop checks `bbs ticket get-pointer verify` as well as its own args.
+  In the loop, once the implementation is committed, it **replaces** the
+  in-session `review-pr` + `qa` steps rather than adding a pass after them:
+  `bbs autopilot spawn-verify --ticket "$TICKET" --workflow "$WF"` (add
+  `--agent <name>` only to grade on a different model — the default is this
+  agent with a fresh context, which is the independence being bought). Wait
+  for it, then read the result from disk with `bbs ticket verdict-status
+  --skill review-pr` and `--skill qa`; nothing the child prints is input.
+  Do **not** re-run the gates in-session afterwards — `set-verdict` is
+  last-writer-wins, so an added in-session pass overwrites the independent
+  verdict with the biased one. No verdict at all means the verifier died:
+  report `BLOCKED` naming `<ticket-dir>/verify.log`, never fall back to the
+  in-session pass this replaced.
 For `developer`, the handoff **is the whole final message and must be the very
 last thing on screen** — nothing after it. Init may have run `plan-draft` /
 `design-ui`, which print their own reports; do **not** let those be the last
@@ -139,7 +156,8 @@ repo asked for it (below).
   Report what happened on the `NEXT:` line: `LANDED: <branch> → <base>`,
   `PR: <url>`, or the human's `/bbs:create-pr`.
 - Always run QA before final handoff and persist the verdict with
-  `bbs ticket set-verdict --skill qa` (real PASS/FIXED, or
+  `bbs ticket set-verdict --skill qa` — under `--verify` the spawned verifier
+  writes it and the parent reads it back (real PASS/FIXED, or
   DONE_WITH_CONCERNS naming the blocker). "Implemented but not QA'd" is
   incomplete; happy-path-only QA is incomplete — include at least one
   validation/error/empty/responsive case.
