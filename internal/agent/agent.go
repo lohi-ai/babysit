@@ -36,6 +36,7 @@
 package agent
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -122,6 +123,14 @@ var profiles = map[string]Profile{
 		Session: "--session-id", Resume: "--resume", Continue: "--continue",
 		SkillPrefix: "bbs:",
 		Install:     "install Claude Code: https://claude.com/product/claude-code",
+		// --dangerously-skip-permissions answers the *tool* prompts, not the
+		// folder-trust dialog: a first run in a directory Claude Code has not
+		// been trusted in stops on "Is this a project you trust?" with no log
+		// line, no verdict and a checkpoint that never advances — the quietest
+		// way an unattended worker can die.
+		TrustFile: ".claude.json",
+		TrustHint: "run `claude` there once and accept the trust prompt, " +
+			"or dispatch the worker from a directory you have already trusted",
 	},
 	"grok": {
 		Name: "grok", Bin: "grok",
@@ -349,7 +358,11 @@ func (p Profile) PreflightDir(dir string) error {
 	if real, err := filepath.EvalSymlinks(dir); err == nil {
 		dir = real
 	}
-	if trustedIn(string(b), dir) {
+	trusted := trustedIn
+	if strings.HasSuffix(p.TrustFile, ".json") {
+		trusted = trustedInClaudeJSON
+	}
+	if trusted(string(b), dir) {
 		return nil
 	}
 	return p.untrusted(dir)
@@ -384,6 +397,22 @@ func trustedIn(body, dir string) bool {
 		return false
 	}
 	return false
+}
+
+// trustedInClaudeJSON reads ~/.claude.json, where Claude Code records one
+// entry per directory it has opened. The entry existing is not the answer:
+// it is written on first sight and the flag only flips once a human accepts
+// the dialog, so most recorded projects are untrusted. Read the flag.
+func trustedInClaudeJSON(body, dir string) bool {
+	var doc struct {
+		Projects map[string]struct {
+			HasTrustDialogAccepted bool `json:"hasTrustDialogAccepted"`
+		} `json:"projects"`
+	}
+	if err := json.Unmarshal([]byte(body), &doc); err != nil {
+		return false
+	}
+	return doc.Projects[dir].HasTrustDialogAccepted
 }
 
 // WorkerCommand renders the shell command line that runs one worker on the

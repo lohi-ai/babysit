@@ -64,7 +64,8 @@ If none match and there is no ticket/requirement, stop with `NEEDS_CONTEXT`.
 5. Run `review-pr --fix` (applies fixes to the working tree) and persist the
    verdict with `bbs ticket set-verdict --skill review-pr` — the push gate
    reads it. (Skip in verify mode.)
-   **Under `--verify`** (the flag, or `bbs ticket get-pointer verify` = true),
+   **Under `--verify`** (the flag, or `bbs ticket get-pointer verify` reading
+   true in any casing — it prints `True`),
    steps 5 and 6 are not run here at all. Commit the implementation first, then
    `bbs autopilot spawn-verify --ticket "$TICKET" --workflow builder` and wait:
    a process that never saw this diff being written re-runs both gates, commits

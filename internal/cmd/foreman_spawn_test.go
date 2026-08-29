@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
@@ -84,15 +85,21 @@ esac
 	return log, titles
 }
 
-// trustDir records dir as trusted for grok in the fake HOME, standing in for the
-// one-time prompt a human answers. Spawn resolves symlinks before the lookup, so
-// the stanza is written under the physical path (macOS temp dirs are symlinked).
+// trustDir records dir as trusted in the fake HOME for both agents that gate on
+// one, standing in for the one-time prompt a human answers. Spawn resolves
+// symlinks before the lookup, so the records are written under the physical path
+// (macOS temp dirs are symlinked). claude is included because it gates too: its
+// record is ~/.claude.json, and a throwaway dir is exactly the untrusted state.
 func trustDir(t *testing.T, dir string) {
 	t.Helper()
+	home := os.Getenv("HOME")
+	if home == "" || home == realHomeAtStart {
+		t.Fatalf("trustDir needs an isolated HOME (got %q) — refusing to write the developer's own trust records", home)
+	}
 	if real, err := filepath.EvalSymlinks(dir); err == nil {
 		dir = real
 	}
-	gdir := filepath.Join(os.Getenv("HOME"), ".grok")
+	gdir := filepath.Join(home, ".grok")
 	if err := os.MkdirAll(gdir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -100,6 +107,38 @@ func trustDir(t *testing.T, dir string) {
 	if err := os.WriteFile(filepath.Join(gdir, "trusted_folders.toml"), []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
+
+	// Merge, don't overwrite: a test may trust several directories.
+	doc := map[string]any{}
+	if b, err := os.ReadFile(filepath.Join(home, ".claude.json")); err == nil {
+		_ = json.Unmarshal(b, &doc)
+	}
+	projects, _ := doc["projects"].(map[string]any)
+	if projects == nil {
+		projects = map[string]any{}
+	}
+	projects[dir] = map[string]any{"hasTrustDialogAccepted": true}
+	doc["projects"] = projects
+	b, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".claude.json"), b, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// realHomeAtStart is the developer's own HOME, captured at package init before
+// any t.Setenv can redirect it. os.UserHomeDir() reads $HOME, so it would agree
+// with whatever a test just set and the guard would never fire.
+var realHomeAtStart = os.Getenv("HOME")
+
+// trustedDir is a throwaway directory a claude/grok worker may be spawned into.
+func trustedDir(t *testing.T) string {
+	t.Helper()
+	d := t.TempDir()
+	trustDir(t, d)
+	return d
 }
 
 // A fresh spawn must bind the conversation to an id we chose, and persist it —
@@ -107,7 +146,7 @@ func trustDir(t *testing.T, dir string) {
 func TestSpawnMintsAndRecordsTheSession(t *testing.T) {
 	log, _ := fakeOrcaFor(t)
 
-	if _, err := spawnForeman("fm-a", t.TempDir(), "", ""); err != nil {
+	if _, err := spawnForeman("fm-a", trustedDir(t), "", ""); err != nil {
 		t.Fatal(err)
 	}
 	rec, err := foreman.Load("fm-a")
@@ -136,7 +175,7 @@ func TestSpawnMintsAndRecordsTheSession(t *testing.T) {
 // pointer back to the conversation.
 func TestSpawnResumesARecordedSessionWhenTheWorkspaceIsGone(t *testing.T) {
 	log, titles := fakeOrcaFor(t)
-	dir := t.TempDir()
+	dir := trustedDir(t)
 
 	if _, err := spawnForeman("fm-a", dir, "", ""); err != nil {
 		t.Fatal(err)
@@ -170,7 +209,7 @@ func TestSpawnStillRefusesALiveWorkspace(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	_, err := spawnForeman("fm-a", t.TempDir(), "", "")
+	_, err := spawnForeman("fm-a", trustedDir(t), "", "")
 	if err == nil || !strings.Contains(err.Error(), "already registered and running") {
 		t.Fatalf("want a live-workspace refusal, got %v", err)
 	}
@@ -181,7 +220,7 @@ func TestSpawnStillRefusesALiveWorkspace(t *testing.T) {
 func TestSpawnLeavesAnExplicitCommandAlone(t *testing.T) {
 	log, _ := fakeOrcaFor(t)
 
-	if _, err := spawnForeman("fm-a", t.TempDir(), "bash -l", ""); err != nil {
+	if _, err := spawnForeman("fm-a", trustedDir(t), "bash -l", ""); err != nil {
 		t.Fatal(err)
 	}
 	calls := readCalls(t, log)
@@ -207,7 +246,7 @@ func TestSpawnKeepsTheForemanOnClaudeWhenOnlyWorkersMoved(t *testing.T) {
 	log, _ := fakeOrcaFor(t)
 	setGlobalAgent(t, "worker_agent", "grok")
 
-	if _, err := spawnForeman("fm-a", t.TempDir(), "", ""); err != nil {
+	if _, err := spawnForeman("fm-a", trustedDir(t), "", ""); err != nil {
 		t.Fatal(err)
 	}
 	calls := readCalls(t, log)
@@ -243,7 +282,7 @@ func TestSpawnRefusesADirectoryTheAgentWouldStopAndAskAbout(t *testing.T) {
 	log, _ := fakeOrcaFor(t)
 	setGlobalAgent(t, "foreman_agent", "grok")
 
-	_, err := spawnForeman("fm-a", t.TempDir(), "", "") // HOME has no trust file
+	_, err := spawnForeman("fm-a", t.TempDir(), "", "") // deliberately untrusted
 	if err == nil {
 		t.Fatal("want a refusal for an untrusted directory")
 	}
@@ -255,7 +294,7 @@ func TestSpawnRefusesADirectoryTheAgentWouldStopAndAskAbout(t *testing.T) {
 	}
 	// claude has no trust gate, so the same directory must spawn fine.
 	setGlobalAgent(t, "foreman_agent", "claude")
-	if _, err := spawnForeman("fm-b", t.TempDir(), "", ""); err != nil {
+	if _, err := spawnForeman("fm-b", trustedDir(t), "", ""); err != nil {
 		t.Errorf("claude was gated by grok's trust rule: %v", err)
 	}
 }
@@ -294,7 +333,7 @@ func TestResumeUsesThePinnedAgentNotCurrentConfig(t *testing.T) {
 // the flag (a uuid the new agent never saw) nor ignoring it is what was meant.
 func TestSpawnRefusesAnAgentThatContradictsThePinnedSession(t *testing.T) {
 	_, titles := fakeOrcaFor(t)
-	dir := t.TempDir()
+	dir := trustedDir(t)
 
 	if _, err := spawnForeman("fm-a", dir, "", ""); err != nil {
 		t.Fatal(err)
@@ -318,7 +357,7 @@ func TestSpawnPreflightsTheAgentBeforeCreatingAWorkspace(t *testing.T) {
 	}
 	setGlobalAgent(t, "foreman_agent", "grok")
 
-	_, err := spawnForeman("fm-a", t.TempDir(), "", "")
+	_, err := spawnForeman("fm-a", trustedDir(t), "", "")
 	if err == nil || !strings.Contains(err.Error(), "grok plugin install") {
 		t.Fatalf("want a preflight failure naming the install, got %v", err)
 	}
@@ -438,7 +477,7 @@ func TestWakePrefixesThePokeWithTheForemanSkill(t *testing.T) {
 // to be standing must not silently re-point it at that directory.
 func TestResumeKeepsTheRecordedDirWhenNoneIsGiven(t *testing.T) {
 	_, titles := fakeOrcaFor(t)
-	bound := t.TempDir()
+	bound := trustedDir(t)
 
 	if _, err := spawnForeman("fm-a", bound, "", ""); err != nil {
 		t.Fatal(err)

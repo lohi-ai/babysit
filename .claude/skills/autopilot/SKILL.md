@@ -66,7 +66,13 @@ session (`GROK_SESSION_ID`/`GROK_AGENT` → grok, else claude). A third flag,
 - `--verify` — grade the finished code in a fresh context. At init, record it
   on the ticket (`bbs ticket set-pointer verify true`) so every later path
   reads it back — the paste, `--auto`, a reviewer's greenlight, a cold resume;
-  the loop checks `bbs ticket get-pointer verify` as well as its own args.
+  the loop checks `bbs ticket get-pointer verify` as well as its own args. That
+  read prints `True`, not `true` — `set-pointer` coerces to a JSON bool and the
+  reader renders it Python-style for the bash oracle — so compare
+  case-insensitively. A case-sensitive `= "true"` silently drops the run back to
+  grading its own diff, which is the one outcome the flag exists to prevent.
+  `--auto` no longer depends on that read: spawn-goal appends the routing
+  instruction to the goal prompt whenever the pointer is set.
   In the loop, once the implementation is committed, it **replaces** the
   in-session `review-pr` + `qa` steps rather than adding a pass after them:
   `bbs autopilot spawn-verify --ticket "$TICKET" --workflow "$WF"` (add
@@ -132,7 +138,10 @@ repo asked for it (below).
   the backup, not the brain; in a live session use everything already learned.
 - Full reasoning depth at every step; requirement and plan are single-pass on
   wording, not on thinking. `review-pr` and `qa` are the strict gates — their
-  persisted verdicts are what the push/PR hook enforces.
+  persisted verdicts are what the push/PR hook enforces. `review-pr` only
+  reports findings, so persisting its verdict is yours: the body needs a
+  first-column `STATUS: DONE` line (a `VERDICT: PASS` prose line is not a
+  status; `set-verdict` refuses a body without one).
 - Git is autopilot's job end to end. Step skills are infra-isolated — they
   edit the working tree and never branch, commit, or push; commit their
   output yourself at each milestone.

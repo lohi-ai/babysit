@@ -18,7 +18,7 @@ import (
 func TestRetireClosesTheWorkspaceAndDropsTheRecord(t *testing.T) {
 	log, _ := fakeOrcaFor(t)
 
-	if _, err := spawnForeman("fm-a", t.TempDir(), "", ""); err != nil {
+	if _, err := spawnForeman("fm-a", trustedDir(t), "", ""); err != nil {
 		t.Fatal(err)
 	}
 	rec, err := foreman.Load("fm-a")
@@ -47,7 +47,7 @@ func TestRetireClosesTheWorkspaceAndDropsTheRecord(t *testing.T) {
 func TestRetireKeepsTheWorkspaceWhenAsked(t *testing.T) {
 	log, _ := fakeOrcaFor(t)
 
-	if _, err := spawnForeman("fm-a", t.TempDir(), "", ""); err != nil {
+	if _, err := spawnForeman("fm-a", trustedDir(t), "", ""); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := retireForeman("fm-a", true); err != nil {
@@ -68,7 +68,7 @@ func TestRetireKeepsTheWorkspaceWhenAsked(t *testing.T) {
 func TestRetireDropsTheRecordWhenOrcaIsUnavailable(t *testing.T) {
 	fakeOrcaFor(t)
 
-	if _, err := spawnForeman("fm-a", t.TempDir(), "", ""); err != nil {
+	if _, err := spawnForeman("fm-a", trustedDir(t), "", ""); err != nil {
 		t.Fatal(err)
 	}
 	// Break orca only after the spawn: PATH is a single temp dir, so removing
@@ -94,7 +94,7 @@ func TestRetireDropsTheRecordWhenOrcaIsUnavailable(t *testing.T) {
 func TestRetireEndpointClearsTheRecord(t *testing.T) {
 	fakeOrcaFor(t)
 
-	if _, err := spawnForeman("fm-a", t.TempDir(), "", ""); err != nil {
+	if _, err := spawnForeman("fm-a", trustedDir(t), "", ""); err != nil {
 		t.Fatal(err)
 	}
 

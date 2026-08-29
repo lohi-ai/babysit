@@ -11,6 +11,7 @@ import (
 
 	"github.com/reallongnguyen/babysit/internal/agent"
 	"github.com/reallongnguyen/babysit/internal/orca"
+	ticket2 "github.com/reallongnguyen/babysit/internal/ticket"
 )
 
 // Two independent flags, two commands:
@@ -117,8 +118,8 @@ func (a *apState) spawnVerify(args []string) {
 func goalJob() spawnJob {
 	return spawnJob{
 		kind: "goal",
-		prompt: func(_ *apState, prof agent.Profile, ticket, workflow string) string {
-			return goalPrompt(prof, ticket, workflow)
+		prompt: func(a *apState, prof agent.Profile, ticket, workflow string) string {
+			return goalPrompt(prof, ticket, workflow) + a.verifyRider(ticket, workflow)
 		},
 		logName: "goal.log",
 		pidName: "goal.pid",
@@ -258,6 +259,42 @@ func goalPrompt(prof agent.Profile, ticket, workflow string) string {
 		"policy, handoff note written — or a NEEDS_CONTEXT / BLOCKED status block\n" +
 		"printed verbatim.\n" +
 		"Work it: " + prof.SkillRef("autopilot") + " " + workflow + " " + ticket
+}
+
+// verifyRider is what a --verify ticket adds to the goal prompt. The pointer
+// alone is not a channel: spawn-goal's prompt never mentioned --verify, so a
+// worker only routed through the verifier if it volunteered to read
+// `get-pointer verify` — and that read returns "True", not "true", because Set
+// coerces to a bool and Get renders it Python-style for the bash oracle. A run
+// that misses either step silently grades its own diff, which is the one
+// outcome the flag exists to prevent. So tell the worker in the prompt, which
+// is the surface it cannot skip.
+func (a *apState) verifyRider(ticket, workflow string) string {
+	if !a.verifyPinned(ticket) {
+		return ""
+	}
+	td, _ := a.ticketDir(ticket)
+	if td == "" {
+		td = filepath.Join("tickets", ticket)
+	}
+	return "\n\nThis ticket is pinned to --verify: do NOT run review-pr or qa yourself.\n" +
+		"Commit the implementation, then hand both gates to a fresh context:\n" +
+		"  bbs autopilot spawn-verify --ticket " + ticket + " --workflow " + workflow + "\n" +
+		"Then read the verdicts back from disk (bbs ticket verdict-status --skill qa,\n" +
+		"--skill review-pr) and continue from there. Running them here instead replaces\n" +
+		"the independent verdict with your own — set-verdict is last-writer-wins. No\n" +
+		"verdict at all means the verifier died: report BLOCKED naming " +
+		filepath.Join(td, "verify.log") + ".\n"
+}
+
+// verifyPinned reads the ticket's verify pointer, accepting either casing.
+func (a *apState) verifyPinned(ticket string) bool {
+	td, ok := a.ticketDir(ticket)
+	if !ok || td == "" {
+		return false
+	}
+	v := ticket2.ReadDoc(filepath.Join(td, "index.json")).Get("pointers.verify")
+	return strings.EqualFold(strings.TrimSpace(v), "true")
 }
 
 func (a *apState) reviewPrompt(prof agent.Profile, ticket, workflow, builder string) string {

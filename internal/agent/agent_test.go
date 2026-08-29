@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -290,9 +291,53 @@ func TestUntrustedDirectoryIsCaughtBeforeTheWorkerHangs(t *testing.T) {
 	if err := profiles["grok"].PreflightDir("/Users/long/workspace/acme"); err != nil {
 		t.Errorf("a trusted directory was still refused: %v", err)
 	}
-	// Claude Code has no such gate, so it must never be refused on these grounds.
-	if err := profiles["claude"].PreflightDir("/anywhere"); err != nil {
-		t.Errorf("claude has no trust file and must not be gated: %v", err)
+}
+
+// Claude Code has the same gate, recorded differently. This test replaces an
+// assertion that claude had no such gate at all: it does, so an unattended
+// worker dispatched into an untrusted directory sat on "Is this a project you
+// trust?" forever — no log line, no verdict, a checkpoint that never advanced.
+// The entry is not the answer, the flag is: Claude Code writes a project entry
+// the first time it sees a directory and only flips the flag when a human
+// accepts, so a presence check waves through precisely the directories that hang.
+func TestClaudeUntrustedDirectoryIsCaughtBeforeTheWorkerHangs(t *testing.T) {
+	isolate(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	const dir = "/Users/long/workspace/acme"
+
+	if err := profiles["claude"].PreflightDir(dir); err == nil {
+		t.Fatal("want a refusal when no trust record exists at all")
+	}
+
+	write := func(t *testing.T, accepted bool) {
+		t.Helper()
+		b, err := json.Marshal(map[string]any{"projects": map[string]any{
+			dir:        map[string]any{"hasTrustDialogAccepted": accepted},
+			"/other/p": map[string]any{"hasTrustDialogAccepted": true},
+		}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(home, ".claude.json"), b, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	write(t, false)
+	err := profiles["claude"].PreflightDir(dir)
+	if err == nil {
+		t.Fatal("a recorded-but-unaccepted directory must still refuse")
+	}
+	for _, want := range []string{dir, "--dangerously-skip-permissions", "trust prompt"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not mention %q", err, want)
+		}
+	}
+
+	write(t, true)
+	if err := profiles["claude"].PreflightDir(dir); err != nil {
+		t.Errorf("an accepted directory was still refused: %v", err)
 	}
 }
 

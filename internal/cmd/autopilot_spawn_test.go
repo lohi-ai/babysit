@@ -22,11 +22,18 @@ func spawnState(t *testing.T) *apState {
 	t.Setenv("CLAUDE_CODE_SESSION_ID", "")
 	t.Setenv("BABYSIT_STATE_DIR", t.TempDir())
 	t.Setenv("HOME", t.TempDir())
+	// runSpawn defaults to the working directory, and claude gates on directory
+	// trust: without this every spawn test refuses before it reaches what it tests.
+	if cwd, err := os.Getwd(); err == nil {
+		trustDir(t, cwd)
+	}
 	return &apState{stateRoot: t.TempDir()}
 }
 
 func fakeWorker(t *testing.T, name string) (marker string) {
 	t.Helper()
+	// A PATH directory for the stub binary, never a spawn target — and this runs
+	// before HOME is isolated, so it must not touch a trust record.
 	dir := t.TempDir()
 	marker = filepath.Join(dir, "marker")
 	if err := os.Mkdir(marker, 0o755); err != nil {
@@ -113,7 +120,7 @@ func TestSpawnGoalPrintRendersTheWorkerCommand(t *testing.T) {
 func TestSpawnGoalStartsADetachedWorkerOnTheGoalPrompt(t *testing.T) {
 	marker := fakeWorker(t, "claude")
 	a := spawnState(t)
-	cwd := t.TempDir()
+	cwd := trustedDir(t)
 	res, err := a.runSpawnGoal(spawnOpts{ticket: "bs-x1", workflow: "grower", dir: cwd})
 	if err != nil {
 		t.Fatal(err)
@@ -163,7 +170,7 @@ func TestSpawnGoalStartsADetachedWorkerOnTheGoalPrompt(t *testing.T) {
 func TestSpawnGoalIsIdempotentWhileTheWorkerLives(t *testing.T) {
 	marker := fakeWorker(t, "claude")
 	a := spawnState(t)
-	first, err := a.runSpawnGoal(spawnOpts{ticket: "bs-x1", dir: t.TempDir()})
+	first, err := a.runSpawnGoal(spawnOpts{ticket: "bs-x1", dir: trustedDir(t)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -175,7 +182,7 @@ func TestSpawnGoalIsIdempotentWhileTheWorkerLives(t *testing.T) {
 	})
 	waitFile(t, filepath.Join(marker, "argv"))
 
-	second, err := a.runSpawnGoal(spawnOpts{ticket: "bs-x1", dir: t.TempDir()})
+	second, err := a.runSpawnGoal(spawnOpts{ticket: "bs-x1", dir: trustedDir(t)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -330,7 +337,7 @@ func TestSpawnGoalUsesBuilderEnvWhenAgentFlagIsMissing(t *testing.T) {
 	fakeWorker(t, "grok")
 	a := spawnState(t)
 	t.Setenv("BABYSIT_BUILDER", "grok")
-	dir := t.TempDir()
+	dir := trustedDir(t)
 	trustDir(t, dir)
 	res, err := a.runSpawnGoal(spawnOpts{ticket: "bs-x1", workflow: "builder", dir: dir, printOnly: true})
 	if err != nil {
@@ -363,7 +370,7 @@ func TestSpawnGoalUsesTheStartAgent(t *testing.T) {
 	fakeWorker(t, "grok")
 	a := spawnState(t)
 	t.Setenv("GROK_SESSION_ID", "gk-1")
-	dir := t.TempDir()
+	dir := trustedDir(t)
 	trustDir(t, dir)
 	res, err := a.runSpawnGoal(spawnOpts{ticket: "bs-x1", workflow: "builder", dir: dir, printOnly: true})
 	if err != nil {
@@ -398,7 +405,7 @@ func TestSpawnReviewUnknownAgentNamesTheKnownOnes(t *testing.T) {
 func TestSpawnReviewPrintUsesTheNamedAgent(t *testing.T) {
 	fakeWorker(t, "grok")
 	a := spawnState(t)
-	dir := t.TempDir()
+	dir := trustedDir(t)
 	trustDir(t, dir)
 	res, err := a.runSpawnReview(spawnOpts{ticket: "bs-x1", agentFlag: "grok", dir: dir, printOnly: true})
 	if err != nil {
@@ -421,7 +428,7 @@ func TestSpawnReviewPrintUsesTheNamedAgent(t *testing.T) {
 func TestSpawnReviewStartsTheNamedAgent(t *testing.T) {
 	marker := fakeWorker(t, "grok")
 	a := spawnState(t)
-	cwd := t.TempDir()
+	cwd := trustedDir(t)
 	trustDir(t, cwd)
 	res, err := a.runSpawnReview(spawnOpts{ticket: "bs-x1", workflow: "builder", agentFlag: "grok", dir: cwd})
 	if err != nil {
@@ -473,7 +480,7 @@ func TestSpawnReviewStartsTheNamedAgent(t *testing.T) {
 func TestSpawnReviewOpensAnOrcaTerminal(t *testing.T) {
 	a := spawnState(t)
 	log, _ := fakeOrcaFor(t)
-	cwd := t.TempDir()
+	cwd := trustedDir(t)
 	res, err := a.runSpawnReview(spawnOpts{ticket: "bs-x1", workflow: "builder", agentFlag: "claude", dir: cwd})
 	if err != nil {
 		t.Fatal(err)
@@ -503,7 +510,7 @@ func TestSpawnGoalOnGrokOpensAnOrcaGoalTerminal(t *testing.T) {
 	a := spawnState(t)
 	t.Setenv("GROK_SESSION_ID", "gk-1")
 	log, _ := fakeOrcaFor(t)
-	cwd := t.TempDir()
+	cwd := trustedDir(t)
 	trustDir(t, cwd)
 	res, err := a.runSpawnGoal(spawnOpts{ticket: "bs-x1", workflow: "builder", dir: cwd})
 	if err != nil {
@@ -524,7 +531,7 @@ func TestSpawnGoalOnGrokOpensAnOrcaGoalTerminal(t *testing.T) {
 func TestSpawnReviewOrcaReusesALiveTab(t *testing.T) {
 	a := spawnState(t)
 	_, _ = fakeOrcaFor(t, "bbs review bs-x1")
-	res, err := a.runSpawnReview(spawnOpts{ticket: "bs-x1", agentFlag: "claude", dir: t.TempDir()})
+	res, err := a.runSpawnReview(spawnOpts{ticket: "bs-x1", agentFlag: "claude", dir: trustedDir(t)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -536,7 +543,7 @@ func TestSpawnReviewOrcaReusesALiveTab(t *testing.T) {
 func TestSpawnReviewOrcaReusesARetitledTab(t *testing.T) {
 	a := spawnState(t)
 	_, _ = fakeOrcaFor(t, "◐ bs-x1 plan and prototype review")
-	res, err := a.runSpawnReview(spawnOpts{ticket: "bs-x1", agentFlag: "claude", dir: t.TempDir()})
+	res, err := a.runSpawnReview(spawnOpts{ticket: "bs-x1", agentFlag: "claude", dir: trustedDir(t)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -633,6 +640,45 @@ func TestVerifyPromptFeedsTheCriteriaAndTheDiffButNotTheRationale(t *testing.T) 
 	}
 }
 
+// The first live --verify run graded its own diff: spawn-goal's prompt never
+// mentioned the flag, so routing depended on the worker volunteering to read
+// `get-pointer verify` — which returns "True", not "true". No verify.log, no
+// verify.pid, both verdicts written in-session, and nothing said so.
+func TestGoalPromptCarriesTheVerifyRiderWhenThePointerIsSet(t *testing.T) {
+	fakeWorker(t, "claude")
+	a := spawnState(t)
+	td := filepath.Join(a.stateRoot, "tickets", "bs-v1")
+	if err := os.MkdirAll(td, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Unpinned: the rider must not appear.
+	if got := a.verifyRider("bs-v1", "builder"); got != "" {
+		t.Errorf("rider on an unpinned ticket: %q", got)
+	}
+
+	// Pinned the way set-pointer actually stores it: a JSON bool, which Get
+	// renders as "True". A case-sensitive check against "true" is the bug.
+	if err := os.WriteFile(filepath.Join(td, "index.json"),
+		[]byte(`{"pointers":{"verify":true}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got := a.verifyRider("bs-v1", "builder")
+	for _, want := range []string{
+		"do NOT run review-pr or qa yourself",
+		"bbs autopilot spawn-verify --ticket bs-v1 --workflow builder",
+		"last-writer-wins",
+		"verify.log",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("rider missing %q\n%s", want, got)
+		}
+	}
+	if !strings.Contains(goalPrompt(mustAgent(t, "claude"), "bs-v1", "builder")+got, "/goal bs-v1 is done") {
+		t.Error("the rider must extend the goal prompt, not replace it")
+	}
+}
+
 func TestSpawnVerifyPrintRendersTheVerifierCommand(t *testing.T) {
 	fakeWorker(t, "claude")
 	a := spawnState(t)
@@ -657,7 +703,7 @@ func TestSpawnVerifyPrintRendersTheVerifierCommand(t *testing.T) {
 func TestSpawnVerifyStartsADetachedVerifier(t *testing.T) {
 	marker := fakeWorker(t, "claude")
 	a := spawnState(t)
-	res, err := a.runSpawnVerify(spawnOpts{ticket: "bs-x1", workflow: "builder", dir: t.TempDir()})
+	res, err := a.runSpawnVerify(spawnOpts{ticket: "bs-x1", workflow: "builder", dir: trustedDir(t)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -697,7 +743,7 @@ func TestSpawnVerifyStartsADetachedVerifier(t *testing.T) {
 func TestSpawnVerifyIsIdempotentWhileTheVerifierLives(t *testing.T) {
 	marker := fakeWorker(t, "claude")
 	a := spawnState(t)
-	first, err := a.runSpawnVerify(spawnOpts{ticket: "bs-x1", dir: t.TempDir()})
+	first, err := a.runSpawnVerify(spawnOpts{ticket: "bs-x1", dir: trustedDir(t)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -709,7 +755,7 @@ func TestSpawnVerifyIsIdempotentWhileTheVerifierLives(t *testing.T) {
 	})
 	waitFile(t, filepath.Join(marker, "argv"))
 
-	second, err := a.runSpawnVerify(spawnOpts{ticket: "bs-x1", dir: t.TempDir()})
+	second, err := a.runSpawnVerify(spawnOpts{ticket: "bs-x1", dir: trustedDir(t)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -771,7 +817,7 @@ func TestSpawnVerifyDefaultsToTheStartAgentAndHonoursAgent(t *testing.T) {
 	}
 
 	fakeWorker(t, "grok")
-	dir := t.TempDir()
+	dir := trustedDir(t)
 	trustDir(t, dir)
 	res, err = a.runSpawnVerify(spawnOpts{ticket: "bs-x1", agentFlag: "grok", dir: dir, printOnly: true})
 	if err != nil {
@@ -785,7 +831,7 @@ func TestSpawnVerifyDefaultsToTheStartAgentAndHonoursAgent(t *testing.T) {
 func TestSpawnVerifyOpensAnOrcaTerminal(t *testing.T) {
 	a := spawnState(t)
 	log, _ := fakeOrcaFor(t)
-	res, err := a.runSpawnVerify(spawnOpts{ticket: "bs-x1", workflow: "builder", dir: t.TempDir()})
+	res, err := a.runSpawnVerify(spawnOpts{ticket: "bs-x1", workflow: "builder", dir: trustedDir(t)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -803,7 +849,12 @@ func TestSpawnVerifyOpensAnOrcaTerminal(t *testing.T) {
 
 func waitFile(t *testing.T, path string) string {
 	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
+	// Generous on purpose: this waits for a real detached process to start and
+	// write, and the poll returns the instant it appears, so a longer deadline
+	// costs a passing run nothing. At 2s it failed intermittently on a loaded
+	// machine — a phantom red suite is worse than a slow one, especially for a
+	// verifier that has to tell a real regression from noise.
+	deadline := time.Now().Add(15 * time.Second)
 	for time.Now().Before(deadline) {
 		b, err := os.ReadFile(path)
 		if err == nil && len(b) > 0 {
@@ -846,7 +897,7 @@ func TestSpawnGoalLetsBabysitAgentOutrankTheStartAgent(t *testing.T) {
 	a := spawnState(t)
 	t.Setenv("CLAUDE_CODE_SESSION_ID", "cc-1")
 	t.Setenv("BABYSIT_AGENT", "grok")
-	dir := t.TempDir()
+	dir := trustedDir(t)
 	trustDir(t, dir)
 	res, err := a.runSpawnGoal(spawnOpts{ticket: "bs-x1", workflow: "builder", dir: dir, printOnly: true})
 	if err != nil {
@@ -863,7 +914,7 @@ func TestSpawnGoalClearsTheReviewerMarkerForTheBuilder(t *testing.T) {
 	marker := fakeWorker(t, "claude")
 	a := spawnState(t)
 	t.Setenv("BABYSIT_REVIEWER", "true")
-	res, err := a.runSpawnGoal(spawnOpts{ticket: "bs-x1", dir: t.TempDir()})
+	res, err := a.runSpawnGoal(spawnOpts{ticket: "bs-x1", dir: trustedDir(t)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -894,7 +945,7 @@ func TestSpawnGoalHonoursTheLivePIDEvenWhenOrcaIsUp(t *testing.T) {
 		[]byte(strconv.Itoa(os.Getpid())+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	cwd := t.TempDir()
+	cwd := trustedDir(t)
 	trustDir(t, cwd)
 	res, err := a.runSpawnGoal(spawnOpts{ticket: "bs-x1", workflow: "builder", dir: cwd})
 	if err != nil {
