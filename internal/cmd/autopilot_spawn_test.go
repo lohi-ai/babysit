@@ -668,7 +668,8 @@ func TestGoalPromptCarriesTheVerifyRiderWhenThePointerIsSet(t *testing.T) {
 		"do NOT run review-pr or qa yourself",
 		"bbs autopilot spawn-verify --ticket bs-v1 --workflow builder",
 		"last-writer-wins",
-		"verify.log",
+		"ORCA= tab",
+		"LOG=",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("rider missing %q\n%s", want, got)

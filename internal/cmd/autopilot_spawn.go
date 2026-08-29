@@ -273,18 +273,16 @@ func (a *apState) verifyRider(ticket, workflow string) string {
 	if !a.verifyPinned(ticket) {
 		return ""
 	}
-	td, _ := a.ticketDir(ticket)
-	if td == "" {
-		td = filepath.Join("tickets", ticket)
-	}
 	return "\n\nThis ticket is pinned to --verify: do NOT run review-pr or qa yourself.\n" +
 		"Commit the implementation, then hand both gates to a fresh context:\n" +
 		"  bbs autopilot spawn-verify --ticket " + ticket + " --workflow " + workflow + "\n" +
 		"Then read the verdicts back from disk (bbs ticket verdict-status --skill qa,\n" +
 		"--skill review-pr) and continue from there. Running them here instead replaces\n" +
 		"the independent verdict with your own — set-verdict is last-writer-wins. No\n" +
-		"verdict at all means the verifier died: report BLOCKED naming " +
-		filepath.Join(td, "verify.log") + ".\n"
+		"verdict at all means the verifier died: report BLOCKED naming the evidence\n" +
+		"spawn-verify actually printed — its ORCA= tab when Orca ran it, its LOG=\n" +
+		"path otherwise. Only one of those exists per run; naming the other sends\n" +
+		"the reader to a file that was never written.\n"
 }
 
 // verifyPinned reads the ticket's verify pointer, accepting either casing.
