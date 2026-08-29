@@ -185,8 +185,8 @@ func TestSpawnGoalIsIdempotentWhileTheWorkerLives(t *testing.T) {
 }
 
 func TestSpawnGoalRefusesWhenAlreadySpawned(t *testing.T) {
+	a := spawnState(t)
 	t.Setenv("BABYSIT_SPAWNED", "true")
-	a := &apState{stateRoot: t.TempDir()}
 	_, err := a.runSpawnGoal(spawnOpts{ticket: "bs-x1"})
 	if err == nil || !strings.Contains(err.Error(), "already inside a spawned session") {
 		t.Fatalf("want a refuse, got %v", err)
@@ -546,8 +546,8 @@ func TestSpawnReviewOrcaReusesARetitledTab(t *testing.T) {
 }
 
 func TestSpawnReviewRefusesWhenAlreadyAReviewer(t *testing.T) {
+	a := spawnState(t)
 	t.Setenv("BABYSIT_REVIEWER", "true")
-	a := &apState{stateRoot: t.TempDir()}
 	_, err := a.runSpawnReview(spawnOpts{ticket: "bs-x1", agentFlag: "claude"})
 	if err == nil || !strings.Contains(err.Error(), "already inside a reviewer session") {
 		t.Fatalf("want a refuse, got %v", err)
@@ -572,8 +572,8 @@ func TestSpawnGoalStillWorksFromAReviewerSession(t *testing.T) {
 }
 
 func TestSpawnReviewRefusesFromAGoalSession(t *testing.T) {
+	a := spawnState(t)
 	t.Setenv("BABYSIT_SPAWNED", "true")
-	a := &apState{stateRoot: t.TempDir()}
 	_, err := a.runSpawnReview(spawnOpts{ticket: "bs-x1", agentFlag: "claude"})
 	if err == nil || !strings.Contains(err.Error(), "already inside a spawned session") {
 		t.Fatalf("want a refuse, got %v", err)
@@ -726,8 +726,8 @@ func TestSpawnVerifyRunsFromASpawnedGoalSession(t *testing.T) {
 }
 
 func TestSpawnVerifyRefusesFromAVerifierSession(t *testing.T) {
+	a := spawnState(t)
 	t.Setenv("BABYSIT_VERIFIER", "true")
-	a := &apState{stateRoot: t.TempDir()}
 	_, err := a.runSpawnVerify(spawnOpts{ticket: "bs-x1"})
 	if err == nil || !strings.Contains(err.Error(), "already inside a verifier session") {
 		t.Fatalf("want a refuse, got %v", err)
@@ -740,8 +740,8 @@ func TestSpawnVerifyRefusesFromAVerifierSession(t *testing.T) {
 // A verifier that can start a builder is a verifier that can implement its way
 // out of its own findings.
 func TestSpawnGoalAndReviewRefuseFromAVerifierSession(t *testing.T) {
+	a := spawnState(t)
 	t.Setenv("BABYSIT_VERIFIER", "true")
-	a := &apState{stateRoot: t.TempDir()}
 	if _, err := a.runSpawnGoal(spawnOpts{ticket: "bs-x1"}); err == nil ||
 		!strings.Contains(err.Error(), "already inside a verifier session") {
 		t.Errorf("spawn-goal from a verifier: %v", err)
