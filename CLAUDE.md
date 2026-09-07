@@ -239,9 +239,9 @@ babysit/
 │   │                  #   bbs design    query DESIGN.md tokens / suggest products / list components / ux-check
 │   │                  #   bbs upgrade (+ upgrade check), dashboard, foreman, …
 │   ├── bbs-*          # argv0 symlinks to bbs, kept for legacy callers — skills call `bbs <sub>`
-│   ├── hooks/         # plugin hook executables (pre-tool-gate, verify-skill-output, clean-handoff-check)
+│   ├── hooks/         # release gate, session writer, and repo pre-commit check
 │   └── setup-skills   # Builds bbs, links it into ~/.local/bin/ and the bbs-* aliases into ~/.claude/
-├── hooks/hooks.json   # plugin hook wiring (artifact-gated approval — see docs/artifact-gated-approval.md)
+├── hooks/             # command-hook manifest + OMP extension adapter (see docs/artifact-gated-approval.md)
 ├── tests/             # shell + python suites for bins, workflows, and autopilot integration
 ├── docs/              # roadmap, identity, workspaces, operations, artifact-gated-approval
 ├── web/               # dashboard SPA (Vite/React) over ~/.babysit state; release

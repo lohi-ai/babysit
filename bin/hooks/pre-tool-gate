@@ -1,20 +1,19 @@
 #!/usr/bin/env bash
 # PreToolUse(Bash) hard-stage gate — artifact-gated approval.
 #
-# Babysit's enforcement boundary: prompts are advisory, this hook is not.
+# Workflow release check (not a shell parser or security sandbox).
 # Before an irreversible command (git push / PR create / PR merge), it checks
 # the resolved ticket's on-disk verdict artifacts (written by review-pr / qa via
 # `bbs-ticket set-verdict`) and decides:
 #
 #   - explicit BLOCKED / NEEDS_CONTEXT verdict  → deny  (evidence says not ready)
 #   - verdict missing ("none")                  → ask   (human checkpoint)
-#   - verdict DONE / DONE_WITH_CONCERNS / PASS  → defer (no objection)
-#   - no ticket resolves, or jq unavailable     → defer (never gate ad-hoc work)
+#   - verdict DONE / DONE_WITH_CONCERNS         → silent success
+#   - no ticket resolves                       → silent success
 #   - bbs-ticket itself unresolvable            → deny  (gate offline, see below)
 #
 # Score never auto-approves: the gate keys on categorical verdicts, never a
-# number. Fail-open *about the ticket's state* — when in doubt about a verdict,
-# defer; only a concrete not-ready verdict produces a hard deny.
+# number. Missing/unrecognized verdicts request the missing check.
 #
 # But fail CLOSED when the gate cannot run at all: if bbs-ticket is
 # unresolvable there are no verdicts to read, and deferring would disable
@@ -22,19 +21,34 @@
 # An unverifiable stage is denied, not waved through.
 #
 # Input:  hook JSON on stdin (.tool_input.command).
-# Output: PreToolUse permissionDecision JSON on stdout; always exit 0.
+# Output: no output for no objection; native decision JSON otherwise.
 set -uo pipefail
 
 emit() { # $1=allow|deny|ask|defer  $2=reason
-  printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"%s","permissionDecisionReason":"%s"}}\n' "$1" "$2"
+  # "defer" is an internal no-objection marker, NOT a native permission value:
+  # Claude Code uses it to suspend headless execution. Never emit it.
+  [ "$1" = defer ] && exit 0
+  if [ "${GROK:-false}" = true ]; then
+    # Grok has no ask response. Return the missing check to the agent instead
+    # of silently allowing it or inventing a confirmation channel.
+    jq -cn --arg reason "$2" '{decision:"deny",reason:$reason}'
+  else
+    jq -cn --arg decision "$1" --arg reason "$2" \
+      '{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:$decision,permissionDecisionReason:$reason}}'
+  fi
   exit 0
 }
 
-# jq is required to parse hook input; without it we cannot read the command —
-# fail open so the hook never blocks a user who lacks jq.
-command -v jq >/dev/null 2>&1 || emit defer "pre-tool-gate: jq unavailable, deferring"
+# jq is required to read the command and serialize native decisions safely.
+command -v jq >/dev/null 2>&1 || {
+  echo "Babysit release gate requires jq. Install jq and retry." >&2
+  exit 2
+}
 
-CMD="$(jq -r '.tool_input.command // empty' 2>/dev/null)"
+INPUT="$(cat)"
+GROK=false
+if [ -n "${GROK_HOOK_EVENT:-}" ] || printf '%s' "$INPUT" | jq -e 'has("hookEventName")' >/dev/null 2>&1; then GROK=true; fi
+CMD="$(printf '%s' "$INPUT" | jq -r '(.tool_input // .toolInput // .input // {}) | .command // .cmd // empty' 2>/dev/null)"
 [ -n "$CMD" ] || emit defer "pre-tool-gate: no command, deferring"
 
 # Classify the hard stage first (cheap) — defer immediately on anything else, so
@@ -47,6 +61,12 @@ case "$CMD" in
   *"git push"*|*"git -C "*" push"*) STAGE="push" ;;
   *) emit defer "pre-tool-gate: not a hard-stage command, deferring" ;;
 esac
+
+# Hooks can run outside the tool's working directory (notably unified exec).
+CWD="$(printf '%s' "$INPUT" | jq -r '.tool_input.workdir // .toolInput.workdir // .cwd // empty' 2>/dev/null)"
+if [ -n "$CWD" ]; then
+  cd -- "$CWD" 2>/dev/null || emit deny "pre-tool-gate: cannot inspect working directory $CWD"
+fi
 
 # Resolve bbs-ticket into an argv array (the multicall fallback below is two
 # words, so a bare string won't do). Sets BBS_ARGV; returns 1 when nothing on
@@ -63,8 +83,11 @@ esac
 # keeps the candidate inert when it's unset or empty rather than probing /bin.
 _bbs_resolve() { # $1=bbs-<sub>
   local name="$1" sub="${1#bbs-}" c
+  local root="${GROK_PLUGIN_ROOT:-${PLUGIN_ROOT:-${CODEX_PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-/nonexistent}}}}"
+  local own_bin
+  own_bin="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
   BBS_ARGV=()
-  for c in "$HOME/.claude/$name" "${CLAUDE_PLUGIN_ROOT:-/nonexistent}/bin/$name" "$HOME/.claude/skills/babysit/bin/$name"; do
+  for c in "$root/bin/$name" "$own_bin/$name" "$HOME/.local/bin/$name" "$HOME/.claude/$name" "$HOME/.claude/skills/babysit/bin/$name"; do
     if [ -x "$c" ]; then BBS_ARGV=("$c"); return 0; fi
   done
   if command -v "$name" >/dev/null 2>&1; then BBS_ARGV=("$name"); return 0; fi
@@ -77,7 +100,7 @@ _bbs_resolve() { # $1=bbs-<sub>
   # bbs-ticket's own "no ticket" exit 1. Probing capability up front is what
   # keeps an unusable binary from being mistaken for a working one. `bbs help
   # <sub>` is NOT a usable probe — cobra exits 0 for unknown help topics.
-  for c in "$HOME/.claude/bbs" "${CLAUDE_PLUGIN_ROOT:-/nonexistent}/bin/bbs" "$HOME/.claude/skills/babysit/bin/bbs" bbs; do
+  for c in "$root/bin/bbs" "$own_bin/bbs" "$HOME/.local/bin/bbs" "$HOME/.claude/bbs" "$HOME/.claude/skills/babysit/bin/bbs" bbs; do
     if command -v "$c" >/dev/null 2>&1 && "$c" "$sub" --help >/dev/null 2>&1; then
       BBS_ARGV=("$c" "$sub"); return 0
     fi
@@ -95,7 +118,13 @@ TICKET_BIN=("${BBS_ARGV[@]}")
 
 # Resolve the ticket. exit 0 = id; 1 = no ticket; 2 = conflict. Only gate
 # workflow tickets — ad-hoc shells (no ticket) push freely.
-TICKET="$("${TICKET_BIN[@]}" resolve 2>/dev/null)" || emit defer "pre-tool-gate: no ticket resolved, deferring"
+TICKET="$("${TICKET_BIN[@]}" resolve 2>/dev/null)"
+RC=$?
+case "$RC" in
+  0) : ;;
+  1) emit defer "pre-tool-gate: no ticket resolved, deferring" ;;
+  *) emit deny "pre-tool-gate: ticket identity could not be resolved (exit $RC). Resolve the identity conflict before $STAGE." ;;
+esac
 [ -n "$TICKET" ] || emit defer "pre-tool-gate: empty ticket, deferring"
 
 vs() { "${TICKET_BIN[@]}" verdict-status --skill "$1" 2>/dev/null || echo none; }
@@ -116,8 +145,8 @@ case "$STAGE" in
   push)
     if blocked "$REVIEW"; then
       emit deny "review-pr verdict is $REVIEW on $TICKET — resolve it before pushing."
-    elif [ "$REVIEW" = none ]; then
-      emit ask "No review-pr verdict on $TICKET. Run /bbs:review-pr or approve to push anyway."
+    elif ! ready "$REVIEW"; then
+      emit ask "No ready review-pr verdict on $TICKET (review-pr=$REVIEW). Run the review-pr skill before pushing."
     fi
     emit defer "pre-tool-gate: review-pr=$REVIEW — ok to push"
     ;;
@@ -129,25 +158,27 @@ case "$STAGE" in
     # before this stage.
     if blocked "$REVIEW" || blocked "$QA"; then
       emit deny "Not ready for a PR on $TICKET — review-pr=$REVIEW, qa=$QA."
-    elif [ "$REVIEW" = none ] || [ "$QA" = none ]; then
-      emit ask "Open PR for $TICKET: review-pr=$REVIEW, qa=$QA. Run the missing check (/bbs:qa) or approve to proceed."
+    elif ! ready "$REVIEW" || ! ready "$QA"; then
+      emit ask "Open PR for $TICKET: review-pr=$REVIEW, qa=$QA. Run the missing review-pr or qa check before creating the PR."
     fi
     # QA reads ready — verify the verdict body actually confirms an e2e run.
-    case "$(qa_evidence)" in
-      contradiction:*) emit deny "qa=$QA on $TICKET contradicts its own rubric ($(qa_evidence)) — not a real PASS. Re-run /bbs:qa before opening a PR." ;;
-      thin:*|unexplained) emit ask "qa=$QA on $TICKET but evidence is $(qa_evidence) — no confirmed end-to-end web run. Run /bbs:qa or approve to proceed." ;;
+    EVIDENCE="$(qa_evidence)"
+    case "$EVIDENCE" in
+      contradiction:*) emit deny "qa=$QA on $TICKET contradicts its own rubric ($EVIDENCE) — not a real PASS. Re-run /bbs:qa before opening a PR." ;;
+      thin:*|unexplained) emit ask "qa=$QA on $TICKET but evidence is $EVIDENCE — no confirmed end-to-end web run. Run /bbs:qa or approve to proceed." ;;
     esac
     emit defer "pre-tool-gate: review-pr=$REVIEW qa=$QA — ok to open PR"
     ;;
   merge)
     if blocked "$REVIEW" || blocked "$QA"; then
       emit deny "Not ready to merge $TICKET — review-pr=$REVIEW, qa=$QA."
-    elif [ "$REVIEW" = none ] || [ "$QA" = none ]; then
-      emit ask "Merge $TICKET: review-pr=$REVIEW, qa=$QA. Run missing checks or approve anyway."
+    elif ! ready "$REVIEW" || ! ready "$QA"; then
+      emit ask "Merge $TICKET: review-pr=$REVIEW, qa=$QA. Run the missing review-pr or qa check before merging."
     fi
-    case "$(qa_evidence)" in
-      contradiction:*) emit deny "qa=$QA on $TICKET contradicts its own rubric ($(qa_evidence)) — not a real PASS. Re-run /bbs:qa before merging." ;;
-      thin:*|unexplained) emit ask "qa=$QA on $TICKET but evidence is $(qa_evidence) — no confirmed end-to-end web run. Run /bbs:qa or approve to merge anyway." ;;
+    EVIDENCE="$(qa_evidence)"
+    case "$EVIDENCE" in
+      contradiction:*) emit deny "qa=$QA on $TICKET contradicts its own rubric ($EVIDENCE) — not a real PASS. Re-run /bbs:qa before merging." ;;
+      thin:*|unexplained) emit ask "qa=$QA on $TICKET but evidence is $EVIDENCE — no confirmed end-to-end web run. Run /bbs:qa or approve to merge anyway." ;;
     esac
     emit defer "pre-tool-gate: review-pr=$REVIEW qa=$QA — ok to merge"
     ;;

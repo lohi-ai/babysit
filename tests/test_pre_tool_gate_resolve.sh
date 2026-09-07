@@ -97,7 +97,7 @@ withinstall() { echo "{\"tool_input\":{\"command\":\"$1\"}}" | \
 
 check "with-install: git push → ask (unchanged)"      ask "$(decision "$(withinstall "git push origin HEAD")")"
 check "with-install: gh pr create → ask (unchanged)"  ask "$(decision "$(withinstall "gh pr create --fill")")"
-check "with-install: non-hard-stage → defer"          defer "$(decision "$(withinstall "ls -la")")"
+check "with-install: non-hard-stage → silent success" "" "$(withinstall "ls -la")"
 
 # ── The multicall fallback: bbs-ticket unresolvable, but `bbs ticket` serves it.
 # Must resolve through the fallback and behave exactly like the real bin (ask),

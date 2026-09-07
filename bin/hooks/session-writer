@@ -22,13 +22,22 @@ set -uo pipefail
 command -v jq >/dev/null 2>&1 || exit 0
 
 INPUT="$(cat)"
-SID="$(printf '%s' "$INPUT" | jq -r '.session_id // empty' 2>/dev/null)"
+SID="$(printf '%s' "$INPUT" | jq -r '.session_id // .sessionId // empty' 2>/dev/null)"
 CWD="$(printf '%s' "$INPUT" | jq -r '.cwd // empty' 2>/dev/null)"
 [ -n "$SID" ] || exit 0
+# Session IDs become filenames; never accept a path or a YAML fragment.
+case "$SID" in *[!a-zA-Z0-9._-]*|.|..) exit 0 ;; esac
 
 SESS_DIR="${BABYSIT_HOME:-$HOME/.babysit}/sessions"
 PREFIX="cc"
-[ -n "${CODEX_SESSION_ID:-}" ] && PREFIX="cx"
+[ -n "${CODEX_SESSION_ID:-${CODEX_THREAD_ID:-}}" ] && PREFIX="cx"
+[ -n "${GROK_SESSION_ID:-}" ] && PREFIX="grok"
+case "$(printf '%s' "$INPUT" | jq -r '.agent // (if has("hookEventName") then "grok" elif has("turn_id") then "codex" else "" end)' 2>/dev/null)" in
+  claude) PREFIX="cc" ;;
+  codex) PREFIX="cx" ;;
+  grok) PREFIX="grok" ;;
+  omp) PREFIX="omp" ;;
+esac
 SF="$SESS_DIR/${PREFIX}-${SID}.yaml"
 mkdir -p "$SESS_DIR" 2>/dev/null || exit 0
 
@@ -44,13 +53,15 @@ fi
 
 # Ticket from worktree path, else from branch. Both parses are best-effort;
 # empty is fine (board just shows no session for the ticket).
-TICKET=""
+TICKET="${BABYSIT_TICKET:-}"
+if [ -z "$TICKET" ]; then
 case "$CWD" in
   */.babysit/worktrees/*)
     WT="${CWD##*/.babysit/worktrees/}"; WT="${WT%%/*}"
     TICKET="${WT%%_*}"
     ;;
 esac
+fi
 if [ -z "$TICKET" ] && [ -n "$CWD" ]; then
   BR="$(git -C "$CWD" branch --show-current 2>/dev/null || true)"
   case "$BR" in

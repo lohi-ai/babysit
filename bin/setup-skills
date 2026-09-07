@@ -350,6 +350,14 @@ if [ "${FULL:-0}" = "1" ]; then
   echo ""
   echo "  codex plugin marketplace add $PROJECT_DIR"
   echo "  codex plugin add bbs@babysit"
+  echo ""
+  echo "Grok Build:"
+  echo "  grok plugin install https://github.com/lohi-ai/babysit"
+  echo ""
+  echo "OMP hooks (skills are configured separately; see docs/operations.md):"
+  echo "  omp --extension \"$PROJECT_DIR/hooks/omp.ts\""
+  echo ""
+  echo "Hook prerequisites: bash, jq, and bbs on PATH (or bbs in ~/.local/bin)."
 fi
 
 # ─── Summary ──────────────────────────────────────────────────
