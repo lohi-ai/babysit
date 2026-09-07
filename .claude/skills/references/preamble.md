@@ -4,6 +4,13 @@ the status contract when reporting. Route every decision through the
 [Auto-Decision Framework](auto-decision-framework.md) (Mechanical / Taste /
 User Challenge). Trust your own judgment for everything these rules don't pin
 down.
+
+## Agent-specific skill references
+
+The preamble prints `AGENT` and `SKILL_REF`. Use that prefix for every
+user-facing or spawned babysit skill invocation, including literal `/bbs:`
+examples later in this pack: Codex uses `$bbs:<skill>`, omp uses `/<skill>`,
+and Claude Code/grok use `/bbs:<skill>`.
 ## Output style — terse by default
 Drop filler, pleasantries, hedging. Route by consumer:
 
@@ -117,7 +124,8 @@ _TEL_START=$(date +%s)
 # Net for shells that don't inherit a login PATH (cron, tmux workers, spawned
 # orchestrators): prepend the absolute install dirs when they exist.
 # $CLAUDE_PLUGIN_ROOT covers a marketplace / skills-dir plugin install, whose
-# root is not ~/.claude/skills/babysit; `:-/nonexistent` keeps it inert unset.
+# root is not ~/.claude/skills/babysit. Codex exports the same compatibility
+# variable for plugin hooks; `:-/nonexistent` keeps it inert unset.
 for _d in "$HOME/.local/bin" "$HOME/.claude" "${CLAUDE_PLUGIN_ROOT:-/nonexistent}/bin" "$HOME/.claude/skills/babysit/bin"; do
   case ":$PATH:" in *":$_d:"*) ;; *) [ -d "$_d" ] && PATH="$_d:$PATH" ;; esac
 done
@@ -147,13 +155,16 @@ find ~/.babysit/sessions -mmin +120 -type f -exec rm {} + 2>/dev/null || true
 # Best-effort: the guaranteed path is the bin/hooks/session-writer plugin
 # hook (SessionStart + PostToolUse); this block additionally records the
 # ticket from $BABYSIT_TICKET when a skill runs it.
-# $BABYSIT_SESSION defaults from Claude Code's own session id, so every real
+# $BABYSIT_SESSION defaults from the host agent's own session id, so every real
 # tab gets a yaml (feeds `session list`, `board`, dashboard); autopilot's
 # explicit $BABYSIT_SESSION still wins. Atomic mktemp+mv so the file's mtime
 # gets bumped (in-place edit on Linux preserves mtime — see docs/identity.md
 # § Atomic writes). Skipped when neither id is available.
-BABYSIT_SESSION="${BABYSIT_SESSION:-cc-${CLAUDE_CODE_SESSION_ID:-}}"
-[ "$BABYSIT_SESSION" = "cc-" ] && BABYSIT_SESSION=""
+if [ -z "${BABYSIT_SESSION:-}" ]; then
+  if [ -n "${CLAUDE_CODE_SESSION_ID:-}" ]; then BABYSIT_SESSION="cc-${CLAUDE_CODE_SESSION_ID}"
+  elif [ -n "${CODEX_SESSION_ID:-}" ]; then BABYSIT_SESSION="cx-${CODEX_SESSION_ID}"
+  fi
+fi
 if [ -n "${BABYSIT_SESSION:-}" ]; then
   _SF="$HOME/.babysit/sessions/${BABYSIT_SESSION}.yaml"
   _STMP="$(mktemp "$HOME/.babysit/sessions/.session.XXXXXX" 2>/dev/null)" || _STMP=""
@@ -183,6 +194,11 @@ _TEL=$(_bbs_cfg telemetry);       _TEL=${_TEL:-local}
 _BRANCH=$(git branch --show-current 2>/dev/null || echo "unknown")
 _REPO=$(basename "$(git rev-parse --show-toplevel 2>/dev/null || echo "unknown")")
 _INVOKER="${AGENT_ROLE:-${GT_ROLE:-developer}}"
+_AGENT="${BABYSIT_AGENT:-}"
+[ -z "$_AGENT" ] && [ -n "${CODEX_SESSION_ID:-}" ] && _AGENT="codex"
+[ -z "$_AGENT" ] && [ -n "${GROK_SESSION_ID:-${GROK_AGENT:-}}" ] && _AGENT="grok"
+[ -z "$_AGENT" ] && [ -n "${CLAUDE_CODE_SESSION_ID:-}" ] && _AGENT="claude"
+case "$_AGENT" in codex) _SKILL_REF='$bbs:' ;; omp) _SKILL_REF='/' ;; *) _SKILL_REF='/bbs:' ;; esac
 [ -n "$OPENCLAW_SESSION" ] || [ -n "$BABYSIT_SPAWNED" ] && _SPAWNED="true" || _SPAWNED="false"
 
 # Project scope — slug + ticket re-derived from git remote + branch on every
@@ -200,6 +216,8 @@ echo "SLUG: $SLUG"
 echo "BRANCH: $_BRANCH"
 echo "REPO: $_REPO"
 echo "INVOKER: $_INVOKER"
+echo "AGENT: ${_AGENT:-unknown}"
+echo "SKILL_REF: $_SKILL_REF"
 echo "TICKET: ${TICKET:-<none>}"
 echo "PROJECT_HOME: $BABYSIT_PROJECT_HOME"
 echo "PROACTIVE: $_PROACTIVE"

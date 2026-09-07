@@ -65,7 +65,7 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 
 ## babysit
 
-Babysit is a Claude Code skill pack for **autonomous** workflows — scheduled runs, background jobs, CI loops, anything where no human is at the keyboard to approve or course-correct.
+Babysit is a Claude Code and Codex skill pack for **autonomous** workflows — scheduled runs, background jobs, CI loops, anything where no human is at the keyboard to approve or course-correct.
 
 It is the product-building *team*: skills and workflows are organized around the
 **five archetypes** of how that team works — Prototyper, Builder, Sweeper,
@@ -290,23 +290,24 @@ a crash.
 ## Install
 
 ```
-./bin/setup-skills           # builds bbs → ~/.local/bin/, symlinks skills into ~/.claude/skills/bbs:*
+./bin/setup-skills --full    # builds bbs → ~/.local/bin/, prints Claude Code and Codex plugin commands
 ./bin/setup-skills --uninstall
 ```
 
 ## Releasing — version bumps
 
-When bumping the version (any change to `VERSION`), **always update `.claude-plugin/marketplace.json` in the same commit**. The plugin loader uses that file to detect upgrades — a stale version there means `/plugin marketplace update babysit` reports nothing to bump and users stay on the old skills.
+When bumping the version (any change to `VERSION`), **always update `.claude-plugin/marketplace.json` and `.codex-plugin/plugin.json` in the same commit**. The plugin loaders use those files to detect upgrades — a stale version can leave users on old skills.
 
-Three places must stay in sync:
+Four fields must stay in sync:
 
 | File | Field |
 |------|-------|
 | `VERSION` | bare version string, e.g. `1.4.2` |
 | `.claude-plugin/marketplace.json` | `metadata.version` |
 | `.claude-plugin/marketplace.json` | `plugins[0].version` |
+| `.codex-plugin/plugin.json` | `version` |
 
-Quick check: `grep -r "version" .claude-plugin/ VERSION` — all three should show the same value. CI enforces this too: `.github/workflows/release.yml` fails the run when they disagree, rather than shipping a plugin that misreports its own version.
+Quick check: `grep -r "version" .claude-plugin/ .codex-plugin/ VERSION` — all four should show the same value. CI enforces this too: `.github/workflows/release.yml` fails the run when they disagree, rather than shipping a plugin that misreports its own version.
 
 **Bumping VERSION on `main` is the release.** The push triggers `release.yml`,
 which tags `v$(cat VERSION)`, builds the four archives with goreleaser, commits
@@ -316,7 +317,7 @@ as it sees the tag already exists. Pushing a `v*` tag by hand still works for
 re-cutting or for tagging a commit that isn't main's head.
 
 Two rules the file's comments explain in place, worth knowing before editing it:
-the version is never derived from commit messages (it would desync the three
+the version is never derived from commit messages (it would desync the four
 places above), and the tagging must stay *inside* the release job — a tag pushed
 with the default `GITHUB_TOKEN` does not trigger workflows, so a separate
 tagging workflow would mint tags that never build.

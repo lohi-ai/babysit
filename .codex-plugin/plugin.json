@@ -1,0 +1,24 @@
+{
+  "name": "bbs",
+  "version": "1.79.0",
+  "description": "Autonomous product-building workflows for planning, implementation, review, and QA.",
+  "author": {
+    "name": "lohi-ai",
+    "url": "https://github.com/lohi-ai"
+  },
+  "homepage": "https://github.com/lohi-ai/babysit",
+  "repository": "https://github.com/lohi-ai/babysit",
+  "license": "MIT",
+  "keywords": ["autonomy", "coding", "qa", "workflows"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Babysit",
+    "shortDescription": "Plan, build, review, and QA while you are away.",
+    "longDescription": "Checkpointed autonomous product-building workflows for Codex, from a short requirement through implementation, review, and QA.",
+    "developerName": "lohi-ai",
+    "category": "Productivity",
+    "capabilities": ["Read", "Write"],
+    "websiteURL": "https://github.com/lohi-ai/babysit",
+    "defaultPrompt": "Use Babysit autopilot to build this requirement end to end."
+  }
+}

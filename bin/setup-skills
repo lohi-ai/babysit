@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
 # Babysit companion-bin setup.
 #
-# Skills are managed by Claude Code's plugin system (see .claude-plugin/
-# plugin.json and .claude-plugin/marketplace.json). Register skills with:
+# Skills are managed by the agent's plugin system (see .claude-plugin/,
+# .codex-plugin/, and .claude-plugin/marketplace.json). Register skills with:
 #   /plugin marketplace add <path-to-this-repo>
 #   /plugin install bbs@babysit
+# or:
+#   codex plugin marketplace add <path-to-this-repo>
+#   codex plugin add bbs@babysit
 # This script only installs the `bbs-*` CLI bins into ~/.claude/,
 # which the plugin system does not manage.
 set -euo pipefail
@@ -37,12 +40,15 @@ while [ $# -gt 0 ]; do
       echo "Usage: setup-skills [--dry-run] [--full] [--uninstall]"
       echo ""
       echo "Install Babysit CLI bins into ~/.claude/, plus bbs into ~/.local/bin/."
-      echo "Skills are installed separately via Claude Code's plugin system:"
+      echo "Skills are installed separately via a coding-agent plugin system:"
       echo "  /plugin marketplace add <path-to-this-repo>"
       echo "  /plugin install bbs@babysit"
+      echo "or:"
+      echo "  codex plugin marketplace add <path-to-this-repo>"
+      echo "  codex plugin add bbs@babysit"
       echo ""
       echo "  --dry-run    Show what would be done without making changes"
-      echo "  --full       Run all steps + print the Claude Code plugin commands"
+      echo "  --full       Run all steps + print the Claude Code and Codex plugin commands"
       echo "  --uninstall  Remove all installed bin symlinks"
       exit 0
       ;;
@@ -132,7 +138,7 @@ if [ "$UNINSTALL" -eq 1 ]; then
   fi
 
   echo -e "\n${GREEN}Uninstall complete.${NC}"
-  echo "Skills installed via the plugin system: run '/plugin uninstall bbs' in Claude Code."
+  echo "Skills installed via a plugin system must be uninstalled in that agent."
   exit 0
 fi
 
@@ -334,11 +340,16 @@ fi
 # ── Post-install (--full) ──────────────────────────────────────
 if [ "${FULL:-0}" = "1" ]; then
   echo ""
-  echo -e "${CYAN}Post-install: Claude Code plugin commands${NC}"
-  echo "Run these in the Claude Code REPL to register skills:"
+  echo -e "${CYAN}Post-install: register the plugin${NC}"
+  echo "Claude Code:"
   echo ""
   echo "  /plugin marketplace add $PROJECT_DIR"
   echo "  /plugin install bbs@babysit"
+  echo ""
+  echo "Codex CLI:"
+  echo ""
+  echo "  codex plugin marketplace add $PROJECT_DIR"
+  echo "  codex plugin add bbs@babysit"
 fi
 
 # ─── Summary ──────────────────────────────────────────────────
@@ -348,6 +359,9 @@ echo ""
 echo "Skills:      $SKILL_COUNT in .claude/skills/ — register in Claude Code:"
 echo "               /plugin marketplace add $PROJECT_DIR"
 echo "               /plugin install bbs@babysit"
+echo "             or Codex CLI:"
+echo "               codex plugin marketplace add $PROJECT_DIR"
+echo "               codex plugin add bbs@babysit"
 if [ "${#INSTALLED_BINS[@]}" -gt 0 ]; then
   BIN_LIST="$(IFS=,; echo "${INSTALLED_BINS[*]}")"
   echo "Bins:        ~/.claude/{$BIN_LIST}"

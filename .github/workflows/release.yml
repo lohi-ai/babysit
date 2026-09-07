@@ -9,10 +9,9 @@ name: Release
 #     tagging a commit that isn't main's head.
 #
 # The version is NEVER derived from commit messages. VERSION is babysit's source
-# of truth and .claude-plugin/marketplace.json mirrors it twice (CLAUDE.md's
-# 3-place rule); an auto-bump would move the tag while leaving those mirrors
-# stale, and the plugin loader reads marketplace.json to detect upgrades. So the
-# human owns the number, and CI owns everything after it.
+# of truth and the Claude/Codex plugin manifests mirror it (CLAUDE.md's
+# 4-field rule); an auto-bump would move the tag while leaving those mirrors
+# stale. So the human owns the number, and CI owns everything after it.
 #
 # IMPORTANT: the tag is created inside the release job, not by a separate
 # tagging workflow. A tag pushed with the default GITHUB_TOKEN does not trigger
@@ -49,14 +48,14 @@ jobs:
           set -euo pipefail
           version="$(cat VERSION)"
 
-          # The 3-place sync rule, enforced instead of grepped by hand: a
-          # release whose marketplace.json disagrees with VERSION ships a plugin
-          # that misreports its own version, and `claude plugin update` then
-          # can't tell an upgrade from a no-op.
+          # The 4-field sync rule, enforced instead of grepped by hand: a
+          # release whose plugin metadata disagrees with VERSION ships a plugin
+          # that misreports its own version.
           meta="$(jq -r '.metadata.version' .claude-plugin/marketplace.json)"
           plug="$(jq -r '.plugins[0].version' .claude-plugin/marketplace.json)"
-          if [ "$meta" != "$version" ] || [ "$plug" != "$version" ]; then
-            echo "::error::VERSION ($version) != marketplace.json (metadata=$meta, plugins[0]=$plug) — CLAUDE.md's 3-place rule"
+          codex="$(jq -r '.version' .codex-plugin/plugin.json)"
+          if [ "$meta" != "$version" ] || [ "$plug" != "$version" ] || [ "$codex" != "$version" ]; then
+            echo "::error::VERSION ($version) != plugin metadata (marketplace metadata=$meta, marketplace plugin=$plug, codex=$codex) — CLAUDE.md's 4-field rule"
             exit 1
           fi
 

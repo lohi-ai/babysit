@@ -1,6 +1,6 @@
 ---
 name: autopilot
-description: Run a checkpointed babysit workflow from a short requirement or existing ticket. Use for multi-step autonomous work that should survive context loss: plan, implement, verify, and hand off.
+description: "Run a checkpointed babysit workflow from a short requirement or existing ticket. Use for multi-step autonomous work that should survive context loss: plan, implement, verify, and hand off."
 ---
 # autopilot
 A **goal proxy**: the skill owns init — durable ticket state, branch,
@@ -99,18 +99,20 @@ Ready for <ticket>. Before you paste, review what will be built:
   prototype: <prototype path>
 Redirect the design now if it's wrong — otherwise you're one paste from done.
 
-👉 Copy the block below and paste it into Claude Code to build it:
+👉 Copy the block below and paste it into <the current agent> to build it:
 
 /goal <ticket> is done: qa verdict PASS/FIXED persisted via bbs ticket set-verdict,
 review-pr verdict persisted, branch pushed, closed out per the repo's finish
 policy, handoff note written — or a NEEDS_CONTEXT / BLOCKED status block
 printed verbatim.
-Work it: /bbs:autopilot <workflow> <ticket>
+Work it: <SKILL_REF>autopilot <workflow> <ticket>
 ```
 The preamble is mandatory whenever `plan-draft`/`design-ui` produced those
 artifacts — it is the design checkpoint, not decoration; keep it in plain
 words and never assume the human knows git or babysit internals. The
-`👉 Copy … paste it into Claude Code` line is mandatory in every `developer`
+The preamble prints the current agent and `SKILL_REF`; substitute both values
+in this template and never print the angle-bracket placeholders. The
+`👉 Copy … paste it into <agent>` line is mandatory in every `developer`
 handoff — a non-technical user must never have to guess that the fenced block
 is a thing they paste. Orchestrators (non-`developer`) skip the preamble and
 the copy-paste line and put only the `/goal` block in the spawn prompt.

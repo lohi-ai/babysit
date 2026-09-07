@@ -4,7 +4,8 @@ This page covers the **standalone `bbs` command-line binary** — the Go CLI
 distributed as release artifacts. Mac users install it with Homebrew; Linux
 users use the tarball.
 
-> **This is not how you install babysit.** Babysit is a Claude Code skill pack;
+> **This is not how you install babysit.** Babysit is a coding-agent skill pack
+> for Claude Code and Codex;
 > it installs via `git clone` + `bin/setup-skills` (see the
 > [README Quick start](../README.md#quick-start)) — which builds `bbs` and
 > symlinks it into `~/.local/bin/`. This page is only for getting the compiled

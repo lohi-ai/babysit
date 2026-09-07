@@ -11,8 +11,8 @@ checkpoint between design and build. Workers own the code.
 Which CLI a worker runs on is config, not your decision — ask `bbs foreman
 worker-command` for the command line (see [Dispatch a worker](#dispatch-a-worker))
 rather than writing `claude` yourself. Everything else in this skill is
-agent-independent: the prompt is `/bbs:<skill>` on every agent, and workers are
-driven through Orca and disk state either way.
+agent-independent: `worker-command --skill` renders each agent's skill sigil
+and namespace, and workers are driven through Orca and disk state either way.
 
 ## Invocation
 
@@ -28,7 +28,8 @@ Route by the shape of the argument, not a verb:
   dispatched as slots free. (`assign` before the text is accepted and
   ignored.)
 - ticket-id — that ticket's worker: attach if its session lives, else
-  re-dispatch from disk state (`/bbs:autopilot builder <ticket>`).
+  re-dispatch from disk state (`worker-command --skill autopilot --prompt
+  "builder <ticket>"`).
 - `stop <ticket|title>` — the only verb: archive the pane, close the
   terminal tab, mark the todo (this is the explicit permission the kill rule
   requires; without a terminal STATUS the ticket stays resumable from disk).
@@ -184,7 +185,7 @@ unavailable, that is this gap — report it, do not retry on another agent.
 | `claude` | `--dangerously-skip-permissions` | the plugin marketplace | `/bbs:autopilot` |
 | `grok` | `--always-approve` | `grok plugin install https://github.com/lohi-ai/babysit` | `/bbs:autopilot` |
 | `omp` | `--auto-approve` | `omp config set skills.customDirectories '["$HOME/.claude/plugins/marketplaces/babysit/.claude/skills"]'` | **`/autopilot`** |
-| `codex` | `--dangerously-bypass-approvals-and-sandbox` | unverified — confirm before dispatching a batch | `/bbs:autopilot` |
+| `codex` | `--dangerously-bypass-approvals-and-sandbox` | `codex plugin marketplace add lohi-ai/babysit && codex plugin add bbs@babysit` | `$bbs:autopilot` |
 
 Two traps in that table worth stating outright:
 
@@ -198,9 +199,9 @@ Two traps in that table worth stating outright:
   marketplace checkout (that path is stable across upgrades; the
   `plugins/cache/<version>` one is not).
 
-`codex` is registered from OpenAI's published CLI reference and has not been
-spawned live. Its rendering and quoting are tested; its skill discovery is not.
-Treat the first codex worker in a batch as a probe.
+Codex uses `$` for explicit skill mentions while the other registered agents
+use `/`. Never hand-write that prompt either: `worker-command --skill` renders
+the agent-specific sigil and namespace.
 
 grok also gates on **directory trust**, separately from its permission mode: the
 first run in a directory absent from `~/.grok/trusted_folders.toml` stops on "Do
@@ -225,8 +226,8 @@ is the terminal title plus `worktree set --comment`.
 # Resolution order: --agent > BABYSIT_AGENT > <repo>/.babysit/config.yaml
 # (worker_agent:) > ~/.babysit/config.yaml > claude. It preflights, so BLOCKED
 # means the agent is not installed — report it, do not fall back to another CLI.
-# --skill, not a hand-written "/bbs:autopilot": omp exposes skills bare, so the
-# prefix is the agent's business and belongs in exactly one place.
+# --skill, not a hand-written invocation: the sigil and prefix are the agent's
+# business and belong in exactly one place.
 CMD=$(bbs foreman worker-command --skill autopilot --prompt "--mode=worktree <requirement>") || {
   echo "BLOCKED: $CMD" >&2; exit 1; }
 
@@ -249,7 +250,7 @@ a worker — see [Terminal backend](#terminal-backend--orca-required).
 Workers always run autopilot: it creates the ticket + worktree, seeds
 requirement/design/plan, and **stops at the copy-paste `/goal` handoff** —
 that stop is your review gate. Resuming a crashed ticket: same spawn with
-`/bbs:autopilot builder <ticket>`.
+`--skill autopilot --prompt "builder <ticket>"`.
 
 Dispatch with `--mode=worktree` on the autopilot invocation. No git-flow
 profile defaults to worktrees — they cost a commit + `merge-base` per test

@@ -8,7 +8,10 @@ English | [Tiếng Việt](README.vi.md)
 /bbs:autopilot add a settings page with dark mode toggle
 ```
 
-~40 minutes of autonomous work per ticket that finishes even though no single Claude session could hold it all at once. You review the branch, then open the PR when you're happy.
+Codex users invoke the same skill as `$bbs:autopilot`; the README uses the
+Claude Code `/bbs:` spelling unless a command is Codex-specific.
+
+~40 minutes of autonomous work per ticket that finishes even though no single agent session could hold it all at once. You review the branch, then open the PR when you're happy.
 
 **Start with `autopilot`.** It's the whole product in one command, it works in any terminal and any repo layout, and it's exactly what every parallel worker runs — so nothing you learn here is throwaway.
 
@@ -21,7 +24,7 @@ English | [Tiếng Việt](README.vi.md)
 
 One visible worker per request, each in its own Orca terminal (each running autopilot end-to-end — plan, code, review, QA, push), a design review before any code is written, and every finished ticket merged onto your local base so you review the whole batch running in one browser — then you create the PRs. It's the advanced flow: it needs [Orca](https://www.onorca.dev), and it earns its keep only when you have several independent tickets to hand off at once.
 
-*babysit is what you do when you don't need a babysitter.* It prefers decisions Claude can make and verify alone over decisions that need a human in the loop — built for scheduled runs, orchestrated pipelines, and anything you want to walk away from.
+*babysit is what you do when you don't need a babysitter.* It prefers decisions the agent can make and verify alone over decisions that need a human in the loop — built for scheduled runs, orchestrated pipelines, and anything you want to walk away from.
 
 ## The easy way to taste it
 
@@ -61,8 +64,8 @@ Step by step:
 
 ## Why it works
 
-- **It finishes.** `/bbs:autopilot` is a **goal proxy**: init seeds durable state — ticket, requirement, plan, checkpoint — then hands the work to [`/goal`](#3-run-it), Claude Code's session-scoped Stop hook that blocks the session from stopping until the QA and review verdicts are persisted. Inside the loop the model works free-form with full context, the way it would for a direct ask; checkpoints on disk let a fresh session resume where the last one stopped.
-- **It doesn't hang.** Every decision routes through the [Auto-Decision Framework](.claude/skills/references/auto-decision-framework.md). Claude decides and logs; if a human is genuinely required, it writes a `NEEDS_CONTEXT` block to the ticket instead of waiting on a pop-up.
+- **It finishes.** `/bbs:autopilot` is a **goal proxy**: init seeds durable state — ticket, requirement, plan, checkpoint — then hands the work to [`/goal`](#3-run-it), the agent's persistent goal mode, until the QA and review verdicts are persisted. Inside the loop the model works free-form with full context, the way it would for a direct ask; checkpoints on disk let a fresh session resume where the last one stopped.
+- **It doesn't hang.** Every decision routes through the [Auto-Decision Framework](.claude/skills/references/auto-decision-framework.md). The agent decides and logs; if a human is genuinely required, it writes a `NEEDS_CONTEXT` block to the ticket instead of waiting on a pop-up.
 - **It verifies itself.** QA is part of the default autopilot loop. PASS requires a locally running target or a named blocker, plus non-happy-path cases. No "it compiles, shipping it."
 - **It's auditable.** JSONL telemetry to `~/.babysit/analytics/` plus `[WORK]` checkpoint comments. Read the tape after the fact — the primary feedback channel when no one is watching live.
 
@@ -71,7 +74,7 @@ Step by step:
 As engineering, product, design, and data science melt into one kind of
 product-builder, the useful unit of work is no longer the job title — it's the
 *archetype* the work needs right now. Babysit is the product-building team:
-it maps the Claude Code team's five archetypes onto skills and autopilot
+it maps a product team's five archetypes onto skills and autopilot
 workflows, so a single run can act as whichever teammate the task calls for.
 
 A person spans 2–3 archetypes; so does a babysit run. Pick by the **shape of the
@@ -112,20 +115,31 @@ Three steps. Install once globally, configure each repo once, then run.
 
 ### 1. Install the plugin
 
-**Straight from GitHub — nothing lands in your workspace.** Claude Code clones
-the marketplace itself:
+**Straight from GitHub — nothing lands in your workspace.** Install the CLI,
+then register the same marketplace with your coding agent:
 
 ```bash
 brew install lohi-ai/babysit/bbs        # the CLI — required, see below
+
+# Claude Code
 claude plugin marketplace add lohi-ai/babysit
 claude plugin install bbs@babysit
+
+# Codex CLI
+codex plugin marketplace add lohi-ai/babysit
+codex plugin add bbs@babysit
 ```
 
-Restart Claude Code, and `/bbs:autopilot` is there. Upgrade later with one
-command — `bbs upgrade` refreshes both halves, then restart Claude Code:
+Restart the agent. Claude Code exposes `/bbs:autopilot`; Codex exposes
+`$bbs:autopilot`.
+
+Upgrade the CLI and Claude Code plugin with `bbs upgrade`. Codex manages its
+plugin copy with its own CLI:
 
 ```bash
 bbs upgrade
+codex plugin marketplace upgrade babysit
+codex plugin add bbs@babysit
 ```
 
 **`brew install bbs` is not optional.** `bin/bbs` is a build artifact and isn't
@@ -146,24 +160,30 @@ cd ~/src/babysit
 ./bin/setup-skills --full
 ```
 
-Then inside Claude Code:
+Then register the checkout in either agent:
 
 ```
+# Claude Code
 /plugin marketplace add ~/src/babysit
 /plugin install bbs@babysit
+
+# Codex CLI (run from a shell)
+codex plugin marketplace add ~/src/babysit
+codex plugin add bbs@babysit
 ```
 
 This puts `bbs` on your `PATH` at `~/.local/bin/bbs` → your checkout, so you
 don't need the Homebrew install as well. Upgrade with `git pull && ./bin/setup-skills`.
 
-Note that a marketplace plugin is *copied* into `~/.claude/plugins/cache/`,
-while a directory under `~/.claude/skills/<name>/` is loaded **in place** — the
-second is what makes working-tree edits live. Don't run both shapes at once:
-an installed marketplace plugin wins the name collision.
+Note that a marketplace plugin is *copied* into the agent's cache
+(`~/.claude/plugins/cache/` or `~/.codex/plugins/cache/`). A Claude Code
+directory under `~/.claude/skills/<name>/` is loaded **in place** — that is the
+shape that makes working-tree edits live. Don't install both Claude shapes at
+once: an installed marketplace plugin wins the name collision.
 
 </details>
 
-Requirements: Claude Code with plugin support, Git.
+Requirements: Claude Code or Codex CLI with plugin support, plus Git.
 
 Recommended, not required to start: **[Orca](https://www.onorca.dev)**, an ADE for running coding agents side by side. `/bbs:autopilot` and everything else run in any terminal — Orca is a **hard dependency only for `foreman`**, which has no other backend: it gives each parallel worker its own terminal tab, diffs in the editor, and the running app in Orca's browser. `foreman` fails fast with an install message when Orca is missing.
 
@@ -237,7 +257,7 @@ The commands that move work between a worktree and the shared surface — `merge
 /bbs:autopilot "add a settings page with dark mode toggle"
 ```
 
-Autopilot inits the ticket — requirement, plan, branch — then stops and prints a `/goal` block as its **last message**. That block is the one thing you do next: **copy it, paste it back into Claude Code, and walk away.** The goal session then writes the code, reviews it, runs QA, and pushes the branch. Open the PR yourself after review. Pass `--auto` to skip the paste: `/goal` runs on the same agent you started in. Pass `--reviewer codex` (or any other registered agent) if you want a second agent to review the plan first — it has to be a different agent than the one building, so the read is actually independent.
+Autopilot inits the ticket — requirement, plan, branch — then stops and prints a `/goal` block as its **last message**. That block is the one thing you do next: **copy it, paste it back into the same agent, and walk away.** The goal session then writes the code, reviews it, runs QA, and pushes the branch. Open the PR yourself after review. Pass `--auto` to skip the paste: `/goal` runs on the same agent you started in. Pass `--reviewer codex` (or any other registered agent) if you want a second agent to review the plan first — it has to be a different agent than the one building, so the read is actually independent.
 
 > **The handoff looks like this** — autopilot ends with a plain-language preamble, then the block to copy:
 >
@@ -247,7 +267,7 @@ Autopilot inits the ticket — requirement, plan, branch — then stops and prin
 >   prototype: tickets/bs-ab123/prototype.html
 > Redirect the design now if it's wrong — otherwise you're one paste from done.
 >
-> 👉 Copy the block below and paste it into Claude Code to build it:
+> 👉 Copy the block below and paste it into your agent to build it:
 >
 > /goal bs-ab123 is done: qa verdict PASS/FIXED persisted via bbs ticket set-verdict,
 > review-pr verdict persisted, branch pushed, handoff note written — or a
@@ -257,7 +277,7 @@ Autopilot inits the ticket — requirement, plan, branch — then stops and prin
 
 #### Why `/goal` owns the work
 
-`/goal <condition>` (built-in, Claude Code 2.1.139+) arms a session-scoped Stop hook: the model works free-form with full context — no step ceremony — and the hook blocks stopping until the condition holds. That's why the step is *paste the `/goal` block* rather than "run a command": pasting it is what arms the hook. Autopilot's printed block already encodes the babysit gates and the escape clause.
+`/goal <condition>` starts the supported agent's persistent goal mode: the model works free-form with full context — no step ceremony — and continues until the condition holds. That's why the step is *paste the `/goal` block* rather than "run a command": pasting it is what arms the goal. Autopilot's printed block already encodes the babysit gates and the escape clause.
 
 The escape clause means the loop terminates on escalation instead of grinding against a missing input. To bail mid-run: `/goal clear`, `Ctrl-C`, or touch `~/.babysit/projects/<slug>/tickets/<ticket>/STOP`.
 
@@ -370,19 +390,27 @@ Everything is one binary reached as `bbs <sub>` — `bbs autopilot` (the runner)
 
 Day-2 config (`bbs config`), telemetry (JSONL to `~/.babysit/analytics/`, local-only by default), and upgrade handling (`bbs upgrade check` + `bbs upgrade`) are covered in [`docs/operations.md`](docs/operations.md).
 
-**Upgrade.** One command, then restart Claude Code — plugin changes only apply on restart:
+**Upgrade.** Refresh the CLI and the plugin copy for the agent you use, then restart that agent:
 
 ```bash
 bbs upgrade
+# Codex plugin installs are managed by Codex itself:
+codex plugin marketplace upgrade babysit
+codex plugin add bbs@babysit
 ```
 
-babysit ships as two halves that different tools own — the brew CLI and the Claude Code plugin — and `bbs upgrade` drives whichever ones this machine has, naming any it can't reach. From a checkout it pulls and re-runs `setup-skills` for the CLI half, then still updates the marketplace plugin if one is installed: a checkout on your `PATH` and a plugin in `~/.claude/plugins/cache/` are two different copies, and the installed plugin is the one Claude Code loads.
+babysit ships as two halves that different tools own — the brew CLI and an agent plugin. `bbs upgrade` drives the CLI and Claude Code copy; Codex's plugin CLI drives the Codex copy. A marketplace plugin is cached rather than loaded from the checkout, so pulling the checkout alone does not refresh either agent's installed copy.
 
 ## Uninstall
 
 ```
+# Claude Code
 /plugin uninstall bbs@babysit
 /plugin marketplace remove babysit
+
+# Codex CLI
+codex plugin remove bbs@babysit
+codex plugin marketplace remove babysit
 ```
 
 ```bash
@@ -402,8 +430,9 @@ rm -f ~/.claude/babysit ~/.claude/bbs-*
 | Issue | Fix |
 |-------|-----|
 | Every `git push` denied, "GATE OFFLINE" | No `bbs` on `PATH` — `brew install lohi-ai/babysit/bbs`. The plugin ships no compiled binary, and the gate fails closed by design |
-| Skills missing or stale after upgrade | Restart Claude Code; if still stale, `bbs upgrade` again and read what it says it couldn't reach |
-| `/bbs:*` not found | `claude plugin install bbs@babysit`, then restart; or `/reload-plugins` |
+| Skills missing or stale after upgrade | Restart the agent; for Claude Code rerun `bbs upgrade`, for Codex rerun `codex plugin marketplace upgrade babysit && codex plugin add bbs@babysit` |
+| `/bbs:*` not found in Claude Code | `claude plugin install bbs@babysit`, then restart; or `/reload-plugins` |
+| `$bbs:*` not found in Codex | `codex plugin add bbs@babysit`, then start a new session |
 | Skills show without `bbs:` prefix | Legacy install — `find ~/.claude/skills -maxdepth 1 -type l -name 'bbs:*' -delete`, then reinstall the plugin |
 | `env resolve` returns empty | Check the right `.env.base` exists under `config/<app>/` |
 

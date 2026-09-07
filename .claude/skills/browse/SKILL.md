@@ -1,6 +1,6 @@
 ---
 name: browse
-description: Use the browser for focused web-app checks: open a URL, inspect state, click through a flow, capture screenshots, read console errors, or verify a frontend fix. Prefer this over a full QA workflow.
+description: "Use the browser for focused web-app checks: open a URL, inspect state, click through a flow, capture screenshots, read console errors, or verify a frontend fix. Prefer this over a full QA workflow."
 ---
 # browse
 Small browser checks only — a quick smoke test or proof that a touched UI
@@ -13,14 +13,19 @@ renders. Do not turn this into a product review unless asked.
   change.
 ## Engine
 Browsing runs on [`agent-browser`](https://github.com/vercel-labs/agent-browser) — `agent-browser open <url>`, then `snapshot -i` for refs, `click @e<n>` / `type @e<n> <text>` / `fill` / `select` to interact (the `@ref` is an argument to a verb, never a bare command), plus `eval`, `screenshot`, `errors`, `vitals`. One-time: `npm install -g agent-browser cloakbrowser`.
-**One Claude Code session = one browser.** The session name is the browser identity: the same name reattaches to that browser's daemon (cookies, tabs, window); a different name — or *no* name, which silently falls through to the shared `default` session — launches another instance. So never derive the name from the target URL, task, or an ad-hoc label (that's how one run leaks N windows and loses the setup done in the previous one), and never run a bare `agent-browser` command before this export (that's the phantom second window at startup):
+**One agent session = one browser.** The session name is the browser identity: the same name reattaches to that browser's daemon (cookies, tabs, window); a different name — or *no* name, which silently falls through to the shared `default` session — launches another instance. So never derive the name from the target URL, task, or an ad-hoc label (that's how one run leaks N windows and loses the setup done in the previous one), and never run a bare `agent-browser` command before this export (that's the phantom second window at startup):
 ```bash
-export AGENT_BROWSER_SESSION="cc-${CLAUDE_CODE_SESSION_ID:0:8}"
-# outside Claude Code: export AGENT_BROWSER_SESSION="$(agent-browser session id --scope worktree)"
+if [ -n "${CLAUDE_CODE_SESSION_ID:-}" ]; then
+  export AGENT_BROWSER_SESSION="cc-${CLAUDE_CODE_SESSION_ID:0:8}"
+elif [ -n "${CODEX_SESSION_ID:-}" ]; then
+  export AGENT_BROWSER_SESSION="cx-${CODEX_SESSION_ID:0:8}"
+else
+  export AGENT_BROWSER_SESSION="$(agent-browser session id --scope worktree)"
+fi
 ```
-Every Bash call in this Claude Code session then reuses one window; another Claude Code window gets its own. Refs (`@e<n>`) are per-session: snapshot the session you're about to act on. If parallel subagents each need their own window, give each `export AGENT_BROWSER_NAMESPACE=<agent-id>` on top.
+Every shell call in this agent session then reuses one window; another agent window gets its own. Refs (`@e<n>`) are per-session: snapshot the session you're about to act on. If parallel subagents each need their own window, give each `export AGENT_BROWSER_NAMESPACE=<agent-id>` on top.
 When the check is done, `agent-browser close` your session. A crashed run leaves its browser behind — on macOS even headless ones keep a Chrome-for-Testing icon in the Dock — so if `agent-browser session list` shows names you don't recognize, `agent-browser close --all` (and per `--namespace <ns>` for anything under `~/.agent-browser/namespaces/`).
-Sessions are isolated browsers, so login state doesn't carry across Claude Code windows by itself. To share one "profile", add `--restore bbs-profile` to `open` (and `close`): every session loads/saves the same cookies+localStorage bundle under `~/.agent-browser/sessions/`, so a login done in one window is there for the next. Don't point concurrent sessions at one `--profile` dir instead — Chromium locks the user-data-dir per instance.
+Sessions are isolated browsers, so login state doesn't carry across agent windows by itself. To share one "profile", add `--restore bbs-profile` to `open` (and `close`): every session loads/saves the same cookies+localStorage bundle under `~/.agent-browser/sessions/`, so a login done in one window is there for the next. Don't point concurrent sessions at one `--profile` dir instead — Chromium locks the user-data-dir per instance.
 **Credentials for a sign-in never live in this skill or the transcript.** When a check needs to log in, take them from the project's standard QA env — `bbs secrets load` exports the gitignored `.babysit/.env` into the shell, and `.babysit/qa.yaml` names which vars hold them (standard: `QA_USER` / `QA_PASS`):
 ```bash
 eval "$(bbs secrets load)"                              # exports .babysit/.env

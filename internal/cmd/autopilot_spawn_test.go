@@ -19,6 +19,8 @@ func spawnState(t *testing.T) *apState {
 	t.Setenv("BABYSIT_AGENT", "")
 	t.Setenv("GROK_AGENT", "")
 	t.Setenv("GROK_SESSION_ID", "")
+	t.Setenv("CODEX_SESSION_ID", "")
+	t.Setenv("CODEX_THREAD_ID", "")
 	t.Setenv("CLAUDE_CODE_SESSION_ID", "")
 	t.Setenv("BABYSIT_STATE_DIR", t.TempDir())
 	t.Setenv("HOME", t.TempDir())
@@ -83,7 +85,7 @@ func TestGoalPromptMatchesSkillHandoff(t *testing.T) {
 		"review-pr verdict persisted, branch pushed, closed out per the repo's finish",
 		"policy, handoff note written — or a NEEDS_CONTEXT / BLOCKED status block",
 		"printed verbatim.",
-		"Work it: /bbs:autopilot <workflow> <ticket>",
+		"Work it: <SKILL_REF>autopilot <workflow> <ticket>",
 		// finish is part of a full run, not a foreman-only extra.
 		"BBS_FINISH",
 		"--auto",

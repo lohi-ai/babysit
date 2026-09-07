@@ -5,14 +5,14 @@
     "url": "https://github.com/lohi-ai/babysit"
   },
   "metadata": {
-    "version": "1.78.0",
-    "description": "Babysit — autonomous Claude Code skill pack."
+    "version": "1.79.0",
+    "description": "Babysit — autonomous coding-agent skill pack."
   },
   "plugins": [
     {
       "name": "bbs",
-      "version": "1.78.0",
-      "description": "Autonomous skill pack — scheduled runs, background jobs, CI loops. Skills invoke as /bbs:<name>.",
+      "version": "1.79.0",
+      "description": "Autonomous skill pack — scheduled runs, background jobs, CI loops.",
       "source": "./",
       "category": "productivity"
     }

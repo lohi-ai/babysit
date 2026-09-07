@@ -395,6 +395,7 @@ func TestWorkerCommandNamesTheSkillTheWayEachAgentResolvesIt(t *testing.T) {
 		{"claude", `claude --dangerously-skip-permissions '/bbs:autopilot --mode=worktree ship it'`},
 		{"grok", `grok --always-approve '/bbs:autopilot --mode=worktree ship it'`},
 		{"omp", `omp --auto-approve '/autopilot --mode=worktree ship it'`},
+		{"codex", `codex --dangerously-bypass-approvals-and-sandbox '$bbs:autopilot --mode=worktree ship it'`},
 	} {
 		out := captureStdout(t, func() {
 			if err := foremanWorkerCommand([]string{

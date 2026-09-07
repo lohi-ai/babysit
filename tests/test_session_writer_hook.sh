@@ -5,6 +5,7 @@
 # rewrites and atomic mtime bump.
 
 set -u
+unset CODEX_SESSION_ID CODEX_THREAD_ID
 SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 PREAMBLE="$SCRIPT_DIR/.claude/skills/references/preamble.md"
 [ -f "$PREAMBLE" ] || { echo "FAIL: $PREAMBLE missing" >&2; exit 1; }
@@ -26,7 +27,7 @@ T="$(mktemp -d)"
 (
   HOME="$T/h"; export HOME
   mkdir -p "$HOME/.babysit/sessions"
-  unset BABYSIT_SESSION CLAUDE_CODE_SESSION_ID
+  unset BABYSIT_SESSION CLAUDE_CODE_SESSION_ID CODEX_SESSION_ID
   bash -c ". '$BLOCK'" >/dev/null 2>&1
   count="$(find "$HOME/.babysit/sessions" -type f -name '*.yaml' | wc -l | tr -d ' ')"
   [ "$count" = "0" ] || { echo "expected 0 yaml files, got $count"; exit 1; }
@@ -40,7 +41,7 @@ T="$(mktemp -d)"
 (
   HOME="$T/h"; export HOME
   mkdir -p "$HOME/.babysit/sessions"
-  unset BABYSIT_SESSION
+  unset BABYSIT_SESSION CODEX_SESSION_ID
   export CLAUDE_CODE_SESSION_ID="abc-123" BABYSIT_TICKET="bs-mint"
   bash -c ". '$BLOCK'" >/dev/null 2>&1
   F="$HOME/.babysit/sessions/cc-abc-123.yaml"
@@ -53,6 +54,21 @@ T="$(mktemp -d)"
   [ -f "$HOME/.babysit/sessions/sess-explicit.yaml" ] \
     || { echo "explicit BABYSIT_SESSION ignored"; exit 1; }
 ) && ok "mints-from-claude-code-session-id" || fail "mints-from-claude-code-session-id"
+rm -rf "$T"
+
+# ── mints-from-codex-session-id ──────────────────────────────────────
+T="$(mktemp -d)"
+(
+  HOME="$T/h"; export HOME
+  mkdir -p "$HOME/.babysit/sessions"
+  unset BABYSIT_SESSION CLAUDE_CODE_SESSION_ID
+  export CODEX_SESSION_ID="xyz-789" BABYSIT_TICKET="bs-codex"
+  bash -c ". '$BLOCK'" >/dev/null 2>&1
+  F="$HOME/.babysit/sessions/cx-xyz-789.yaml"
+  [ -f "$F" ] || { echo "no yaml at $F"; ls -R "$HOME/.babysit"; exit 1; }
+  grep -qx "session_id: cx-xyz-789" "$F" || { echo "bad session_id"; cat "$F"; exit 1; }
+  grep -qx "ticket: bs-codex" "$F" || { echo "bad ticket"; cat "$F"; exit 1; }
+) && ok "mints-from-codex-session-id" || fail "mints-from-codex-session-id"
 rm -rf "$T"
 
 # ── writes-yaml-with-correct-fields ────────────────────────────────────

@@ -24,6 +24,8 @@ func isolate(t *testing.T) {
 	t.Setenv("BABYSIT_STATE_DIR", t.TempDir())
 	t.Setenv("PATH", t.TempDir())
 	t.Setenv("BABYSIT_AGENT", "")
+	t.Setenv("CODEX_SESSION_ID", "")
+	t.Setenv("CODEX_THREAD_ID", "")
 }
 
 // writeGlobal seeds ~/.babysit/config.yaml (redirected by BABYSIT_STATE_DIR).
@@ -369,7 +371,9 @@ decided_at = 3
 	}
 }
 
-func TestCurrentReadsGrokBeforeClaudeCodeEnv(t *testing.T) {
+func TestCurrentReadsAgentSpecificEnvBeforeClaudeCodeEnv(t *testing.T) {
+	t.Setenv("CODEX_SESSION_ID", "")
+	t.Setenv("CODEX_THREAD_ID", "")
 	t.Setenv("GROK_AGENT", "")
 	t.Setenv("GROK_SESSION_ID", "")
 	t.Setenv("CLAUDE_CODE_SESSION_ID", "")
@@ -381,6 +385,12 @@ func TestCurrentReadsGrokBeforeClaudeCodeEnv(t *testing.T) {
 	if got := Current(); got != "claude" {
 		t.Errorf("claude session: Current() = %q", got)
 	}
+
+	t.Setenv("CODEX_SESSION_ID", "cx-1")
+	if got := Current(); got != "codex" {
+		t.Errorf("nested codex session: Current() = %q, want codex", got)
+	}
+	t.Setenv("CODEX_SESSION_ID", "")
 
 	t.Setenv("GROK_SESSION_ID", "gk-1")
 	if got := Current(); got != "grok" {
@@ -514,7 +524,7 @@ func TestSkillRefFollowsEachAgentsNamespacing(t *testing.T) {
 		{"claude", "/bbs:autopilot"},
 		{"grok", "/bbs:autopilot"},
 		{"omp", "/autopilot"},
-		{"codex", "/bbs:autopilot"},
+		{"codex", "$bbs:autopilot"},
 	} {
 		p, err := ByName(tc.name)
 		if err != nil {
@@ -539,7 +549,7 @@ func TestPreflightNamesTheFixForEveryAgent(t *testing.T) {
 		{"claude", []string{"claude.com"}},
 		{"grok", []string{"grok plugin install"}},
 		{"omp", []string{"skills.customDirectories", "/autopilot, not /bbs:autopilot"}},
-		{"codex", []string{"developers.openai.com/codex"}},
+		{"codex", []string{"developers.openai.com/codex", "codex plugin add bbs@babysit"}},
 	} {
 		p, err := ByName(tc.name)
 		if err != nil {
@@ -570,11 +580,10 @@ func TestOmpInstallHintDoesNotNameThePluginInstaller(t *testing.T) {
 	}
 }
 
-// Only agents that actually export a session marker may be detectable. omp and
-// codex export none, and a plausible-looking guess would be silently wrong
-// rather than silently safe.
+// Only agents that actually export a session marker may be detectable. omp
+// exports none; Codex exports both a session and thread id.
 func TestCurrentDetectsOnlyAgentsThatExportAMarker(t *testing.T) {
-	for _, v := range []string{"GROK_AGENT", "GROK_SESSION_ID", "CLAUDE_CODE_SESSION_ID"} {
+	for _, v := range []string{"CODEX_SESSION_ID", "CODEX_THREAD_ID", "GROK_AGENT", "GROK_SESSION_ID", "CLAUDE_CODE_SESSION_ID"} {
 		t.Setenv(v, "")
 	}
 	if got := Current(); got != "" {
@@ -586,9 +595,14 @@ func TestCurrentDetectsOnlyAgentsThatExportAMarker(t *testing.T) {
 		t.Errorf("Current() = %q, want claude", got)
 	}
 
-	// An omp or codex session started from a Claude Code terminal inherits
-	// CLAUDE_CODE_SESSION_ID wholesale (verified by dumping omp's child env),
-	// so grok's own marker has to win over the inherited one.
+	t.Setenv("CODEX_THREAD_ID", "codex-1")
+	if got := Current(); got != "codex" {
+		t.Errorf("Current() = %q with Codex and inherited Claude markers, want codex", got)
+	}
+	t.Setenv("CODEX_THREAD_ID", "")
+
+	// An agent started from a Claude Code terminal can inherit
+	// CLAUDE_CODE_SESSION_ID wholesale, so its own marker has to win.
 	t.Setenv("GROK_SESSION_ID", "def")
 	if got := Current(); got != "grok" {
 		t.Errorf("Current() = %q with both markers set, want grok — a nested session inherits the parent's", got)

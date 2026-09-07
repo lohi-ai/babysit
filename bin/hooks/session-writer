@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # SessionStart + PostToolUse(Bash) session writer.
 #
-# Persists ~/.babysit/sessions/cc-<session_id>.yaml for every Claude Code
-# session, keyed by the harness's own session id. This is the guaranteed
+# Persists ~/.babysit/sessions/<agent>-<session_id>.yaml for every supported
+# hooked session, keyed by the harness's own session id. This is the guaranteed
 # delivery path for session tracking: the equivalent block in
 # references/preamble.md only runs when a skill executes it, and prompts are
 # advisory — hooks are the control mechanism (see hooks/hooks.json). Feeds
@@ -27,7 +27,9 @@ CWD="$(printf '%s' "$INPUT" | jq -r '.cwd // empty' 2>/dev/null)"
 [ -n "$SID" ] || exit 0
 
 SESS_DIR="${BABYSIT_HOME:-$HOME/.babysit}/sessions"
-SF="$SESS_DIR/cc-${SID}.yaml"
+PREFIX="cc"
+[ -n "${CODEX_SESSION_ID:-}" ] && PREFIX="cx"
+SF="$SESS_DIR/${PREFIX}-${SID}.yaml"
 mkdir -p "$SESS_DIR" 2>/dev/null || exit 0
 
 # Throttle: PostToolUse(Bash) fires on every shell call; once a minute is
@@ -65,7 +67,7 @@ fi
 TMP="$(mktemp "$SESS_DIR/.session.XXXXXX" 2>/dev/null)" || exit 0
 {
   echo "version: 1"
-  echo "session_id: cc-${SID}"
+  echo "session_id: ${PREFIX}-${SID}"
   echo "ticket: ${TICKET}"
   if [ -f "$SF" ]; then
     awk '/^started_at:/ { print; found=1 } END { if (!found) exit 1 }' "$SF" 2>/dev/null \
