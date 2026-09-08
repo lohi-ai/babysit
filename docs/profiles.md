@@ -63,7 +63,7 @@ export BABYSIT_TICKET=bs-xxxxxxxx
 ```
 
 Lose that variable — new shell, new pane, a session that crashed and came
-back — and the pre-push hook **resolves no ticket and defers**. The qa and
+back — and the pre-push hook **resolves no ticket and passes**. The qa and
 review-pr verdicts stop gating anything, silently. Under `pet` that means an
 ungated push, and the push is the release. Recover with:
 
