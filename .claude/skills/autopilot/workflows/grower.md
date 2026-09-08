@@ -36,5 +36,5 @@ reversible experiment per run.
 STATUS: DONE | DONE_WITH_CONCERNS | NEEDS_CONTEXT | BLOCKED
 VERDICT: RANKED | SCAFFOLDED
 SUMMARY: <metric + winner + flag/verification if implemented>
-NEXT: approve the experiment, or human review then /bbs:create-pr
+NEXT: approve the experiment, or close out per the repo's finish policy
 ```

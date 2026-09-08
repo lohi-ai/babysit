@@ -11,6 +11,7 @@ import (
 
 	"github.com/reallongnguyen/babysit/internal/agent"
 	"github.com/reallongnguyen/babysit/internal/orca"
+	ticket2 "github.com/reallongnguyen/babysit/internal/ticket"
 )
 
 // Two independent flags, two commands:
@@ -20,6 +21,10 @@ import (
 //	                         any registered agent, and never the builder
 //
 // Both: review first; --builder (the start agent) makes approve run spawn-goal.
+//
+// A third, later in the run: --verify spawns spawn-verify once the code is
+// committed, re-running review-pr and qa in a process that never saw the diff
+// being written. Its only output is the verdict files it persists.
 
 type spawnOpts struct {
 	ticket, workflow, agentFlag, builder, dir string
@@ -101,11 +106,20 @@ func (a *apState) spawnReview(args []string) {
 	printSpawn(res)
 }
 
+func (a *apState) spawnVerify(args []string) {
+	res, err := a.runSpawnVerify(parseSpawnArgs(args))
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(exitStatus(err))
+	}
+	printSpawn(res)
+}
+
 func goalJob() spawnJob {
 	return spawnJob{
 		kind: "goal",
-		prompt: func(_ *apState, prof agent.Profile, ticket, workflow string) string {
-			return goalPrompt(prof, ticket, workflow)
+		prompt: func(a *apState, prof agent.Profile, ticket, workflow string) string {
+			return goalPrompt(prof, ticket, workflow) + a.verifyRider(ticket, workflow)
 		},
 		logName: "goal.log",
 		pidName: "goal.pid",
@@ -160,6 +174,38 @@ func reviewJob(builder string) spawnJob {
 	}
 }
 
+// verifyJob re-runs the landing gates in a process that does not know how the
+// code came to look this way. The agent is the *same* one by default, unlike
+// --reviewer, which refuses the builder: that refusal guards a plan re-derived
+// from the same artifacts by the same weights, where a second run adds nothing.
+// The bias here is different in kind — "I wrote this line, so I know it is
+// right" — and it lives in the context, not the weights. Dropping the context
+// is what buys the independent read; --agent stays available for model
+// diversity on top.
+func verifyJob() spawnJob {
+	return spawnJob{
+		kind: "verify",
+		prompt: func(a *apState, prof agent.Profile, ticket, _ string) string {
+			return a.verifyPrompt(prof, ticket)
+		},
+		logName: "verify.log",
+		pidName: "verify.pid",
+		extraEnv: []string{
+			"BABYSIT_VERIFIER=true",
+			"AGENT_ROLE=mayor",
+			// The verifier is a leaf: BABYSIT_SPAWNED stops it forking a
+			// builder or a reviewer, BABYSIT_VERIFIER stops it forking itself,
+			// and it is not the reviewer whose marker it may have inherited.
+			"BABYSIT_SPAWNED=true",
+			"BABYSIT_REVIEWER=",
+		},
+		// The same ladder the builder resolved through, so the default is the
+		// agent running the build; BABYSIT_BUILDER, when a reviewer pinned one,
+		// names that same agent.
+		resolve: resolveGoalAgent,
+	}
+}
+
 func (a *apState) runSpawnGoal(o spawnOpts) (spawnResult, error) {
 	return a.runSpawn(goalJob(), o)
 }
@@ -194,6 +240,10 @@ func (a *apState) runSpawnReview(o spawnOpts) (spawnResult, error) {
 	return a.runSpawn(reviewJob(o.builder), o)
 }
 
+func (a *apState) runSpawnVerify(o spawnOpts) (spawnResult, error) {
+	return a.runSpawn(verifyJob(), o)
+}
+
 // goalPrompt is the /goal block the human-handoff template in
 // .claude/skills/autopilot/SKILL.md prints. Keep the condition lines in sync
 // (TestGoalPromptMatchesSkillHandoff).
@@ -205,9 +255,44 @@ func (a *apState) runSpawnReview(o spawnOpts) (spawnResult, error) {
 // then does nothing.
 func goalPrompt(prof agent.Profile, ticket, workflow string) string {
 	return "/goal " + ticket + " is done: qa verdict PASS/FIXED persisted via bbs ticket set-verdict,\n" +
-		"review-pr verdict persisted, branch pushed, handoff note written — or a\n" +
-		"NEEDS_CONTEXT / BLOCKED status block printed verbatim.\n" +
+		"review-pr verdict persisted, branch pushed, closed out per the repo's finish\n" +
+		"policy, handoff note written — or a NEEDS_CONTEXT / BLOCKED status block\n" +
+		"printed verbatim.\n" +
 		"Work it: " + prof.SkillRef("autopilot") + " " + workflow + " " + ticket
+}
+
+// verifyRider is what a --verify ticket adds to the goal prompt. The pointer
+// alone is not a channel: spawn-goal's prompt never mentioned --verify, so a
+// worker only routed through the verifier if it volunteered to read
+// `get-pointer verify` — and that read returns "True", not "true", because Set
+// coerces to a bool and Get renders it Python-style for the bash oracle. A run
+// that misses either step silently grades its own diff, which is the one
+// outcome the flag exists to prevent. So tell the worker in the prompt, which
+// is the surface it cannot skip.
+func (a *apState) verifyRider(ticket, workflow string) string {
+	if !a.verifyPinned(ticket) {
+		return ""
+	}
+	return "\n\nThis ticket is pinned to --verify: do NOT run review-pr or qa yourself.\n" +
+		"Commit the implementation, then hand both gates to a fresh context:\n" +
+		"  bbs autopilot spawn-verify --ticket " + ticket + " --workflow " + workflow + "\n" +
+		"Then read the verdicts back from disk (bbs ticket verdict-status --skill qa,\n" +
+		"--skill review-pr) and continue from there. Running them here instead replaces\n" +
+		"the independent verdict with your own — set-verdict is last-writer-wins. No\n" +
+		"verdict at all means the verifier died: report BLOCKED naming the evidence\n" +
+		"spawn-verify actually printed — its ORCA= tab when Orca ran it, its LOG=\n" +
+		"path otherwise. Only one of those exists per run; naming the other sends\n" +
+		"the reader to a file that was never written.\n"
+}
+
+// verifyPinned reads the ticket's verify pointer, accepting either casing.
+func (a *apState) verifyPinned(ticket string) bool {
+	td, ok := a.ticketDir(ticket)
+	if !ok || td == "" {
+		return false
+	}
+	v := ticket2.ReadDoc(filepath.Join(td, "index.json")).Get("pointers.verify")
+	return strings.EqualFold(strings.TrimSpace(v), "true")
 }
 
 func (a *apState) reviewPrompt(prof agent.Profile, ticket, workflow, builder string) string {
@@ -262,6 +347,67 @@ func (a *apState) reviewPrompt(prof agent.Profile, ticket, workflow, builder str
 			" --rubric-file <review.md>\n"
 	}
 	return body + "\nPrint a STATUS block. Do not invoke " + prof.SkillRef("autopilot") + "."
+}
+
+// verifyPrompt is the fresh-context gate prompt, and what it withholds is the
+// whole point. The producer's rationale — the implement handoff, and the plan's
+// approach — is what makes an author read their own diff as obviously correct
+// and test the path they built. So the verifier gets the two things it must
+// judge against (the acceptance criteria, and the code) and is told to leave
+// the reasoning unread. A prompt that pastes the handoff in here is a bug, not
+// a convenience.
+func (a *apState) verifyPrompt(prof agent.Profile, ticket string) string {
+	td, ok := a.ticketDir(ticket)
+	if !ok || td == "" {
+		td = filepath.Join("tickets", ticket)
+	}
+	base := a.baseBranch()
+	if base == "" {
+		base = "main"
+	}
+	return "Verify " + ticket + ". You did not write this code, and you are deliberately not\n" +
+		"being told why it looks the way it does. Judge it against the requirement alone.\n" +
+		"\n" +
+		"Read:\n" +
+		"  requirement: " + filepath.Join(td, "requirement.md") + "   ← the acceptance criteria you must prove\n" +
+		"  the change:  git diff $(git merge-base origin/" + base + " HEAD)\n" +
+		"               No origin? Use this branch's own commits (git log --oneline,\n" +
+		"               then git diff HEAD~<n>). An empty diff means you have the wrong\n" +
+		"               range, not a clean change — find the range before you judge it.\n" +
+		"\n" +
+		"Do NOT read " + filepath.Join(td, "handoffs") + "/ or " + filepath.Join(td, "plan.md") + ".\n" +
+		"They carry the builder's reasoning, and a verifier that has read them grades the\n" +
+		"reasoning instead of the code — that bias is the only thing this separate\n" +
+		"process exists to remove.\n" +
+		"\n" +
+		"Run both gates as real skill invocations, in this order:\n" +
+		"1. " + prof.SkillRef("review-pr") + " --fix over that diff.\n" +
+		"2. " + prof.SkillRef("qa") + " against the acceptance criteria — at least one\n" +
+		"   validation/error/empty/responsive case, not only the path the criteria describe.\n" +
+		"Fix what either one finds, re-verify, and commit the fixes here in this worktree.\n" +
+		"\n" +
+		"A failure is only \"pre-existing\" if you watched it fail at the base commit.\n" +
+		"Check it in a scratch worktree so this one is untouched:\n" +
+		"  git worktree add /tmp/bbs-base $(git merge-base origin/" + base + " HEAD)\n" +
+		"  # run the same check there, then: git worktree remove /tmp/bbs-base\n" +
+		"Passes there and fails here means this change caused it: fix it, do not carry it\n" +
+		"as a concern. Arguing from how old the code looks is not evidence, and\n" +
+		"\"pre-existing\" is the most common sentence a real regression ships behind.\n" +
+		"\n" +
+		"Persist both verdicts. They are your only output channel — nothing you print is\n" +
+		"read by the session that started you:\n" +
+		"  bbs ticket set-verdict --skill review-pr --body-file <review.md>\n" +
+		"  bbs ticket set-verdict --skill qa --body-file <qa.md>\n" +
+		"Each body needs a `STATUS: DONE` line (or DONE_WITH_CONCERNS / BLOCKED naming the\n" +
+		"blocker). Confirm with `bbs ticket verdict-status --skill qa` before you stop — an\n" +
+		"unwritten verdict reads as a dead verifier, and the run stops rather than falling\n" +
+		"back to the in-session QA you were spawned to replace.\n" +
+		"\n" +
+		"Do not push, do not open a PR, do not merge, and do not invoke " + prof.SkillRef("autopilot") + " —\n" +
+		"the session that started you owns git and reads your verdicts from disk. Your\n" +
+		"git-flow says the same thing (BBS_FINISH=review, BBS_PUSH=false) for as long as\n" +
+		"BABYSIT_VERIFIER is set.\n" +
+		"\nPrint a STATUS block.\n"
 }
 
 func (a *apState) runSpawn(job spawnJob, o spawnOpts) (spawnResult, error) {
@@ -411,10 +557,16 @@ func commandWithEnv(ticket string, extra []string, cmd string) string {
 }
 
 // refuseSpawn stops a child from forking another of the same kind. A reviewer
-// is allowed to call spawn-goal (that is the greenlight); a goal worker is
-// not allowed to spawn either kind.
+// is allowed to call spawn-goal (that is the greenlight); a goal worker may
+// spawn exactly one child, the verifier that grades it — a run started by
+// --auto reaches its gates no other way — and nothing else.
 func refuseSpawn(kind string) string {
-	if os.Getenv("BABYSIT_SPAWNED") != "" {
+	// The verifier is a leaf. It grades a finished diff; every fork from here
+	// is either a second opinion on itself or a builder it must not become.
+	if os.Getenv("BABYSIT_VERIFIER") != "" {
+		return "already inside a verifier session (BABYSIT_VERIFIER is set)"
+	}
+	if kind != "verify" && os.Getenv("BABYSIT_SPAWNED") != "" {
 		return "already inside a spawned session (BABYSIT_SPAWNED is set)"
 	}
 	if kind == "review" && os.Getenv("BABYSIT_REVIEWER") != "" {

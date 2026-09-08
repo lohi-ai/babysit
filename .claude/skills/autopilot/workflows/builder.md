@@ -21,7 +21,7 @@ Re-read ticket state, checkpoint, and git status; choose the **first** match:
 | **verify** | none of the above, but a non-base branch has commits | QA-only pass on existing work. |
 If none match and there is no ticket/requirement, stop with `NEEDS_CONTEXT`.
 ## run
-> produces: verdict:builder + qa:checked + git:branch-ready
+> produces: verdict:builder + qa:checked + git:branch-ready + finish:closed-out
 1. Ensure ticket, branch, and checkpoint exist; record the mode in the
    checkpoint.
    **Bootstrap gate:** `bbs autopilot probe` reporting
@@ -64,6 +64,16 @@ If none match and there is no ticket/requirement, stop with `NEEDS_CONTEXT`.
 5. Run `review-pr --fix` (applies fixes to the working tree) and persist the
    verdict with `bbs ticket set-verdict --skill review-pr` — the push gate
    reads it. (Skip in verify mode.)
+   **Under `--verify`** (the flag, or `bbs ticket get-pointer verify` reading
+   true in any casing — it prints `True`),
+   steps 5 and 6 are not run here at all. Commit the implementation first, then
+   `bbs autopilot spawn-verify --ticket "$TICKET" --workflow builder` and wait:
+   a process that never saw this diff being written re-runs both gates, commits
+   its own fixes, and persists both verdicts. Read them back with
+   `bbs ticket verdict-status --skill review-pr` / `--skill qa` and continue at
+   step 7. Do not also run them here — `set-verdict` is last-writer-wins, so a
+   second in-session pass replaces the independent verdict with the biased one.
+   No verdict means the verifier died: `BLOCKED` naming `verify.log`.
 6. Run `qa` against the requirement's acceptance criteria, the plan's
    `**Verify:**` line, and the implement handoff — not just the diff. Default
    (no `--mode`): the change is on the branch this checkout already serves, so
@@ -82,7 +92,18 @@ If none match and there is no ticket/requirement, stop with `NEEDS_CONTEXT`.
    fallback (`browse` for UI, else a narrow local check). Persist the verdict
    with `bbs ticket set-verdict --skill qa`.
 7. Commit and push when policy allows.
-8. Write a handoff: mode, branch, changed files, deviations from the plan
+8. **Close out per the repo's policy** — only once `qa` and `review-pr` are
+   both persisted DONE, and never on your own initiative:
+   ```bash
+   eval "$(bbs autopilot git-flow)"   # → BBS_FINISH: review | land | pr
+   ```
+   `land` → `bbs ticket land "$TICKET"`; `pr` → run the `create-pr` skill
+   (a Skill-tool invocation, not a shell command); `review` (the default, and
+   every repo that never opted in) → stop here, the human owns it. The repo's
+   standing authorization is the only thing that decides this. A missing
+   verdict is not a case to work around: `land` refuses outright, and the PR
+   hook *asks* — which with nobody at the pane is a stall, not a safe stop.
+9. Write a handoff: mode, branch, changed files, deviations from the plan
    (the implement handoff's `## Deviations`), prototype path when `design-ui`
    produced one, QA evidence, concerns, next action — and, when a signal
    warrants, the forward lifecycle edge after `create-pr` (leftover cruft →
@@ -146,5 +167,5 @@ land and QA each repo's change against *its own* base, once per repo touched.
 STATUS: DONE | DONE_WITH_CONCERNS | NEEDS_CONTEXT | BLOCKED
 VERDICT: BUILT
 SUMMARY: <mode, branch, files, QA evidence>
-NEXT: human review, then /bbs:create-pr
+NEXT: per the repo's finish policy — by default, human review then /bbs:create-pr
 ```

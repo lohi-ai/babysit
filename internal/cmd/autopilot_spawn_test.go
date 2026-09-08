@@ -14,18 +14,28 @@ func spawnState(t *testing.T) *apState {
 	t.Helper()
 	t.Setenv("BABYSIT_SPAWNED", "")
 	t.Setenv("BABYSIT_REVIEWER", "")
+	t.Setenv("BABYSIT_VERIFIER", "")
 	t.Setenv("BABYSIT_BUILDER", "")
 	t.Setenv("BABYSIT_AGENT", "")
 	t.Setenv("GROK_AGENT", "")
 	t.Setenv("GROK_SESSION_ID", "")
+	t.Setenv("CODEX_SESSION_ID", "")
+	t.Setenv("CODEX_THREAD_ID", "")
 	t.Setenv("CLAUDE_CODE_SESSION_ID", "")
 	t.Setenv("BABYSIT_STATE_DIR", t.TempDir())
 	t.Setenv("HOME", t.TempDir())
+	// runSpawn defaults to the working directory, and claude gates on directory
+	// trust: without this every spawn test refuses before it reaches what it tests.
+	if cwd, err := os.Getwd(); err == nil {
+		trustDir(t, cwd)
+	}
 	return &apState{stateRoot: t.TempDir()}
 }
 
 func fakeWorker(t *testing.T, name string) (marker string) {
 	t.Helper()
+	// A PATH directory for the stub binary, never a spawn target — and this runs
+	// before HOME is isolated, so it must not touch a trust record.
 	dir := t.TempDir()
 	marker = filepath.Join(dir, "marker")
 	if err := os.Mkdir(marker, 0o755); err != nil {
@@ -36,6 +46,7 @@ printf '%s\n' "$*" > "$MARKER/argv"
 {
   printf 'BABYSIT_SPAWNED=%s\n' "$BABYSIT_SPAWNED"
   printf 'BABYSIT_REVIEWER=%s\n' "$BABYSIT_REVIEWER"
+  printf 'BABYSIT_VERIFIER=%s\n' "$BABYSIT_VERIFIER"
   printf 'BABYSIT_TICKET=%s\n' "$BABYSIT_TICKET"
   printf 'AGENT_ROLE=%s\n' "$AGENT_ROLE"
 } > "$MARKER/env"
@@ -54,8 +65,9 @@ func TestGoalPromptMatchesSkillHandoff(t *testing.T) {
 	got := goalPrompt(mustAgent(t, "claude"), "bs-ab123", "builder")
 	for _, want := range []string{
 		"/goal bs-ab123 is done: qa verdict PASS/FIXED persisted via bbs ticket set-verdict,",
-		"review-pr verdict persisted, branch pushed, handoff note written — or a",
-		"NEEDS_CONTEXT / BLOCKED status block printed verbatim.",
+		"review-pr verdict persisted, branch pushed, closed out per the repo's finish",
+		"policy, handoff note written — or a NEEDS_CONTEXT / BLOCKED status block",
+		"printed verbatim.",
 		"Work it: /bbs:autopilot builder bs-ab123",
 	} {
 		if !strings.Contains(got, want) {
@@ -70,13 +82,18 @@ func TestGoalPromptMatchesSkillHandoff(t *testing.T) {
 	body := string(skill)
 	for _, want := range []string{
 		"qa verdict PASS/FIXED persisted via bbs ticket set-verdict,",
-		"review-pr verdict persisted, branch pushed, handoff note written — or a",
-		"NEEDS_CONTEXT / BLOCKED status block printed verbatim.",
-		"Work it: /bbs:autopilot <workflow> <ticket>",
+		"review-pr verdict persisted, branch pushed, closed out per the repo's finish",
+		"policy, handoff note written — or a NEEDS_CONTEXT / BLOCKED status block",
+		"printed verbatim.",
+		"Work it: <SKILL_REF>autopilot <workflow> <ticket>",
+		// finish is part of a full run, not a foreman-only extra.
+		"BBS_FINISH",
 		"--auto",
 		"bbs autopilot spawn-goal",
 		"--reviewer",
 		"bbs autopilot spawn-review",
+		"--verify",
+		"bbs autopilot spawn-verify",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("SKILL.md missing %q", want)
@@ -105,7 +122,7 @@ func TestSpawnGoalPrintRendersTheWorkerCommand(t *testing.T) {
 func TestSpawnGoalStartsADetachedWorkerOnTheGoalPrompt(t *testing.T) {
 	marker := fakeWorker(t, "claude")
 	a := spawnState(t)
-	cwd := t.TempDir()
+	cwd := trustedDir(t)
 	res, err := a.runSpawnGoal(spawnOpts{ticket: "bs-x1", workflow: "grower", dir: cwd})
 	if err != nil {
 		t.Fatal(err)
@@ -155,7 +172,7 @@ func TestSpawnGoalStartsADetachedWorkerOnTheGoalPrompt(t *testing.T) {
 func TestSpawnGoalIsIdempotentWhileTheWorkerLives(t *testing.T) {
 	marker := fakeWorker(t, "claude")
 	a := spawnState(t)
-	first, err := a.runSpawnGoal(spawnOpts{ticket: "bs-x1", dir: t.TempDir()})
+	first, err := a.runSpawnGoal(spawnOpts{ticket: "bs-x1", dir: trustedDir(t)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -167,7 +184,7 @@ func TestSpawnGoalIsIdempotentWhileTheWorkerLives(t *testing.T) {
 	})
 	waitFile(t, filepath.Join(marker, "argv"))
 
-	second, err := a.runSpawnGoal(spawnOpts{ticket: "bs-x1", dir: t.TempDir()})
+	second, err := a.runSpawnGoal(spawnOpts{ticket: "bs-x1", dir: trustedDir(t)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -177,8 +194,8 @@ func TestSpawnGoalIsIdempotentWhileTheWorkerLives(t *testing.T) {
 }
 
 func TestSpawnGoalRefusesWhenAlreadySpawned(t *testing.T) {
+	a := spawnState(t)
 	t.Setenv("BABYSIT_SPAWNED", "true")
-	a := &apState{stateRoot: t.TempDir()}
 	_, err := a.runSpawnGoal(spawnOpts{ticket: "bs-x1"})
 	if err == nil || !strings.Contains(err.Error(), "already inside a spawned session") {
 		t.Fatalf("want a refuse, got %v", err)
@@ -322,7 +339,7 @@ func TestSpawnGoalUsesBuilderEnvWhenAgentFlagIsMissing(t *testing.T) {
 	fakeWorker(t, "grok")
 	a := spawnState(t)
 	t.Setenv("BABYSIT_BUILDER", "grok")
-	dir := t.TempDir()
+	dir := trustedDir(t)
 	trustDir(t, dir)
 	res, err := a.runSpawnGoal(spawnOpts{ticket: "bs-x1", workflow: "builder", dir: dir, printOnly: true})
 	if err != nil {
@@ -355,7 +372,7 @@ func TestSpawnGoalUsesTheStartAgent(t *testing.T) {
 	fakeWorker(t, "grok")
 	a := spawnState(t)
 	t.Setenv("GROK_SESSION_ID", "gk-1")
-	dir := t.TempDir()
+	dir := trustedDir(t)
 	trustDir(t, dir)
 	res, err := a.runSpawnGoal(spawnOpts{ticket: "bs-x1", workflow: "builder", dir: dir, printOnly: true})
 	if err != nil {
@@ -390,7 +407,7 @@ func TestSpawnReviewUnknownAgentNamesTheKnownOnes(t *testing.T) {
 func TestSpawnReviewPrintUsesTheNamedAgent(t *testing.T) {
 	fakeWorker(t, "grok")
 	a := spawnState(t)
-	dir := t.TempDir()
+	dir := trustedDir(t)
 	trustDir(t, dir)
 	res, err := a.runSpawnReview(spawnOpts{ticket: "bs-x1", agentFlag: "grok", dir: dir, printOnly: true})
 	if err != nil {
@@ -413,7 +430,7 @@ func TestSpawnReviewPrintUsesTheNamedAgent(t *testing.T) {
 func TestSpawnReviewStartsTheNamedAgent(t *testing.T) {
 	marker := fakeWorker(t, "grok")
 	a := spawnState(t)
-	cwd := t.TempDir()
+	cwd := trustedDir(t)
 	trustDir(t, cwd)
 	res, err := a.runSpawnReview(spawnOpts{ticket: "bs-x1", workflow: "builder", agentFlag: "grok", dir: cwd})
 	if err != nil {
@@ -465,7 +482,7 @@ func TestSpawnReviewStartsTheNamedAgent(t *testing.T) {
 func TestSpawnReviewOpensAnOrcaTerminal(t *testing.T) {
 	a := spawnState(t)
 	log, _ := fakeOrcaFor(t)
-	cwd := t.TempDir()
+	cwd := trustedDir(t)
 	res, err := a.runSpawnReview(spawnOpts{ticket: "bs-x1", workflow: "builder", agentFlag: "claude", dir: cwd})
 	if err != nil {
 		t.Fatal(err)
@@ -495,7 +512,7 @@ func TestSpawnGoalOnGrokOpensAnOrcaGoalTerminal(t *testing.T) {
 	a := spawnState(t)
 	t.Setenv("GROK_SESSION_ID", "gk-1")
 	log, _ := fakeOrcaFor(t)
-	cwd := t.TempDir()
+	cwd := trustedDir(t)
 	trustDir(t, cwd)
 	res, err := a.runSpawnGoal(spawnOpts{ticket: "bs-x1", workflow: "builder", dir: cwd})
 	if err != nil {
@@ -516,7 +533,7 @@ func TestSpawnGoalOnGrokOpensAnOrcaGoalTerminal(t *testing.T) {
 func TestSpawnReviewOrcaReusesALiveTab(t *testing.T) {
 	a := spawnState(t)
 	_, _ = fakeOrcaFor(t, "bbs review bs-x1")
-	res, err := a.runSpawnReview(spawnOpts{ticket: "bs-x1", agentFlag: "claude", dir: t.TempDir()})
+	res, err := a.runSpawnReview(spawnOpts{ticket: "bs-x1", agentFlag: "claude", dir: trustedDir(t)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -528,7 +545,7 @@ func TestSpawnReviewOrcaReusesALiveTab(t *testing.T) {
 func TestSpawnReviewOrcaReusesARetitledTab(t *testing.T) {
 	a := spawnState(t)
 	_, _ = fakeOrcaFor(t, "◐ bs-x1 plan and prototype review")
-	res, err := a.runSpawnReview(spawnOpts{ticket: "bs-x1", agentFlag: "claude", dir: t.TempDir()})
+	res, err := a.runSpawnReview(spawnOpts{ticket: "bs-x1", agentFlag: "claude", dir: trustedDir(t)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -538,8 +555,8 @@ func TestSpawnReviewOrcaReusesARetitledTab(t *testing.T) {
 }
 
 func TestSpawnReviewRefusesWhenAlreadyAReviewer(t *testing.T) {
+	a := spawnState(t)
 	t.Setenv("BABYSIT_REVIEWER", "true")
-	a := &apState{stateRoot: t.TempDir()}
 	_, err := a.runSpawnReview(spawnOpts{ticket: "bs-x1", agentFlag: "claude"})
 	if err == nil || !strings.Contains(err.Error(), "already inside a reviewer session") {
 		t.Fatalf("want a refuse, got %v", err)
@@ -564,17 +581,283 @@ func TestSpawnGoalStillWorksFromAReviewerSession(t *testing.T) {
 }
 
 func TestSpawnReviewRefusesFromAGoalSession(t *testing.T) {
+	a := spawnState(t)
 	t.Setenv("BABYSIT_SPAWNED", "true")
-	a := &apState{stateRoot: t.TempDir()}
 	_, err := a.runSpawnReview(spawnOpts{ticket: "bs-x1", agentFlag: "claude"})
 	if err == nil || !strings.Contains(err.Error(), "already inside a spawned session") {
 		t.Fatalf("want a refuse, got %v", err)
 	}
 }
 
+// Criterion 2 of the requirement, as a test: the verifier is handed the
+// acceptance criteria and the code, and nothing that says why the code looks
+// like that. The sentinels are what a leak would smuggle in.
+func TestVerifyPromptFeedsTheCriteriaAndTheDiffButNotTheRationale(t *testing.T) {
+	a := spawnState(t)
+	td := filepath.Join(a.stateRoot, "tickets", "bs-ab123")
+	if err := os.MkdirAll(filepath.Join(td, "handoffs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for path, body := range map[string]string{
+		"requirement.md":        "SENTINEL_CRITERIA",
+		"plan.md":               "SENTINEL_APPROACH",
+		"handoffs/implement.md": "SENTINEL_RATIONALE",
+	} {
+		if err := os.WriteFile(filepath.Join(td, path), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	got := a.verifyPrompt(mustAgent(t, "claude"), "bs-ab123")
+	for _, want := range []string{
+		"Verify bs-ab123",
+		filepath.Join(td, "requirement.md"),
+		"git diff $(git merge-base origin/",
+		// a repo with no remote collapses that range to nothing; a verifier
+		// that reads an empty diff as "clean" passes vacuously.
+		"An empty diff means you have the wrong",
+		// three "pre-existing" claims in the first live run, two of them
+		// provably wrong: the rule is reproduce-at-base, not argue-from-age.
+		"only \"pre-existing\" if you watched it fail at the base commit",
+		"git worktree add /tmp/bbs-base",
+		"/bbs:review-pr",
+		"/bbs:qa",
+		"bbs ticket set-verdict --skill review-pr",
+		"bbs ticket set-verdict --skill qa",
+		"STATUS: DONE",
+		// the withholding has to be stated, not merely practised: the child
+		// can open any file it likes, so the instruction is the enforcement.
+		"Do NOT read " + filepath.Join(td, "handoffs") + "/",
+		filepath.Join(td, "plan.md"),
+		"Do not push",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("prompt missing %q\n%s", want, got)
+		}
+	}
+	for _, leak := range []string{"SENTINEL_RATIONALE", "SENTINEL_APPROACH", "SENTINEL_CRITERIA"} {
+		if strings.Contains(got, leak) {
+			t.Errorf("prompt inlined %s — it names paths, it does not paste contents\n%s", leak, got)
+		}
+	}
+}
+
+// The first live --verify run graded its own diff: spawn-goal's prompt never
+// mentioned the flag, so routing depended on the worker volunteering to read
+// `get-pointer verify` — which returns "True", not "true". No verify.log, no
+// verify.pid, both verdicts written in-session, and nothing said so.
+func TestGoalPromptCarriesTheVerifyRiderWhenThePointerIsSet(t *testing.T) {
+	fakeWorker(t, "claude")
+	a := spawnState(t)
+	td := filepath.Join(a.stateRoot, "tickets", "bs-v1")
+	if err := os.MkdirAll(td, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Unpinned: the rider must not appear.
+	if got := a.verifyRider("bs-v1", "builder"); got != "" {
+		t.Errorf("rider on an unpinned ticket: %q", got)
+	}
+
+	// Pinned the way set-pointer actually stores it: a JSON bool, which Get
+	// renders as "True". A case-sensitive check against "true" is the bug.
+	if err := os.WriteFile(filepath.Join(td, "index.json"),
+		[]byte(`{"pointers":{"verify":true}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got := a.verifyRider("bs-v1", "builder")
+	for _, want := range []string{
+		"do NOT run review-pr or qa yourself",
+		"bbs autopilot spawn-verify --ticket bs-v1 --workflow builder",
+		"last-writer-wins",
+		"ORCA= tab",
+		"LOG=",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("rider missing %q\n%s", want, got)
+		}
+	}
+	if !strings.Contains(goalPrompt(mustAgent(t, "claude"), "bs-v1", "builder")+got, "/goal bs-v1 is done") {
+		t.Error("the rider must extend the goal prompt, not replace it")
+	}
+}
+
+func TestSpawnVerifyPrintRendersTheVerifierCommand(t *testing.T) {
+	fakeWorker(t, "claude")
+	a := spawnState(t)
+	res, err := a.runSpawnVerify(spawnOpts{ticket: "bs-x1", workflow: "builder", printOnly: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.PID != 0 {
+		t.Fatalf("--print spawned pid %d", res.PID)
+	}
+	if !strings.Contains(res.Cmd, "BABYSIT_VERIFIER=true") {
+		t.Errorf("cmd missing the verifier marker: %s", res.Cmd)
+	}
+	if !strings.Contains(res.Cmd, "claude --dangerously-skip-permissions 'Verify bs-x1") {
+		t.Errorf("cmd = %s", res.Cmd)
+	}
+	if strings.Contains(res.Cmd, "/goal bs-x1 is done:") {
+		t.Error("verify spawn used the /goal prompt")
+	}
+}
+
+func TestSpawnVerifyStartsADetachedVerifier(t *testing.T) {
+	marker := fakeWorker(t, "claude")
+	a := spawnState(t)
+	res, err := a.runSpawnVerify(spawnOpts{ticket: "bs-x1", workflow: "builder", dir: trustedDir(t)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = os.WriteFile(filepath.Join(marker, "stop"), []byte("1"), 0o644)
+		if res.PID != 0 {
+			if p, err := os.FindProcess(res.PID); err == nil {
+				_ = p.Kill()
+			}
+		}
+	})
+	if res.PID == 0 || res.AlreadyRunning {
+		t.Fatalf("expected a new pid, got %+v", res)
+	}
+
+	argv := waitFile(t, filepath.Join(marker, "argv"))
+	if !strings.Contains(argv, "Verify bs-x1") {
+		t.Errorf("verifier not started on the verify prompt: %s", argv)
+	}
+
+	env := waitFile(t, filepath.Join(marker, "env"))
+	for _, want := range []string{"BABYSIT_VERIFIER=true", "BABYSIT_TICKET=bs-x1", "AGENT_ROLE=mayor"} {
+		if !strings.Contains(env, want) {
+			t.Errorf("env missing %s\n%s", want, env)
+		}
+	}
+
+	pidBytes, err := os.ReadFile(filepath.Join(a.stateRoot, "tickets", "bs-x1", "verify.pid"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(string(pidBytes)) != strconv.Itoa(res.PID) {
+		t.Errorf("pid file %q != %d", pidBytes, res.PID)
+	}
+}
+
+func TestSpawnVerifyIsIdempotentWhileTheVerifierLives(t *testing.T) {
+	marker := fakeWorker(t, "claude")
+	a := spawnState(t)
+	first, err := a.runSpawnVerify(spawnOpts{ticket: "bs-x1", dir: trustedDir(t)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = os.WriteFile(filepath.Join(marker, "stop"), []byte("1"), 0o644)
+		if p, err := os.FindProcess(first.PID); err == nil {
+			_ = p.Kill()
+		}
+	})
+	waitFile(t, filepath.Join(marker, "argv"))
+
+	second, err := a.runSpawnVerify(spawnOpts{ticket: "bs-x1", dir: trustedDir(t)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !second.AlreadyRunning || second.PID != first.PID {
+		t.Fatalf("want the live pid %d reused, got %+v", first.PID, second)
+	}
+}
+
+// The whole point of the flag under --auto: the goal worker is itself spawned,
+// and the verifier is the one child it is still allowed to start.
+func TestSpawnVerifyRunsFromASpawnedGoalSession(t *testing.T) {
+	fakeWorker(t, "claude")
+	a := spawnState(t)
+	t.Setenv("BABYSIT_SPAWNED", "true")
+	if _, err := a.runSpawnVerify(spawnOpts{ticket: "bs-x1", printOnly: true}); err != nil {
+		t.Fatalf("a spawned builder must be able to reach its gates: %v", err)
+	}
+}
+
+func TestSpawnVerifyRefusesFromAVerifierSession(t *testing.T) {
+	a := spawnState(t)
+	t.Setenv("BABYSIT_VERIFIER", "true")
+	_, err := a.runSpawnVerify(spawnOpts{ticket: "bs-x1"})
+	if err == nil || !strings.Contains(err.Error(), "already inside a verifier session") {
+		t.Fatalf("want a refuse, got %v", err)
+	}
+	if exitStatus(err) != 2 {
+		t.Errorf("exit %d, want 2", exitStatus(err))
+	}
+}
+
+// A verifier that can start a builder is a verifier that can implement its way
+// out of its own findings.
+func TestSpawnGoalAndReviewRefuseFromAVerifierSession(t *testing.T) {
+	a := spawnState(t)
+	t.Setenv("BABYSIT_VERIFIER", "true")
+	if _, err := a.runSpawnGoal(spawnOpts{ticket: "bs-x1"}); err == nil ||
+		!strings.Contains(err.Error(), "already inside a verifier session") {
+		t.Errorf("spawn-goal from a verifier: %v", err)
+	}
+	if _, err := a.runSpawnReview(spawnOpts{ticket: "bs-x1", agentFlag: "claude"}); err == nil ||
+		!strings.Contains(err.Error(), "already inside a verifier session") {
+		t.Errorf("spawn-review from a verifier: %v", err)
+	}
+}
+
+// Same agent by default (fresh context is the independence axis), a different
+// one on request (model diversity on top).
+func TestSpawnVerifyDefaultsToTheStartAgentAndHonoursAgent(t *testing.T) {
+	fakeWorker(t, "claude")
+	a := spawnState(t)
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "cc-1")
+	res, err := a.runSpawnVerify(spawnOpts{ticket: "bs-x1", printOnly: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Agent != "claude" {
+		t.Errorf("agent = %q, want the start agent", res.Agent)
+	}
+
+	fakeWorker(t, "grok")
+	dir := trustedDir(t)
+	trustDir(t, dir)
+	res, err = a.runSpawnVerify(spawnOpts{ticket: "bs-x1", agentFlag: "grok", dir: dir, printOnly: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Agent != "grok" {
+		t.Errorf("agent = %q, want the named --agent", res.Agent)
+	}
+}
+
+func TestSpawnVerifyOpensAnOrcaTerminal(t *testing.T) {
+	a := spawnState(t)
+	log, _ := fakeOrcaFor(t)
+	res, err := a.runSpawnVerify(spawnOpts{ticket: "bs-x1", workflow: "builder", dir: trustedDir(t)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Orca != "bbs verify bs-x1" {
+		t.Errorf("ORCA = %q", res.Orca)
+	}
+	calls := readFile(log)
+	if !strings.Contains(calls, "--title bbs verify bs-x1") {
+		t.Errorf("missing title:\n%s", calls)
+	}
+	if !strings.Contains(calls, "Verify bs-x1") {
+		t.Errorf("orca command missing the verify prompt:\n%s", calls)
+	}
+}
+
 func waitFile(t *testing.T, path string) string {
 	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
+	// Generous on purpose: this waits for a real detached process to start and
+	// write, and the poll returns the instant it appears, so a longer deadline
+	// costs a passing run nothing. At 2s it failed intermittently on a loaded
+	// machine — a phantom red suite is worse than a slow one, especially for a
+	// verifier that has to tell a real regression from noise.
+	deadline := time.Now().Add(15 * time.Second)
 	for time.Now().Before(deadline) {
 		b, err := os.ReadFile(path)
 		if err == nil && len(b) > 0 {
@@ -617,7 +900,7 @@ func TestSpawnGoalLetsBabysitAgentOutrankTheStartAgent(t *testing.T) {
 	a := spawnState(t)
 	t.Setenv("CLAUDE_CODE_SESSION_ID", "cc-1")
 	t.Setenv("BABYSIT_AGENT", "grok")
-	dir := t.TempDir()
+	dir := trustedDir(t)
 	trustDir(t, dir)
 	res, err := a.runSpawnGoal(spawnOpts{ticket: "bs-x1", workflow: "builder", dir: dir, printOnly: true})
 	if err != nil {
@@ -634,7 +917,7 @@ func TestSpawnGoalClearsTheReviewerMarkerForTheBuilder(t *testing.T) {
 	marker := fakeWorker(t, "claude")
 	a := spawnState(t)
 	t.Setenv("BABYSIT_REVIEWER", "true")
-	res, err := a.runSpawnGoal(spawnOpts{ticket: "bs-x1", dir: t.TempDir()})
+	res, err := a.runSpawnGoal(spawnOpts{ticket: "bs-x1", dir: trustedDir(t)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -665,7 +948,7 @@ func TestSpawnGoalHonoursTheLivePIDEvenWhenOrcaIsUp(t *testing.T) {
 		[]byte(strconv.Itoa(os.Getpid())+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	cwd := t.TempDir()
+	cwd := trustedDir(t)
 	trustDir(t, cwd)
 	res, err := a.runSpawnGoal(spawnOpts{ticket: "bs-x1", workflow: "builder", dir: cwd})
 	if err != nil {

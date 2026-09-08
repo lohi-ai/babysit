@@ -19,8 +19,9 @@
 //   - Not every agent namespaces skills the same way. claude and grok read
 //     babysit's plugin manifest and expose `bbs:autopilot`; omp finds skills
 //     through `skills.customDirectories`, which is a flat list, so the same
-//     skill is bare `autopilot` there. A `/bbs:autopilot` prompt sent to omp
-//     resolves to nothing at all. See SkillPrefix and SkillRef.
+//     skill is bare `autopilot` there. Codex keeps the `bbs:` namespace but
+//     invokes skills with `$` instead of `/`. See SkillSigil, SkillPrefix and
+//     SkillRef.
 //
 // Foremen and workers are chosen separately, by two config keys that do not
 // inherit from each other:
@@ -36,6 +37,7 @@
 package agent
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -98,6 +100,7 @@ type Profile struct {
 	// discover skills through a flat directory list and expose them bare.
 	// Getting this wrong is silent: the agent starts fine and then resolves
 	// the prompt to no skill at all.
+	SkillSigil  string
 	SkillPrefix string
 	// Install is the hint printed when Bin is not on PATH. It names what to
 	// install, and for agents with their own plugin store, what else they need
@@ -120,14 +123,22 @@ var profiles = map[string]Profile{
 		Name: "claude", Bin: "claude",
 		Yolo:    "--dangerously-skip-permissions",
 		Session: "--session-id", Resume: "--resume", Continue: "--continue",
-		SkillPrefix: "bbs:",
-		Install:     "install Claude Code: https://claude.com/product/claude-code",
+		SkillSigil: "/", SkillPrefix: "bbs:",
+		Install: "install Claude Code: https://claude.com/product/claude-code",
+		// --dangerously-skip-permissions answers the *tool* prompts, not the
+		// folder-trust dialog: a first run in a directory Claude Code has not
+		// been trusted in stops on "Is this a project you trust?" with no log
+		// line, no verdict and a checkpoint that never advances — the quietest
+		// way an unattended worker can die.
+		TrustFile: ".claude.json",
+		TrustHint: "run `claude` there once and accept the trust prompt, " +
+			"or dispatch the worker from a directory you have already trusted",
 	},
 	"grok": {
 		Name: "grok", Bin: "grok",
 		Yolo:    "--always-approve",
 		Session: "--session-id", Resume: "--resume",
-		SkillPrefix: "bbs:",
+		SkillSigil: "/", SkillPrefix: "bbs:",
 		// The second half is the failure this hint exists to prevent: grok finds
 		// babysit's skills in the babysit repo itself (they are project skills
 		// there) and nowhere else, so a worker dispatched in a product repo
@@ -156,7 +167,7 @@ var profiles = map[string]Profile{
 		// *plugin* skills, and skills reached through customDirectories are a
 		// FLAT list — they come out bare, not namespaced. So a `/bbs:autopilot`
 		// prompt resolves to nothing here while `/autopilot` works.
-		SkillPrefix: "",
+		SkillSigil: "/", SkillPrefix: "",
 		// `omp plugin install <git-url>` looks like the fix and is not: it is an
 		// npm-shaped installer and fails with "package.json not found" on a
 		// Claude plugin repo (--dry-run reports success anyway, which is what
@@ -170,20 +181,14 @@ var profiles = map[string]Profile{
 	},
 	"codex": {
 		Name: "codex", Bin: "codex",
-		// Flags are from OpenAI's published CLI reference; codex was not
-		// installed on the machine this profile was written on, so rendering and
-		// quoting are tested but a live spawn is not. Preflight() already fails
-		// loudly with the install hint when the binary is absent, which is the
-		// correct behaviour for an agent nobody has installed.
 		Yolo: "--dangerously-bypass-approvals-and-sandbox",
 		// codex has no mint flag either, and its resume is a SUBCOMMAND taking a
 		// positional id (`codex resume <id>`) rather than a flag — which renders
 		// identically, because the token follows the word either way.
 		Session: "", Resume: "resume", Continue: "resume --last",
-		SkillPrefix: "bbs:",
-		Install: "install codex: https://developers.openai.com/codex/cli " +
-			"(then confirm it can resolve a babysit skill prompt — codex's skill discovery is " +
-			"unverified here, and a worker that cannot resolve /bbs:autopilot comes up fine and then stalls)",
+		SkillSigil: "$", SkillPrefix: "bbs:",
+		Install: "install codex: https://developers.openai.com/codex/cli, then install babysit: " +
+			"codex plugin marketplace add lohi-ai/babysit && codex plugin add bbs@babysit",
 	},
 }
 
@@ -239,25 +244,26 @@ var currentEnv = []struct {
 	name string
 	vars []string
 }{
+	{"codex", []string{"CODEX_SESSION_ID", "CODEX_THREAD_ID"}},
 	{"grok", []string{"GROK_AGENT", "GROK_SESSION_ID"}},
 	{"claude", []string{"CLAUDE_CODE_SESSION_ID"}},
 }
 
 // Current names the CLI this process is running inside, or "".
 //
-// omp and codex are absent by design, not by omission: neither exports a
-// session marker (probed — omp's child environment carries only Orca's and the
-// parent CLI's vars), so there is nothing to detect them by. Inventing a
-// plausible-looking variable would be worse than not detecting them at all,
-// because the failure would be silent and wrong rather than silent and safe.
+// omp is absent by design: it exports no session marker (probed — its child
+// environment carries only Orca's and the parent CLI's vars), so there is
+// nothing to detect it by. Codex exports CODEX_SESSION_ID and CODEX_THREAD_ID;
+// either is sufficient, and checking it before Claude avoids a nested Codex
+// session inheriting CLAUDE_CODE_SESSION_ID from its parent.
 //
 // The cost of "" is bounded and the callers are built for it: resolveGoalAgent
 // falls through to BABYSIT_AGENT and then to the configured worker_agent, which
 // is a stated preference rather than a guess. And every session babysit itself
 // spawns is stamped with BABYSIT_AGENT=<name>, which outranks this function —
 // so a nested `--auto` inside a babysit-spawned omp worker resolves to omp even
-// though Current() cannot see it. The only case left is a human-started omp or
-// codex session, where the configured default is the right answer anyway.
+// though Current() cannot see it. The only case left is a human-started omp
+// session, where the configured default is the right answer anyway.
 func Current() string {
 	for _, c := range currentEnv {
 		for _, v := range c.vars {
@@ -349,7 +355,11 @@ func (p Profile) PreflightDir(dir string) error {
 	if real, err := filepath.EvalSymlinks(dir); err == nil {
 		dir = real
 	}
-	if trustedIn(string(b), dir) {
+	trusted := trustedIn
+	if strings.HasSuffix(p.TrustFile, ".json") {
+		trusted = trustedInClaudeJSON
+	}
+	if trusted(string(b), dir) {
 		return nil
 	}
 	return p.untrusted(dir)
@@ -384,6 +394,22 @@ func trustedIn(body, dir string) bool {
 		return false
 	}
 	return false
+}
+
+// trustedInClaudeJSON reads ~/.claude.json, where Claude Code records one
+// entry per directory it has opened. The entry existing is not the answer:
+// it is written on first sight and the flag only flips once a human accepts
+// the dialog, so most recorded projects are untrusted. Read the flag.
+func trustedInClaudeJSON(body, dir string) bool {
+	var doc struct {
+		Projects map[string]struct {
+			HasTrustDialogAccepted bool `json:"hasTrustDialogAccepted"`
+		} `json:"projects"`
+	}
+	if err := json.Unmarshal([]byte(body), &doc); err != nil {
+		return false
+	}
+	return doc.Projects[dir].HasTrustDialogAccepted
 }
 
 // WorkerCommand renders the shell command line that runs one worker on the
@@ -455,12 +481,12 @@ func (p Profile) sessionArgs(session string, resume bool) string {
 }
 
 // SkillRef renders a babysit skill invocation the way THIS agent resolves it —
-// `/bbs:autopilot` where the plugin manifest is read, `/autopilot` where skills
-// arrive through a flat directory list. Every prompt naming a skill must go
-// through here; a hard-coded `/bbs:` prefix is the failure that comes up fine
+// `/bbs:autopilot` in Claude Code and grok, `/autopilot` in omp's flat skill
+// list, and `$bbs:autopilot` in Codex. Every prompt naming a skill must go
+// through here; a hard-coded sigil or prefix is the failure that comes up fine
 // and then resolves to nothing.
 func (p Profile) SkillRef(skill string) string {
-	return "/" + p.SkillPrefix + skill
+	return p.SkillSigil + p.SkillPrefix + skill
 }
 
 // shellQuote wraps s in single quotes, ending and reopening the quoted run

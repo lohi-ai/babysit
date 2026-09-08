@@ -30,6 +30,17 @@ All fields optional except `id`; unknown fields preserved. Key fields:
 **Status enum** (set via `bbs ticket set-status`, never derived from
 verdicts): `triage` → `backlog` → `planned` / `decomposed` → `in_progress` →
 `in_review` → `done`; plus `blocked`, `cancelled`, `duplicate`.
+
+`reconcile` advances the rung from *facts* — files on disk, a pushed flag, a
+merge in git — and only ever forward: `requirement.md` → `backlog`, `plan.md`
+→ `planned`, `manifest.md` → `decomposed`, a pushed manifest or a
+`pointers.pr` → `in_review`, and a branch base merged (`bbs ticket land`, or a
+merge commit pulled from a PR) → `done`. `in_progress` is nobody's derivation —
+nothing on disk distinguishes it. Verdicts stay out on purpose: a ticket with
+`qa` and `review-pr` both DONE that nobody closed out is *not* finished, and
+deriving `done` from the verdicts would hide precisely that gap. A
+squash-merged PR leaves no local trace of its branch, so those tickets rest at
+`in_review`.
 **`control`** is the human override axis, separate from status:
 `{state: paused|cancelled, prior_status, note, actor, at}`, `null` when the
 ticket is uncontrolled. Set by `bbs ticket pause|cancel`, cleared by

@@ -83,17 +83,31 @@ the human lands manually. It only makes sense alongside worktrees — a branch
 cut in place takes the primary off `base_branch` and every compose BLOCKs with
 *"primary checkout is on 'feat/…', not base"*.
 
-## `auto_land:` — let a finished ticket merge itself into local base
-Off by default, opt-in per repo, because it is the one key that moves
-`base_branch` with nobody watching. With `auto_land: true`, foreman runs
-`bbs ticket land <ticket>` as each worker finishes: a `--no-ff` merge into the
-LOCAL base that is **kept**, unlike `switch`/`serve`, which reset first and
-treat the composition as scratch.
+## `finish:` — who closes a verified ticket out
+`review | land | pr`, default `review`. It is the one key that lets a run act
+on its own verdicts, so it stays opt-in per repo: unset, foreman stops at
+QA-ready and the human owns checkpoint 4. `bbs autopilot git-flow` derives it
+as `BBS_FINISH`, and each value names a whole handler rather than a step:
+
+| `BBS_FINISH` | handler | blast radius |
+|---|---|---|
+| `review` (default) | the human, after `bbs ticket serve` | none |
+| `land` | `bbs ticket land <ticket>` | a merge commit on a LOCAL branch |
+| `pr` | the `create-pr` skill, one PR per ticket | pushes, visible to the team |
+
+`finish: pr` needs a PR venue: under `land: none` it is rejected when the
+config is read, because `create-pr` BLOCKs there by design. `auto_land:` was
+the boolean half of this key and is gone — a config still carrying it fails
+with the one-line rewrite rather than quietly changing what the repo does.
+
+With `finish: land`, foreman runs `bbs ticket land <ticket>` as each worker
+finishes: a `--no-ff` merge into the LOCAL base that is **kept**, unlike
+`switch`/`serve`, which reset first and treat the composition as scratch.
 
 `land` gates on qa + review-pr `DONE` per ticket with no override flag, takes
 the surface lease, checks every ticket in the batch before merging any of them,
 and never pushes. Re-running it is a no-op (`LANDED=0 … already on <base>`).
 **`serve` after landing is wrong** — it calls `reset-base`, which discards the
 merges (the ticket branches keep the work, but the review surface disappears);
-under `auto_land` the base branch *is* the composed surface, so review it
+under `finish: land` the base branch *is* the composed surface, so review it
 directly and push.

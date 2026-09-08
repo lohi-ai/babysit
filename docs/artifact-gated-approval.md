@@ -1,188 +1,111 @@
-# Artifact-gated approval via plugin hooks
+# Babysit hooks
 
-**Status:** BUILT (2026-05-31). Both hooks live in `hooks/hooks.json` +
-`bin/hooks/{pre-tool-gate,verify-skill-output}`, validated against all decision
-paths. Ships when the plugin is enabled (`/reload-plugins` or reinstall to pick
-them up). The gate policy below is the as-built default — adjust the verdict
-requirements / deny-vs-ask per stage in `pre-tool-gate` if needed.
+Babysit keeps two runtime hooks: a release check and session tracking.
+The repository's Git pre-commit hook remains separate.
 
-**Update (2026-05-31, mid-tier):** the three CK artifacts babysit produced
-in-flight but never persisted — `verification`, `risk-gate`, `adversarial` —
-are now typed, validated artifacts (`bbs ticket set-evidence`/`evidence-status`)
-written by `implement` / `review-pr` and audited by Hook B. The
-hard-stage **gate is unchanged** (still `verdicts/` only). See
-[§ Typed evidence](#typed-evidence-the-mid-tier-gap-close-2026-05-31).
+| Hook | When | Purpose |
+| --- | --- | --- |
+| `pre-tool-gate` | Before shell tools | Check ticket review/QA artifacts before push, PR creation, or PR merge |
+| `session-writer` | Session start and after shell tools | Refresh dashboard session identity, throttled to once per minute |
 
-**As-built gate policy** (safety-first — never bricks legitimate ad-hoc work):
+## Installation and agent contracts
 
-| Situation | Decision |
-|-----------|----------|
-| Command isn't push/PR/merge | pass — no output (the `if` filter usually skips the hook, but fails open on compound commands) |
-| Hard stage, no ticket resolves (ad-hoc shell) | pass — no output (fail-open) |
-| Hard stage, required verdict missing | `ask` (human checkpoint) |
-| Hard stage, verdict `BLOCKED`/`NEEDS_CONTEXT` | **`deny`** + reason naming the skill to run |
-| Hard stage, verdict `DONE`/`DONE_WITH_CONCERNS` | pass — no output (no objection) |
+Install Bash, jq, and the companion `bbs` CLI. Plugins ship shell scripts,
+not a compiled `bbs`; use `bin/setup-skills` from a checkout or the documented
+Homebrew install. The gate resolves the plugin's binary, its own sibling
+binary, `~/.local/bin`, legacy Claude installation paths, and PATH.
 
-"Pass" is **empty stdout, exit 0** — the hook abstains and the call falls
-through to the user's normal permission rules. It is never
-`permissionDecision: "defer"`: in Claude Code that means "pause this session so
-an SDK caller can resume the tool later", and it is honored in every
-non-interactive context (`claude -p`, every Agent-tool subagent), killing the
-turn before the command runs. Only interactive sessions ignore it, which is why
-the original `defer`-as-pass-through went unnoticed (issue #21). Nor is it
-`allow`, which would auto-approve pushes the user's own rules might prompt on.
+| Agent | Wiring | Payload / decision |
+| --- | --- | --- |
+| Claude Code | Plugin auto-discovers `hooks/hooks.json` | snake_case input; native deny/ask JSON |
+| Codex | Plugin auto-discovers `hooks/hooks.json` | snake_case input; native deny/ask JSON |
+| Grok Build | Plugin loads `hooks/hooks.json` | camelCase input; native deny JSON |
+| OMP | Load `hooks/omp.ts` as an extension | `tool_call` / `tool_result` / `session_start`; native block result |
 
-`push` gates on `review-pr` (legacy `review` fallback); `pr` and `merge` gate
-on **both** `review-pr` AND `qa`. PR creation is babysit's real
-handoff-to-human boundary (autopilot never merges), so QA is required there —
-not only at merge, a stage the babysit flow never reaches. Deploy-command
-gating deferred to a future iteration (commands are project-specific — read
-from deploy config later).
+The command manifest resolves `GROK_PLUGIN_ROOT`, `PLUGIN_ROOT`,
+`CODEX_PLUGIN_ROOT`, then `CLAUDE_PLUGIN_ROOT`. Current Codex documents
+`PLUGIN_ROOT` and the Claude compatibility alias; `CODEX_PLUGIN_ROOT`
+is accepted as a fallback for integrations. Paths are quoted and scripts
+are invoked through Bash so spaces or missing executable bits don't prevent
+launch. A missing root produces an explicit reinstall diagnostic.
 
-## The problem (why prompts aren't enough)
+For OMP, skills configuration alone does **not** activate these hooks:
 
-A skill can print `STATUS: DONE / VERDICT: PASS` without having done the work —
-the status block is **self-reported text**, not something the harness verifies.
-This is the "model grading its own ethics exam" failure: a 9.6/10 self-score
-that ships a regression. Prompt instructions ("you must verify before shipping")
-are advisory — the model can skip them. **A hook is executed by the harness and
-cannot be talked around.** That's the control mechanism prompts can't be.
+```sh
+omp --extension "/absolute/path/to/babysit/hooks/omp.ts"
+```
 
-## What babysit already has (the evidence layer)
+For persistent discovery, put a symlink to that file in
+`~/.omp/agent/extensions/babysit.ts`. The adapter resolves its real file
+location, so the symlink doesn't break script lookup. Avoid loading it twice.
+Restart the agent after updating its installed plugin/extension; editing this
+checkout does not update an existing marketplace cache.
 
-Unlike ClaudeKit's scheme — which mandates 5 *new* JSON artifacts
-(`context-snippets`, `risk-gate`, `verification`, `review-decision`,
-`adversarial-validation`) — babysit **already writes the evidence** through
-`bbs ticket`:
+## Release behavior
 
-| Artifact | Written by | Holds |
-|----------|-----------|-------|
-| `verdicts/<skill>.md` | `set-verdict` | `STATUS:`/`VERDICT:` per skill (review-pr, qa, implement…) |
-| `reviews/<skill>.md` | `set-review` | full review body (findings, fixes, score) |
-| `review-log.jsonl` | review-pr | per-commit status, critical count, quality score |
-| `handoffs/<NNN>-<skill>.md` | `add-handoff` | change brief (SUMMARY/FILES/BLAST_RADIUS) |
-| `~/.babysit/analytics/decisions.jsonl` | appended inline by the skill | every Taste/Mechanical auto-decision |
+Only recognized push / PR-create / PR-merge shell commands pay the cost of
+ticket resolution. Other commands return silently. This is a workflow check,
+not a shell security sandbox: aliases, scripts, dynamically constructed
+commands, and tools outside the host's hook coverage can bypass classification.
+Run releases through Babysit's workflows; `bbs ticket land` independently
+checks its persisted verdicts.
 
-So babysit doesn't need new artifacts — it needs a **hook that checks the
-artifacts it already produces** before an irreversible action. That keeps the
-skill prose light (guidance, per the project's guide-not-force philosophy) and
-puts the *enforcement* at the harness boundary. This is "loose skills, strict
-hooks."
+- No ticket: no objection.
+- Ticket identity conflict or unavailable companion binary: deny with a reason.
+- Push: a blocked review denies; a missing review requests the review.
+- PR creation / merge: check both review and QA, including the QA evidence body.
+  Contradictory evidence denies; missing or thin evidence requests the check.
+- No objection means **exit 0 with no output**. Never emit `allow` (which
+  could override the host's own permission checks) or `defer` (which can
+  suspend Claude Code's headless execution).
 
-### Typed evidence (the mid-tier gap-close, 2026-05-31)
+Claude Code and Codex can present their native `ask` decision. Grok and OMP
+return a denial/block with the missing check's reason, so an unattended agent
+can perform the check and retry. No custom prompt or automatic approval is
+introduced. Missing jq returns exit 2 with a diagnostic. OMP also blocks
+process failures, timeouts, and malformed decision responses. Host-native
+timeout/error handling otherwise applies; this is not a universal fail-closed
+boundary.
 
-Three of ClaudeKit's five — `verification`, `risk-gate`, `adversarial` — were
-work babysit *did* in-flight but never persisted as a structured, checkable
-artifact. These are now written through `bbs ticket set-evidence --kind
-<kind>` (validated on write; canonical `evidence/<kind>/result.json`) and read
-back with `bbs ticket evidence-status --kind <kind>` → `none|valid|malformed`
-— the same categorical, score-free shape as `verdict-status`. Producers:
+The gate uses the payload's working directory (`tool_input.workdir` when
+provided, otherwise `cwd`). Shell-internal directory changes and `git -C`
+aren't parsed; invoke release tools from the target repository.
 
-| Kind | Owner | Required fields |
-|------|-------|-----------------|
-| `verification` | `implement` | `result` (PASS/FAIL) |
-| `adversarial` | `review-pr` | `disproven`, `unverified` (arrays) |
+## Session tracking
 
-Schemas: [handoff-contracts § Typed evidence](../.claude/skills/references/handoff-contracts.md).
-The remaining two CK artifacts map to existing babysit artifacts
-(`context-snippets` → requirement.md + implement contract + handoffs;
-`review-decision` → `verdicts/review-pr.md` + `review-log.jsonl`).
+Both snake_case and Grok's camelCase session IDs are supported. Files use
+`cc-`, `cx-`, `grok-`, or `omp-` prefixes under
+`${BABYSIT_HOME:-$HOME/.babysit}/sessions`. Codex is identified by its
+session/thread environment or turn payload; OMP supplies its identity explicitly.
+Session IDs containing path separators are rejected. Tracking is advisory;
+missing jq or an unwritable state directory never blocks tool execution.
 
-**Mid-tier policy (deliberate):** typed evidence is **audited, not gated**.
-Hook B logs `evidence: none|valid|malformed` per producer skill to
-`skill-usage.jsonl`; Hook A's hard-stage **deny/ask still keys only on
-`verdicts/` (review-pr at push, review-pr + qa at PR/merge)** — it does *not*
-require the full 5-artifact bundle. This closes the "the hook *can* check
-them" gap (the artifacts now exist and are structured) without the heaviest
-"all 5 + PASS or no push" enforcement. Tightening the gate to require typed
-evidence is a one-line change in `pre-tool-gate` if/when wanted.
+## Removed audits
 
-Current hook state: `plugin.json` declares **no** Claude Code hooks. The only
-hook is `bin/hooks/pre-commit` (a git hook — workflow lint + secret-leak guard).
-The preamble "session-writer hook" is inline bash, not a harness hook.
+- `verify-skill-output`: the Skill tool loads instructions before the model
+  writes its verdict; inspecting its output does not validate the final verdict.
+- `clean-handoff-check`: a turn ending with working-tree changes is normal for
+  directly invoked skills, so the warning incorrectly encouraged commits/stashes.
+- `qa-evidence-audit`: duplicated the evidence check at the release boundary.
 
-## What Claude Code hooks enable (verified 2026-05-31)
+Their scripts and registrations were removed. Existing telemetry rows remain
+available for historical analysis; skill telemetry and persisted verdicts remain.
+The gate has one registration instead of five host-specific `if` filters.
 
-- **Plugins ship hooks** via `hooks/hooks.json` (auto-discovered; no `plugin.json`
-  change). Reference scripts with `${CLAUDE_PLUGIN_ROOT}`. They merge with
-  user/project hooks when the plugin is enabled.
-- **`PreToolUse` blocks** a tool call: emit
-  `{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"…"}}`
-  — the model sees the reason and reacts. A `matcher: "Bash"` + `if: "Bash(git
-  push *)"` targets exactly the hard-stage commands.
-- **`PostToolUse` after `Skill`** fires with the skill's text output in
-  `tool_result.text`. It **cannot block** (the skill already ran) but can warn
-  via `systemMessage` / add `additionalContext` and log. This is the surface for
-  "verify the output of all skills."
+## Verification
 
-## Proposed design — two hooks, reusing existing artifacts
+```sh
+bash tests/test_pre_tool_gate_resolve.sh
+bash tests/test_hook_session_writer.sh
+python3 tests/test_hooks_portability.py
+bun test tests/test_hooks_omp.test.ts
+```
 
-### Hook A — hard-stage gate (`PreToolUse(Bash)`, blocking)
+The compatibility tests execute the shipped command manifest with isolated
+ticket stubs and state directories; OMP tests exercise its adapter contract.
+These tests make no model requests and never execute the proposed release command.
 
-`${CLAUDE_PLUGIN_ROOT}/bin/hooks/pre-tool-gate`. Matches the irreversible
-commands and checks the ticket's verdict artifacts are present **and** PASS
-before allowing them. Resolves the ticket via `bbs ticket resolve`; if no ticket
-resolves (ad-hoc shell), pass (don't gate non-workflow work).
-
-| Stage (matched command) | Required artifacts | Allow when |
-|-------------------------|--------------------|-----------|
-| `git push …` | `verdicts/review-pr.md` (or `implement`) | present AND not `BLOCKED`/`NEEDS_CONTEXT` |
-| `gh pr create …` / `glab mr create …` | `verdicts/review-pr.md` + `verdicts/qa.md` | both `PASS` / `FIXED` / `DONE*` |
-| `gh pr merge …` | `verdicts/review-pr.md` + `verdicts/qa.md` | both `DONE` / `PASS` |
-| deploy cmds (configurable) | `verdicts/ship.md` review chain | review chain `DONE` |
-
-On a miss → `permissionDecision: "deny"` with a reason naming the missing/failed
-artifact and the skill to run (`/bbs:review-pr`, `/bbs:qa`). **Score never
-auto-approves** — the gate keys on categorical verdicts (`DONE`/`PASS`/`BLOCKED`),
-never on a numeric score. A `BLOCKED` verdict with evidence always denies.
-
-### Hook B — verdict-contract verifier (`PostToolUse(Skill)`, audit)
-
-`${CLAUDE_PLUGIN_ROOT}/bin/hooks/verify-skill-output`. Matches `Skill`, parses
-`tool_result.text` for a well-formed terminal block (`STATUS:` ∈
-{DONE, DONE_WITH_CONCERNS, BLOCKED, NEEDS_CONTEXT} + a `VERDICT:` line per
-[handoff-contracts](../.claude/skills/references/handoff-contracts.md)). Missing
-or malformed → `systemMessage` warning + a row in
-`~/.babysit/analytics/skill-usage.jsonl` (telemetry is babysit's primary
-feedback channel). Can't block, but makes a skipped/garbled verdict *visible*
-instead of silently passing — complements autopilot's existing in-session
-Verify-post step (which already re-checks declared artifacts).
-
-### Hook C — clean-handoff audit (`Stop`, audit)
-
-`${CLAUDE_PLUGIN_ROOT}/bin/hooks/clean-handoff-check`. When the session ends
-with a resolvable ticket, checks the two objective clean-state signals:
-uncommitted changes in the worktree, and a `checkpoint.json` older than the
-last commit. Dirty exit → `systemMessage` warning + a
-`clean-handoff-audit` row in `skill-usage.jsonl`. Never blocks the stop; no
-ticket resolves → silent (same fail-open rule as Hook A). Rationale: a session
-that ends dirty degrades the next cold session's recovery — clean state is
-part of "done", not housekeeping.
-
-### Retry / escalate
-
-Lives in the **skill/workflow**, not the hook (the hook only allows/denies). On
-a deny, the dispatching workflow step surfaces the reason as its `BLOCKED` /
-`NEEDS_CONTEXT` status; the human (or orchestrator) resolves and re-dispatches.
-No bypass flag — matching ClaudeKit's "fail twice → escalate, don't bypass."
-
-## Tension to resolve
-
-The user earlier asked for **short, guide-not-force** skills and **no heavy
-harness** ([[babysit-skill-style-brevity]]). This proposal is consistent *only*
-because the enforcement lives in a hook (the harness layer), not in skill prose,
-and reuses existing artifacts rather than mandating new ones. If we instead
-pushed artifact-creation rules into every skill body, that would be the heavy
-harness the user rejected. **Keep skills as guidance; put the gate in the hook.**
-
-## Open decisions (need user sign-off before building)
-
-1. **Ship Hook A at all?** It denies `git push` / `gh pr merge` when evidence is
-   missing — powerful, but it will block legitimate ad-hoc pushes if the
-   ticket-resolution / pass-when-no-ticket logic is wrong. Blast radius is real.
-2. **Exact gate policy** — the table above is a starting point. Which commands,
-   which artifacts per stage, and how strict (deny vs `ask`)?
-3. **Hook B scope** — all `bbs:` skills, or only the work skills?
-4. **Deploy-command matching** — deploy commands vary per project
-   (`fly deploy`, `vercel`, `gh workflow run`). Read from `.babysit/git-flow.yaml`
-   / deploy config, or skip deploy gating in v1?
+Contracts checked against [Claude Code hooks](https://code.claude.com/docs/en/hooks),
+[Codex hooks](https://developers.openai.com/codex/hooks),
+[Grok Build hooks](https://docs.x.ai/build/features/hooks), and
+[OMP extensions](https://github.com/can1357/oh-my-pi/blob/main/docs/extensions.md).

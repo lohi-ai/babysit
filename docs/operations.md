@@ -46,13 +46,13 @@ Two things it does not own:
   | `claude` | the plugin marketplace | `/bbs:autopilot` |
   | `grok` | `grok plugin install https://github.com/lohi-ai/babysit` | `/bbs:autopilot` |
   | `omp` | `omp config set skills.customDirectories '["$HOME/.claude/plugins/marketplaces/babysit/.claude/skills"]'` | `/autopilot` |
-  | `codex` | unverified | `/bbs:autopilot` |
+  | `codex` | `codex plugin marketplace add lohi-ai/babysit && codex plugin add bbs@babysit` | `$bbs:autopilot` |
 
   `bbs foreman worker-command` preflights the binary and names the per-agent
   fix; the install itself is on the operator. Pass `--skill autopilot` rather
   than writing the prompt by hand — **omp reaches its skills through a flat
-  directory list, so they have no `bbs:` namespace** and a hard-coded
-  `/bbs:autopilot` resolves to nothing there. (`omp plugin install <git-url>`
+  directory list, so they have no `bbs:` namespace**, while Codex uses a `$`
+  sigil. A hard-coded `/bbs:autopilot` resolves incorrectly for both. (`omp plugin install <git-url>`
   looks like the fix and is not: it reports success under `--dry-run` and then
   fails for real, being an npm-shaped installer rather than a plugin store.)
 - **A foreman's session is pinned to the agent that minted it.** `spawn` records

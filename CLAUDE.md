@@ -65,7 +65,7 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 
 ## babysit
 
-Babysit is a Claude Code skill pack for **autonomous** workflows — scheduled runs, background jobs, CI loops, anything where no human is at the keyboard to approve or course-correct.
+Babysit is a Claude Code and Codex skill pack for **autonomous** workflows — scheduled runs, background jobs, CI loops, anything where no human is at the keyboard to approve or course-correct.
 
 It is the product-building *team*: skills and workflows are organized around the
 **five archetypes** of how that team works — Prototyper, Builder, Sweeper,
@@ -197,7 +197,7 @@ Workflows are split along the four points where a human actually adds value:
 1. **Requirement accepted** → `requirement.md` on the ticket. Autopilot drafts it in Flow steps 1–2 and stops at `--stop-after=requirement` if requested; requirement drafting is part of autopilot, not a separate skill.
 2. **Plan accepted** → `plan.md` on the ticket. Owner: autopilot init via `plan-draft`; user-facing work routes through `design-ui` inside it, so the plan carries the UI spec + prototype **before** the `/goal` handoff — the handoff is where design is reviewed ahead of implementation (builder build mode covers the case init didn't seed it); stops at `--stop-after=plan` if requested. **This is the one checkpoint a foreman self-resolves by default.** A foreman writes the same approval-record verdict the dashboard writes, via `bbs ticket approval self-resolve`, after filling the same rubric with named evidence and logging it to `decisions.jsonl` — no explicit grant required, so an overnight or cron-driven batch does not stall on the first worker that adds a component. Opt back into human-held with `bbs foreman hold <id>` (a `hold:` block on `~/.babysit/foremen/<id>.yaml`, naming who held and when); release with `hold release` (effective at the next checkpoint — nothing is rolled back). Optional bounds only: `bbs foreman grant <id>` (`--hours`, `--max`, `--tickets`; `--unbounded` must be typed) narrows default autonomy; `grant revoke` returns to unbounded default autonomy and does **not** force human-held. Two things no posture reaches: money, auth and irreversible-data paths always escalate, and a rubric that can't be filled ends in `BLOCKED` with the gaps named rather than an approval or a wait.
 3. **QA ready** → branch implemented, reviewed, checked with `qa` or a named fallback. Owner: `builder` (implement / build / child / verify modes) — the default end-to-end stop. For a batch of *independent* tickets, the `foreman` skill owns this checkpoint batch-wide: one visible worker per ticket in its own Orca terminal (Orca is a hard dependency — foreman preflights and fails fast without it), each running autopilot, a design-review gate at the plan handoff (greenlight by pasting the worker's `/goal` block, escalate to the human via `AskUserQuestion` or the dashboard's approval record), QA serialized on `bbs ticket qa-lease` (one test surface), verdicts verified on disk.
-4. **PR ready** → human reviews the QA handoff and invokes `create-pr`. Autopilot does not create PRs.
+4. **PR ready** → human reviews the QA handoff and invokes `create-pr`. A run crosses this checkpoint — autopilot on one ticket, `foreman` across a batch — only when the repo asked it to: `finish: land | pr` in `.babysit/git-flow.yaml` (derived as `BBS_FINISH`) names the handler — `bbs ticket land` or the `create-pr` skill — and the default, `review`, keeps the checkpoint human. The key is the durable authorization; both handlers re-check the qa + review-pr verdicts on disk, and a run only reaches them on verdicts it just read as `DONE` — `land` refuses unverified work outright, while a *missing* verdict makes the PR hook ask, which with nobody at the pane is a stall.
 
 When adding or editing a workflow, be explicit about which checkpoint it stops at, and make sure the final step's handoff comment ends with a `Next:` line pointing at the human's next action (read + accept plan, review QA evidence, run `create-pr`, etc.). A workflow that crosses a checkpoint without stopping should say so in its frontmatter description (see `builder.md`).
 
@@ -239,9 +239,9 @@ babysit/
 │   │                  #   bbs design    query DESIGN.md tokens / suggest products / list components / ux-check
 │   │                  #   bbs upgrade (+ upgrade check), dashboard, foreman, …
 │   ├── bbs-*          # argv0 symlinks to bbs, kept for legacy callers — skills call `bbs <sub>`
-│   ├── hooks/         # plugin hook executables (pre-tool-gate, verify-skill-output, clean-handoff-check)
+│   ├── hooks/         # release gate, session writer, and repo pre-commit check
 │   └── setup-skills   # Builds bbs, links it into ~/.local/bin/ and the bbs-* aliases into ~/.claude/
-├── hooks/hooks.json   # plugin hook wiring (artifact-gated approval — see docs/artifact-gated-approval.md)
+├── hooks/             # command-hook manifest + OMP extension adapter (see docs/artifact-gated-approval.md)
 ├── tests/             # shell + python suites for bins, workflows, and autopilot integration
 ├── docs/              # roadmap, identity, workspaces, operations, artifact-gated-approval
 ├── web/               # dashboard SPA (Vite/React) over ~/.babysit state; release
@@ -290,23 +290,24 @@ a crash.
 ## Install
 
 ```
-./bin/setup-skills           # builds bbs → ~/.local/bin/, symlinks skills into ~/.claude/skills/bbs:*
+./bin/setup-skills --full    # builds bbs → ~/.local/bin/, prints Claude Code and Codex plugin commands
 ./bin/setup-skills --uninstall
 ```
 
 ## Releasing — version bumps
 
-When bumping the version (any change to `VERSION`), **always update `.claude-plugin/marketplace.json` in the same commit**. The plugin loader uses that file to detect upgrades — a stale version there means `/plugin marketplace update babysit` reports nothing to bump and users stay on the old skills.
+When bumping the version (any change to `VERSION`), **always update `.claude-plugin/marketplace.json` and `.codex-plugin/plugin.json` in the same commit**. The plugin loaders use those files to detect upgrades — a stale version can leave users on old skills.
 
-Three places must stay in sync:
+Four fields must stay in sync:
 
 | File | Field |
 |------|-------|
 | `VERSION` | bare version string, e.g. `1.4.2` |
 | `.claude-plugin/marketplace.json` | `metadata.version` |
 | `.claude-plugin/marketplace.json` | `plugins[0].version` |
+| `.codex-plugin/plugin.json` | `version` |
 
-Quick check: `grep -r "version" .claude-plugin/ VERSION` — all three should show the same value. CI enforces this too: `.github/workflows/release.yml` fails the run when they disagree, rather than shipping a plugin that misreports its own version.
+Quick check: `grep -r "version" .claude-plugin/ .codex-plugin/ VERSION` — all four should show the same value. CI enforces this too: `.github/workflows/release.yml` fails the run when they disagree, rather than shipping a plugin that misreports its own version.
 
 **Bumping VERSION on `main` is the release.** The push triggers `release.yml`,
 which tags `v$(cat VERSION)`, builds the four archives with goreleaser, commits
@@ -316,7 +317,7 @@ as it sees the tag already exists. Pushing a `v*` tag by hand still works for
 re-cutting or for tagging a commit that isn't main's head.
 
 Two rules the file's comments explain in place, worth knowing before editing it:
-the version is never derived from commit messages (it would desync the three
+the version is never derived from commit messages (it would desync the four
 places above), and the tagging must stay *inside* the release job — a tag pushed
 with the default `GITHUB_TOKEN` does not trigger workflows, so a separate
 tagging workflow would mint tags that never build.

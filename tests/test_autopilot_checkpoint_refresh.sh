@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # tests/test_autopilot_checkpoint_refresh.sh — `bbs-autopilot checkpoint --refresh`.
 #
-# The clean-handoff audit (bin/hooks/clean-handoff-check) fires on every run
-# whose last commit landed after the checkpoint was written — because commits
+# The former clean-handoff audit exposed checkpoints older than the last
+# commit — because commits
 # happen past step boundaries (QA fix, review fix, final commit) while the
 # checkpoint is stamped at the boundary. `--refresh` re-stamps the existing
 # checkpoint so its mtime + head_sha move past the commit, WITHOUT counting as

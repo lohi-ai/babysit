@@ -138,7 +138,11 @@ blocker stopped coverage. Report the grade line for every dimension,
 including `N/A: <reason>`.
 ## Rules
 - Keep test data reversible; no destructive production actions.
-- Distinguish current-change bugs from pre-existing failures.
+- Distinguish current-change bugs from pre-existing failures — and only call
+  one pre-existing after watching it fail at the base commit (a scratch
+  `git worktree add` keeps this tree untouched). Arguing from how old the
+  code looks is not evidence; "pre-existing" is the most common sentence a
+  real regression ships behind.
 - Do not report a fix until the original reproducer passes.
 - `PASS`/`FIXED` require an executed end-to-end run as the *most recent*
   evidence — tool, journey steps, observed result — and the app proven

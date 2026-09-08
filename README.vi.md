@@ -8,6 +8,9 @@
 /bbs:autopilot add a settings page with dark mode toggle
 ```
 
+Trong Codex, cùng skill đó được gọi là `$bbs:autopilot`; README này dùng cách
+viết `/bbs:` của Claude Code trừ khi lệnh dành riêng cho Codex.
+
 ~40 phút tự chạy mỗi ticket — mà vẫn xong xuôi, dù chẳng session Claude nào ôm nổi ngần ấy việc trong một hơi. Bạn ngó lại branch, ưng thì tự bấm mở PR.
 
 **Bắt đầu bằng `autopilot`.** Nó là cả sản phẩm gói trong một lệnh, chạy được trên terminal bất kỳ và repo kiểu gì cũng được, và cũng chính là thứ mà mỗi worker song song chạy — nên mọi thứ bạn học ở đây đều xài lại được.
@@ -50,6 +53,7 @@ Từng bước:
 - `--stop-after=plan` — duyệt hướng đi trước khi viết một dòng code.
 - `--auto` — bỏ bước dán; spawn `/goal` trên đúng agent bạn đang chạy (Grok thì Grok, Claude thì Claude).
 - `--reviewer <agent>` — spawn agent đó review plan và prototype. Agent nào cũng được — `claude`, `omp`, `grok`, `codex` — miễn không phải agent đang build. Bỏ qua thì không review bằng agent. Kèm `--auto`, approve sẽ start `/goal` trên agent lúc bắt đầu.
+- `--verify` — chấm code đã viết xong bằng một context mới: commit xong, review và QA chạy trong một process riêng chưa từng thấy diff này được viết ra, và chỉ file verdict quay về. Mặc định vẫn agent đó — quên *lý do* code trông như vậy mới là điểm chính; thêm `--agent` nếu muốn chấm bằng model khác.
 - *mặc định* — dừng ở trạng thái QA-xong, bạn review bằng chứng.
 - **`/bbs:create-pr`** — bạn tự gọi; autopilot không bao giờ tự mở PR.
 
@@ -112,20 +116,29 @@ Ba bước. Cài một lần cho toàn máy, cấu hình mỗi repo một lần,
 
 ### 1. Cài plugin
 
-**Thẳng từ GitHub — không có gì rơi vào workspace của bạn.** Claude Code tự
-clone cái marketplace:
+**Thẳng từ GitHub — không có gì rơi vào workspace của bạn.** Cài CLI, rồi đăng
+ký cùng một marketplace với agent bạn dùng:
 
 ```bash
 brew install lohi-ai/babysit/bbs        # phần CLI — bắt buộc, xem bên dưới
+
+# Claude Code
 claude plugin marketplace add lohi-ai/babysit
 claude plugin install bbs@babysit
+
+# Codex CLI
+codex plugin marketplace add lohi-ai/babysit
+codex plugin add bbs@babysit
 ```
 
-Khởi động lại Claude Code là có `/bbs:autopilot`. Sau này nâng cấp bằng một
-lệnh duy nhất — `bbs upgrade` làm mới cả hai nửa, rồi khởi động lại Claude Code:
+Khởi động lại agent. Claude Code có `/bbs:autopilot`; Codex có
+`$bbs:autopilot`. `bbs upgrade` cập nhật CLI và plugin Claude Code; plugin
+Codex được cập nhật bằng CLI của Codex:
 
 ```bash
 bbs upgrade
+codex plugin marketplace upgrade babysit
+codex plugin add bbs@babysit
 ```
 
 **`brew install bbs` không phải tùy chọn.** `bin/bbs` là sản phẩm build, không
@@ -146,11 +159,16 @@ cd ~/src/babysit
 ./bin/setup-skills --full
 ```
 
-Rồi trong Claude Code:
+Rồi đăng ký checkout trong agent bạn dùng:
 
 ```
+# Claude Code
 /plugin marketplace add ~/src/babysit
 /plugin install bbs@babysit
+
+# Codex CLI (chạy trong shell)
+codex plugin marketplace add ~/src/babysit
+codex plugin add bbs@babysit
 ```
 
 Cách này đã đặt `bbs` lên `PATH` tại `~/.local/bin/bbs` → checkout của bạn, nên
@@ -163,7 +181,7 @@ marketplace đã cài sẽ thắng khi trùng tên.
 
 </details>
 
-Yêu cầu: Claude Code có hỗ trợ plugin, Git.
+Yêu cầu: Claude Code hoặc Codex CLI có hỗ trợ plugin, cùng với Git.
 
 Khuyến nghị, chưa cần ngay lúc đầu: **[Orca](https://www.onorca.dev)**, ADE để chạy nhiều coding agent cạnh nhau. `/bbs:autopilot` và mọi thứ khác chạy trên terminal bất kỳ — Orca là **phụ thuộc cứng chỉ với `foreman`**, vì nó không còn backend nào khác: Orca cho mỗi worker song song một tab terminal riêng, diff mở trong editor, và app đang chạy nằm trong browser của Orca. Thiếu Orca thì `foreman` dừng ngay với thông báo cách cài.
 
@@ -268,7 +286,7 @@ Khi vòng lặp một-ticket đã quen tay, `foreman` chạy cả một mẻ. T�
 /bbs:foreman                        # attach/resume: điểm danh worker đang sống + board
 ```
 
-Foreman mở một worker cho mỗi ticket — một terminal Orca bạn bấm ở sidebar để xem hoặc tự lái — theo dõi các pane, và giữ chốt chặn giữa design và build: khi một worker dừng ở bản bàn giao plan/prototype, foreman review design, góp ý, rồi hoặc bật đèn xanh cho build hoặc hỏi bạn khi tiếng nói của bạn có thể đổi hướng kết quả. Nó tự trả lời các câu hỏi máy móc của worker, chuyển cho bạn những câu cần bạn, kiểm chứng mọi verdict QA/review trên đĩa, và — với `land: local` (mặc định ở mode worktree) — merge hết các ticket xong lên base local để bạn review sản phẩm gộp trên dev server trước khi quyết: PR từng ticket hay một compose PR.
+Foreman mở một worker cho mỗi ticket — một terminal Orca bạn bấm ở sidebar để xem hoặc tự lái — theo dõi các pane, và giữ chốt chặn giữa design và build: khi một worker dừng ở bản bàn giao plan/prototype, foreman review design, góp ý, rồi hoặc bật đèn xanh cho build hoặc hỏi bạn khi tiếng nói của bạn có thể đổi hướng kết quả. Nó tự trả lời các câu hỏi máy móc của worker, chuyển cho bạn những câu cần bạn, kiểm chứng mọi verdict QA/review trên đĩa, và khép từng ticket lại đúng như repo của bạn đã cấu hình: `finish: land` merge nó lên base local để bạn review sản phẩm gộp trên dev server, `finish: pr` mở PR, còn mặc định thì để checkpoint cuối lại cho bạn.
 
 **Một thứ phải có trước, nên nó mới là bài học thứ hai:** [Orca](https://www.onorca.dev) — thiếu là foreman dừng ngay. Bạn không cần cấu hình lại repo: `startup`/`enterprise` vốn đã ở mode worktree, còn trong repo `pet` thì foreman tự xin worktree theo từng lần giao việc, nên các ticket song song không bao giờ giành nhau một checkout. Profile của bạn vẫn là thứ quyết định độ gắt. Với một ticket lẻ chạy tuần tự, nó chẳng hơn `/bbs:autopilot` chỗ nào.
 
@@ -302,7 +320,7 @@ Mỗi khi một stage xong, ticket có thêm một dòng `Next:` — đúng ngh�
 /bbs:autopilot                       # resume — nối lại từ checkpoint của branch hiện tại
 ```
 
-Cả bề mặt chỉ có vậy. Bốn flag mở rộng thêm — `--stop-after=requirement|plan` để dừng ở checkpoint sớm hơn, `--auto` để spawn `/goal` trên agent lúc bắt đầu, `--reviewer <agent>` để thêm bước review plan độc lập bằng agent khác, và `--mode=worktree` để chạy riêng ticket này trong worktree của nó dù profile không bắt (repo `pet`, hoặc repo đã chọn `mode: branch`). Không có token động từ nào cả.
+Cả bề mặt chỉ có vậy. Năm flag mở rộng thêm — `--stop-after=requirement|plan` để dừng ở checkpoint sớm hơn, `--auto` để spawn `/goal` trên agent lúc bắt đầu, `--reviewer <agent>` để thêm bước review plan độc lập bằng agent khác, `--verify` để đẩy review và QA sang một process context mới chưa từng thấy code được viết, và `--mode=worktree` để chạy riêng ticket này trong worktree của nó dù profile không bắt (repo `pet`, hoặc repo đã chọn `mode: branch`). Không có token động từ nào cả.
 
 ### Làm nhiều ticket song song (mode `worktree`)
 
@@ -366,10 +384,12 @@ Tất cả là một binary duy nhất, gọi dạng `bbs <sub>` — `bbs autopi
 
 Config ngày-2 (`bbs config`), telemetry (JSONL đổ vào `~/.babysit/analytics/`, mặc định chỉ ở local), và xử lý upgrade (`bbs upgrade check` + `bbs upgrade`) nằm trong [`docs/operations.md`](docs/operations.md).
 
-**Upgrade.** Một lệnh, rồi khởi động lại Claude Code — thay đổi plugin chỉ có hiệu lực sau khi khởi động lại:
+**Upgrade.** Cập nhật CLI và bản plugin của agent bạn dùng, rồi khởi động lại agent:
 
 ```bash
 bbs upgrade
+codex plugin marketplace upgrade babysit
+codex plugin add bbs@babysit
 ```
 
 babysit gồm hai nửa do hai công cụ khác nhau quản — CLI qua brew và plugin của Claude Code — và `bbs upgrade` chạy nửa nào máy này có, đồng thời nêu tên nửa nào nó không với tới được. Nếu cài từ checkout thì nó pull rồi chạy lại `setup-skills` cho nửa CLI, sau đó vẫn cập nhật plugin marketplace nếu máy có cài: checkout nằm trên `PATH` và plugin trong `~/.claude/plugins/cache/` là hai bản sao khác nhau, và bản Claude Code nạp chính là plugin đã cài.
@@ -377,8 +397,13 @@ babysit gồm hai nửa do hai công cụ khác nhau quản — CLI qua brew và
 ## Gỡ cài
 
 ```
+# Claude Code
 /plugin uninstall bbs@babysit
 /plugin marketplace remove babysit
+
+# Codex CLI
+codex plugin remove bbs@babysit
+codex plugin marketplace remove babysit
 ```
 
 ```bash
@@ -400,6 +425,7 @@ rm -f ~/.claude/babysit ~/.claude/bbs-*
 | Mọi `git push` đều bị chặn, báo "GATE OFFLINE" | Chưa có `bbs` trên `PATH` — `brew install lohi-ai/babysit/bbs`. Plugin không kèm binary, và cổng gác cố tình fail closed |
 | Skill biến mất hoặc cũ mèm sau khi upgrade | Khởi động lại Claude Code; vẫn cũ thì chạy lại `bbs upgrade` và đọc xem nó báo không với tới được nửa nào |
 | `/bbs:*` không tìm thấy | `claude plugin install bbs@babysit`, rồi khởi động lại; hoặc `/reload-plugins` |
+| `$bbs:*` không tìm thấy trong Codex | `codex plugin add bbs@babysit`, rồi mở session mới |
 | Skill hiện ra mà thiếu tiền tố `bbs:` | Bản cài cũ — `find ~/.claude/skills -maxdepth 1 -type l -name 'bbs:*' -delete`, rồi cài lại plugin |
 | `env resolve` trả về rỗng | Kiểm xem đúng file `.env.base` có nằm dưới `config/<app>/` không |
 

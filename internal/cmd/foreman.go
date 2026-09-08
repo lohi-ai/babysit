@@ -29,7 +29,7 @@ const foremanUsage = `Usage:
   bbs foreman heartbeat <id> [--status <status>] [--session <uuid>]
   bbs foreman spawn [<id>] [--dir <path>] [--command <text>] [--agent <name>]
   bbs foreman worker-command --prompt <text> [--skill <name>] [--agent <name>] [--dir <path>]
-  bbs foreman mailbox <status|bind|dispatch|wait|reply> ...
+  bbs foreman mailbox <status|bind|dispatch|wait|reply|done> ...
   bbs foreman watch [<id>] [--interval <sec>] [--idle <sec>] [--lines <n>]
                     [--nudge <text>] [--max-nudges <n>] [--once]
   bbs foreman retire <id> [--keep-workspace]

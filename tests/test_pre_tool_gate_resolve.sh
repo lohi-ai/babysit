@@ -102,10 +102,10 @@ check "with-install: gh pr create → ask (unchanged)"  ask "$(decision "$(withi
 # "defer"` is not a pass-through: Claude Code honors it in every non-interactive
 # context (`claude -p`, every Agent-tool subagent) as "pause the session, resume
 # the tool later", so a gate that deferred killed the subagent's turn before the
-# command ran. Compound commands matter too: the hooks.json `if` filter fails
-# open on commands it can't split, so the gate runs on an unrelated loop.
+# command ran. Compound commands matter too: the host may hand the gate a
+# command it can't split, so the gate runs on an unrelated loop.
 # "No objection" = empty stdout, and the call falls through to normal rules.
-check "with-install: non-hard-stage → silent"           "" "$(withinstall "ls -la")"
+check "with-install: non-hard-stage → silent success" "" "$(withinstall "ls -la")"
 check "with-install: compound loop → silent"            "" "$(withinstall "for i in 1 2 3; do echo hi-\$i; done")"
 check "no-ticket: git push → silent"                    "" "$(echo '{"tool_input":{"command":"git push origin HEAD"}}' | \
   env -i PATH="$BIN:/usr/bin:/bin" HOME="$EMPTY" BBS_STUB_NO_TICKET=1 bash "$GATE" 2>/dev/null)"

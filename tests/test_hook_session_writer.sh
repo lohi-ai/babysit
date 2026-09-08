@@ -8,6 +8,7 @@
 # started_at preservation, no-op without session_id.
 
 set -u
+unset CODEX_SESSION_ID CODEX_THREAD_ID
 SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 HOOK="$SCRIPT_DIR/bin/hooks/session-writer"
 [ -x "$HOOK" ] || { echo "FAIL: $HOOK missing or not executable" >&2; exit 1; }
@@ -37,6 +38,18 @@ T="$(mktemp -d)"
   grep -qx "session_id: cc-s1" "$F" || { echo "bad session_id"; cat "$F"; exit 1; }
   grep -qx "ticket: bs-wt1" "$F" || { echo "bad ticket"; cat "$F"; exit 1; }
 ) && ok "mints-yaml-with-worktree-ticket" || fail "mints-yaml-with-worktree-ticket"
+rm -rf "$T"
+
+# ── codex-session-prefix ──────────────────────────────────────────────
+T="$(mktemp -d)"
+(
+  HOME="$T/h"; export HOME
+  export CODEX_SESSION_ID="codex-host"
+  printf '%s' '{"session_id":"s-codex","cwd":"/tmp"}' | "$HOOK"
+  F="$HOME/.babysit/sessions/cx-s-codex.yaml"
+  [ -f "$F" ] || { echo "no yaml at $F"; exit 1; }
+  grep -qx "session_id: cx-s-codex" "$F" || { echo "bad session_id"; cat "$F"; exit 1; }
+) && ok "codex-session-prefix" || fail "codex-session-prefix"
 rm -rf "$T"
 
 # ── derives-ticket-from-feat-branch ────────────────────────────────────

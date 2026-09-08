@@ -3,7 +3,7 @@
 #
 # land <ticket> is the opposite of switch: switch resets the base and treats the
 # composition as scratch, land merges into the LOCAL base and KEEPS the merge.
-# It is what `auto_land: true` calls when a worker finishes, so its guards are
+# It is what `finish: land` calls when a worker finishes, so its guards are
 # the whole feature — an unverified or half-landed batch is the failure that
 # matters, not a missing convenience.
 #
@@ -232,7 +232,7 @@ rm -rf "$T"
 # ── land-survives-reset-base-guard ────────────────────────────────────
 # reset-base BLOCKs when base carries commits no other branch holds. A landed
 # ticket must not trip it: the ticket branch still holds every commit, and the
-# merge itself is excluded as a merge. Otherwise auto_land would wedge the
+# merge itself is excluded as a merge. Otherwise finish: land would wedge the
 # serve loop for the rest of the batch.
 T="$(mktemp -d)"
 (

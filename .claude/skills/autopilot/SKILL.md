@@ -1,6 +1,6 @@
 ---
 name: autopilot
-description: Run a checkpointed babysit workflow from a short requirement or existing ticket. Use for multi-step autonomous work that should survive context loss: plan, implement, verify, and hand off.
+description: "Run a checkpointed babysit workflow from a short requirement or existing ticket. Use for multi-step autonomous work that should survive context loss: plan, implement, verify, and hand off."
 ---
 # autopilot
 A **goal proxy**: the skill owns init — durable ticket state, branch,
@@ -51,7 +51,8 @@ the handoff and stop (`developer`: the human copy-pastes it; orchestrators put
 the `/goal` block at the front of the spawn prompt). Two independent flags
 replace that paste; `--stop-after` still wins. If `SPAWNED` is already true,
 you are that process: skip the handoff and work. Start-agent is this
-session (`GROK_SESSION_ID`/`GROK_AGENT` → grok, else claude).
+session (`GROK_SESSION_ID`/`GROK_AGENT` → grok, else claude). A third flag,
+`--verify`, does not touch the paste — it changes how the loop's gates run.
 - `--reviewer <agent>` (alias `--review`) — spawn that agent to review
   the plan and prototype. Omit it: no agent review. From the worktree:
   `bbs autopilot spawn-review --ticket "$TICKET" --workflow "$WF" --agent <name>`
@@ -62,6 +63,28 @@ session (`GROK_SESSION_ID`/`GROK_AGENT` → grok, else claude).
   `bbs autopilot spawn-goal --ticket "$TICKET" --workflow "$WF"` (no
   `--agent` — spawn-goal uses the start agent). Print pid/log and stop.
   Never the copy-paste handoff.
+- `--verify` — grade the finished code in a fresh context. At init, record it
+  on the ticket (`bbs ticket set-pointer verify true`) so every later path
+  reads it back — the paste, `--auto`, a reviewer's greenlight, a cold resume;
+  the loop checks `bbs ticket get-pointer verify` as well as its own args. That
+  read prints `True`, not `true` — `set-pointer` coerces to a JSON bool and the
+  reader renders it Python-style for the bash oracle — so compare
+  case-insensitively. A case-sensitive `= "true"` silently drops the run back to
+  grading its own diff, which is the one outcome the flag exists to prevent.
+  `--auto` no longer depends on that read: spawn-goal appends the routing
+  instruction to the goal prompt whenever the pointer is set.
+  In the loop, once the implementation is committed, it **replaces** the
+  in-session `review-pr` + `qa` steps rather than adding a pass after them:
+  `bbs autopilot spawn-verify --ticket "$TICKET" --workflow "$WF"` (add
+  `--agent <name>` only to grade on a different model — the default is this
+  agent with a fresh context, which is the independence being bought). Wait
+  for it, then read the result from disk with `bbs ticket verdict-status
+  --skill review-pr` and `--skill qa`; nothing the child prints is input.
+  Do **not** re-run the gates in-session afterwards — `set-verdict` is
+  last-writer-wins, so an added in-session pass overwrites the independent
+  verdict with the biased one. No verdict at all means the verifier died:
+  report `BLOCKED` naming `<ticket-dir>/verify.log`, never fall back to the
+  in-session pass this replaced.
 For `developer`, the handoff **is the whole final message and must be the very
 last thing on screen** — nothing after it. Init may have run `plan-draft` /
 `design-ui`, which print their own reports; do **not** let those be the last
@@ -76,17 +99,20 @@ Ready for <ticket>. Before you paste, review what will be built:
   prototype: <prototype path>
 Redirect the design now if it's wrong — otherwise you're one paste from done.
 
-👉 Copy the block below and paste it into Claude Code to build it:
+👉 Copy the block below and paste it into <the current agent> to build it:
 
 /goal <ticket> is done: qa verdict PASS/FIXED persisted via bbs ticket set-verdict,
-review-pr verdict persisted, branch pushed, handoff note written — or a
-NEEDS_CONTEXT / BLOCKED status block printed verbatim.
-Work it: /bbs:autopilot <workflow> <ticket>
+review-pr verdict persisted, branch pushed, closed out per the repo's finish
+policy, handoff note written — or a NEEDS_CONTEXT / BLOCKED status block
+printed verbatim.
+Work it: <SKILL_REF>autopilot <workflow> <ticket>
 ```
 The preamble is mandatory whenever `plan-draft`/`design-ui` produced those
 artifacts — it is the design checkpoint, not decoration; keep it in plain
 words and never assume the human knows git or babysit internals. The
-`👉 Copy … paste it into Claude Code` line is mandatory in every `developer`
+The preamble prints the current agent and `SKILL_REF`; substitute both values
+in this template and never print the angle-bracket placeholders. The
+`👉 Copy … paste it into <agent>` line is mandatory in every `developer`
 handoff — a non-technical user must never have to guess that the fenced block
 is a thing they paste. Orchestrators (non-`developer`) skip the preamble and
 the copy-paste line and put only the `/goal` block in the spawn prompt.
@@ -107,14 +133,17 @@ installed as the plugin, bare `<name>` inside the babysit repo), never doing
 its job inline — the invocation fires the hooks.
 Planning: `plan-draft`. Coding: `implement`. Landing review: `review-pr`.
 QA: `qa` (no runnable target → record the fallback, use `browse` or a narrow
-local check). Debug: `investigate`. `create-pr` never runs inside autopilot —
-the human runs it after reviewing the handoff.
+local check). Debug: `investigate`. Closing out: `create-pr`, and only when the
+repo asked for it (below).
 ## Rules
 - Disk state must always be enough for a cold session to resume — but disk is
   the backup, not the brain; in a live session use everything already learned.
 - Full reasoning depth at every step; requirement and plan are single-pass on
   wording, not on thinking. `review-pr` and `qa` are the strict gates — their
-  persisted verdicts are what the push/PR hook enforces.
+  persisted verdicts are what the push/PR hook enforces. `review-pr` only
+  reports findings, so persisting its verdict is yours: the body needs a
+  first-column `STATUS: DONE` line (a `VERDICT: PASS` prose line is not a
+  status; `set-verdict` refuses a body without one).
 - Git is autopilot's job end to end. Step skills are infra-isolated — they
   edit the working tree and never branch, commit, or push; commit their
   output yourself at each milestone.
@@ -122,9 +151,24 @@ the human runs it after reviewing the handoff.
   status — with one plain-language sentence saying what happened and the
   exact next command to paste; a non-technical user must be able to keep
   the build moving without knowing git.
-- Never force-push, drop data, send external messages, or create PRs.
+- Never force-push, drop data, or send external messages.
+- **Close out per the repo's policy**, as the last step before the handoff and
+  only once qa and review-pr are both persisted DONE:
+  ```bash
+  eval "$(bbs autopilot git-flow)"     # → BBS_FINISH: review | land | pr
+  ```
+  `land` → `bbs ticket land "$TICKET"` (merge into local `$BBS_BASE_BRANCH`).
+  `pr` → run `create-pr` — a Skill-tool invocation, not a shell command (push +
+  open the PR against base). `review` (default) → the human closes it out.
+  The key is the repo's standing authorization and the only thing that decides
+  this — never close out on your own initiative. Never with a verdict missing
+  either: `land` refuses unverified work outright, and the PR hook *asks* on a
+  missing verdict, which with nobody at the pane is a stall rather than a stop.
+  Report what happened on the `NEXT:` line: `LANDED: <branch> → <base>`,
+  `PR: <url>`, or the human's `/bbs:create-pr`.
 - Always run QA before final handoff and persist the verdict with
-  `bbs ticket set-verdict --skill qa` (real PASS/FIXED, or
+  `bbs ticket set-verdict --skill qa` — under `--verify` the spawned verifier
+  writes it and the parent reads it back (real PASS/FIXED, or
   DONE_WITH_CONCERNS naming the blocker). "Implemented but not QA'd" is
   incomplete; happy-path-only QA is incomplete — include at least one
   validation/error/empty/responsive case.
@@ -139,5 +183,6 @@ the human runs it after reviewing the handoff.
 STATUS: DONE | DONE_WITH_CONCERNS | NEEDS_CONTEXT | BLOCKED
 VERDICT: PLANNED | BUILT | FIXED | HANDOFF
 SUMMARY: <branch, QA evidence, concerns>
-NEXT: human review, then /bbs:create-pr
+NEXT: what the finish policy left for the human — review + /bbs:create-pr
+(`review`), review the landed base + push (`land`), or review the PR (`pr`)
 ```

@@ -287,7 +287,7 @@ Tất cả đều từ chối lớn tiếng chứ không làm mất việc.
 5. Sau khi PR merge: `bbs ticket reset-base` từ checkout chính; các worktree còn
    dang dở chạy lại `merge-base`.
 
-### `auto_land` — để ticket đã xong tự merge vào base
+### `finish` — để ticket đã kiểm chứng tự khép lại
 
 `serve` là một lượt *nhìn*, không phải một lượt hạ cánh: nó reset base rồi gộp
 lại từ đầu mỗi lần, nên không gì nó đặt ở đó sống sót qua lần `reset-base` kế
@@ -297,25 +297,37 @@ Repo có thể xin cho việc đó tự xảy ra:
 
 ```yaml
 profile: startup
-auto_land: true
+finish: land          # review (mặc định) | land | pr
 ```
 
 Giờ foreman merge từng ticket vào base ở máy ngay khi worker của nó xong, thay vì
 để lại một đống branch cho bạn tự gộp. Bạn review branch base — vốn đã chạy sẵn
 trên dev server — rồi push.
 
-Mặc định nó tắt và phải bật thủ công theo từng repo, vì đây là key duy nhất dịch
-chuyển branch base của bạn trong lúc bạn ngủ. Những chốt chặn khiến điều đó sống
-được:
+`finish: pr` là nửa còn lại của cùng key: foreman chạy `create-pr` cho từng
+ticket ngay khi nó xong, nên cả batch kết thúc bằng các PR đã mở thay vì một
+đống branch. Nó cần có chỗ để mở PR — dưới `land: none` thì config bị từ chối
+ngay lúc đọc, vì `create-pr` vốn BLOCK ở đó.
 
-- **qa và review-pr đều phải `DONE`**, theo từng ticket, không có `--force` nào
-  để với tới. Việc chưa được kiểm chứng không bao giờ hạ cánh.
+Mặc định `finish` là `review` và phải bật thủ công theo từng repo, vì đây là key
+duy nhất cho phép một lượt chạy tự hành động trên chính verdict của nó trong lúc
+bạn ngủ — dịch chuyển branch base, hoặc push ra chỗ cả team nhìn thấy. Cả hai
+giá trị đều chặn ở cùng một chỗ: **qa và review-pr đều phải `DONE`**, theo từng
+ticket, không có `--force` nào để với tới. Việc chưa được kiểm chứng không bao
+giờ tự khép lại.
+
+Những chốt chặn còn lại là của riêng `land`, và chúng là thứ khiến một lần merge
+bạn không ngồi xem vẫn sống được:
+
 - **Cả lô được kiểm trước khi bất kỳ cái nào merge** — một ticket thứ ba bị chặn
   không để lại hai cái đầu trên một base bạn không hề yêu cầu.
 - **Nó giữ QA lease**, nên không thể dịch base dưới chân một phiên QA đang chạy.
 - **Nó không bao giờ push.** Base kết thúc ở phía trước origin và cú push vẫn là
   của bạn.
 - **Chạy lại là no-op** (`LANDED=0 … already on main`).
+
+`finish: pr` là giá trị có push — mở PR thì phải push — nhưng nó chỉ mở PR chứ
+không hơn: phần review, và cú merge, vẫn là của con người.
 
 Đừng chạy `serve` sau khi đã land: `serve` gọi `reset-base`, kéo base về origin và
 vứt hết các merge — branch ticket vẫn giữ việc, nhưng bề mặt review của bạn biến
@@ -337,7 +349,7 @@ và sẽ fork từ base ở máy.
 git switch -c develop main && git push -u origin develop
 ```
 
-Viết tay `mode:`, `land:`, `push:` hay `auto_land:` sẽ đè lên preset của profile.
+Viết tay `mode:`, `land:`, `push:` hay `finish:` sẽ đè lên preset của profile.
 Đó là cửa thoát hiểm, không phải hình dạng bình thường — một cái núm viết ra tay
 là một cái núm thôi bám theo profile của nó. `mode:` được đọc tại thời điểm cắt
 branch, nên thêm hay bỏ nó chỉ ảnh hưởng ticket mới; trước khi chuyển *vào* lối
