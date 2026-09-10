@@ -28,7 +28,7 @@ var versionRe = regexp.MustCompile(`^[0-9]+\.[0-9.]+$`)
 // its stdout and exit codes exactly. Every path exits 0 except an fs write
 // failure, which the bash's `set -e` turns into an exit 1 (see runUpdateCheck).
 //
-// Hidden: the documented spelling is `bbs upgrade check`. This stays reachable
+// Hidden: the documented spelling is `bbs update check`. This stays reachable
 // because bbs and the skill pack ship separately — brew updates the binary
 // while an older plugin's preamble still calls `bbs update-check`, and removing
 // it would break the version probe on every not-yet-upgraded install.
@@ -48,7 +48,7 @@ func newUpdateCheckCmd() *cobra.Command {
 	}
 }
 
-// runUpdateCheckCmd is the command body, shared by `bbs upgrade check` (the
+// runUpdateCheckCmd is the command body, shared by `bbs update check` (the
 // spelling skills use) and the hidden top-level `update-check`.
 func runUpdateCheckCmd(args []string) error {
 	if err := runUpdateCheck(args); err != nil {

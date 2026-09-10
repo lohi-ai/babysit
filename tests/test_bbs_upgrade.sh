@@ -67,9 +67,9 @@ for c in brew claude; do
   fi
 done
 
-# Stub brew/claude that record their argv instead of doing anything.
+# Stub brew/claude/codex that record their argv instead of doing anything.
 STUBS="$T/stubs"; mkdir -p "$STUBS"
-for c in brew claude; do
+for c in brew claude codex; do
   printf '#!/bin/sh\necho "%s $*" >> "$STUB_LOG"\nexit ${STUB_RC:-0}\n' "$c" > "$STUBS/$c"
   chmod +x "$STUBS/$c"
 done
@@ -81,6 +81,7 @@ stage_root() {
   mkdir -p "$r/bin"
   cp "$REFERENCE" "$r/bin/bbs-upgrade-oracle"; chmod +x "$r/bin/bbs-upgrade-oracle"
   cp "$BIN" "$r/bin/bbs"
+  ln -sf bbs "$r/bin/bbs-update"    # canonical multicall command
   ln -sf bbs "$r/bin/bbs-upgrade"   # multicall: basename bbs-upgrade -> `upgrade`
   # stdout must be swallowed by the caller (`setup-skills >/dev/null`); stderr
   # must survive.
@@ -243,7 +244,7 @@ CMP_MSG=""
 grep -q 'not installed via git clone' "$T/g.err" || CMP_MSG="$CMP_MSG no-shape-line;"
 grep -q 'brew upgrade bbs' "$T/g.err" || CMP_MSG="$CMP_MSG no-cli-hint;"
 grep -q 'claude plugin update' "$T/g.err" || CMP_MSG="$CMP_MSG no-plugin-hint;"
-grep -q 'restart Claude Code' "$T/g.err" || CMP_MSG="$CMP_MSG no-restart-line;"
+grep -q 'restart the affected coding agent' "$T/g.err" || CMP_MSG="$CMP_MSG no-restart-line;"
 [ -f "$S2/just-upgraded-from" ] && CMP_MSG="$CMP_MSG marker-written;"
 report "upgrade-outside-a-git-clone-names-the-real-upgrade-path"
 
@@ -282,7 +283,7 @@ grep -qx 'brew upgrade bbs' "$T/stub.log" || CMP_MSG="$CMP_MSG no-brew-upgrade;"
 grep -qx 'claude plugin marketplace update babysit' "$T/stub.log" || CMP_MSG="$CMP_MSG no-marketplace-update;"
 grep -qx 'claude plugin update bbs@babysit' "$T/stub.log" || CMP_MSG="$CMP_MSG no-plugin-update;"
 grep -q 'babysit upgraded (CLI + skills)' "$T/g.out" || CMP_MSG="$CMP_MSG no-success-line;"
-grep -q 'Restart Claude Code' "$T/g.out" || CMP_MSG="$CMP_MSG no-restart-line;"
+grep -q 'Restart the affected coding agent' "$T/g.out" || CMP_MSG="$CMP_MSG no-restart-line;"
 report "upgrade-without-a-checkout-drives-brew-and-the-plugin"
 
 # A half that fails must not read as success — the operator would restart
@@ -404,8 +405,23 @@ CMP_MSG=""; : > "$T/stub.log"
 grep -q 'Pulling latest' "$T/g.out" || CMP_MSG="$CMP_MSG did-not-pull;"
 grep -qx 'claude plugin marketplace update babysit' "$T/stub.log" || CMP_MSG="$CMP_MSG PLUGIN-HALF-SKIPPED;"
 grep -qx 'claude plugin update bbs@babysit' "$T/stub.log" || CMP_MSG="$CMP_MSG no-plugin-update;"
-grep -q 'Restart Claude Code' "$T/g.out" || CMP_MSG="$CMP_MSG no-restart-line;"
+grep -q 'Restart the affected coding agent' "$T/g.out" || CMP_MSG="$CMP_MSG no-restart-line;"
 report "upgrade-from-a-checkout-also-updates-an-installed-marketplace-plugin"
+
+# Codex's marketplace snapshot and plugin cache are separate from Claude
+# Code's. A Codex-only install must therefore receive the two Codex commands,
+# even when no Claude cache exists.
+new_case; prep_clones "1.0.0\n" "2.0.0\n"
+HOME_CODEX="$T/c$N/home"; mkdir -p "$HOME_CODEX/.codex/plugins/cache/babysit"
+CMP_MSG=""; : > "$T/stub.log"
+( cd "$BD" && env -i PATH="$STUBS:$SANDPATH" HOME="$HOME_CODEX" STUB_LOG="$T/stub.log" \
+    BABYSIT_DIR="$BD" BABYSIT_STATE_DIR="$S2" \
+    "$BD/bin/bbs" update >"$T/g.out" 2>"$T/g.err" ); grc=$?
+[ "$grc" = 0 ] || CMP_MSG="exit=$grc want 0 [$(cat "$T/g.err")];"
+grep -qx 'codex plugin marketplace upgrade babysit' "$T/stub.log" || CMP_MSG="$CMP_MSG CODEX-MARKETPLACE-SKIPPED;"
+grep -qx 'codex plugin add bbs@babysit' "$T/stub.log" || CMP_MSG="$CMP_MSG CODEX-PLUGIN-SKIPPED;"
+grep -q 'Restart the affected coding agent' "$T/g.out" || CMP_MSG="$CMP_MSG no-restart-line;"
+report "update-from-a-checkout-updates-an-installed-codex-plugin"
 
 # Present but not driveable: naming it is the whole point — silence here is
 # what let the skills half drift two releases behind the binary.

@@ -133,13 +133,10 @@ codex plugin add bbs@babysit
 Restart the agent. Claude Code exposes `/bbs:autopilot`; Codex exposes
 `$bbs:autopilot`.
 
-Upgrade the CLI and Claude Code plugin with `bbs upgrade`. Codex manages its
-plugin copy with its own CLI:
+Upgrade the CLI and every installed agent plugin with `bbs update`:
 
 ```bash
-bbs upgrade
-codex plugin marketplace upgrade babysit
-codex plugin add bbs@babysit
+bbs update
 ```
 
 **`brew install bbs` is not optional.** `bin/bbs` is a build artifact and isn't
@@ -388,18 +385,15 @@ Everything is one binary reached as `bbs <sub>` — `bbs autopilot` (the runner)
 
 ## Operations
 
-Day-2 config (`bbs config`), telemetry (JSONL to `~/.babysit/analytics/`, local-only by default), and upgrade handling (`bbs upgrade check` + `bbs upgrade`) are covered in [`docs/operations.md`](docs/operations.md).
+Day-2 config (`bbs config`), telemetry (JSONL to `~/.babysit/analytics/`, local-only by default), and update handling (`bbs update check` + `bbs update`) are covered in [`docs/operations.md`](docs/operations.md).
 
 **Upgrade.** Refresh the CLI and the plugin copy for the agent you use, then restart that agent:
 
 ```bash
-bbs upgrade
-# Codex plugin installs are managed by Codex itself:
-codex plugin marketplace upgrade babysit
-codex plugin add bbs@babysit
+bbs update
 ```
 
-babysit ships as two halves that different tools own — the brew CLI and an agent plugin. `bbs upgrade` drives the CLI and Claude Code copy; Codex's plugin CLI drives the Codex copy. A marketplace plugin is cached rather than loaded from the checkout, so pulling the checkout alone does not refresh either agent's installed copy.
+babysit ships as two halves that different tools own — the brew CLI and agent plugins. `bbs update` drives the CLI plus installed Claude Code and Codex plugin copies. A marketplace plugin is cached rather than loaded from the checkout, so pulling the checkout alone does not refresh an installed copy.
 
 ## Uninstall
 
@@ -430,7 +424,7 @@ rm -f ~/.claude/babysit ~/.claude/bbs-*
 | Issue | Fix |
 |-------|-----|
 | Every `git push` denied, "GATE OFFLINE" | No `bbs` on `PATH` — `brew install lohi-ai/babysit/bbs`. The plugin ships no compiled binary, and the gate fails closed by design |
-| Skills missing or stale after upgrade | Restart the agent; for Claude Code rerun `bbs upgrade`, for Codex rerun `codex plugin marketplace upgrade babysit && codex plugin add bbs@babysit` |
+| Skills missing or stale after update | Run `bbs update`, then restart the affected agent |
 | `/bbs:*` not found in Claude Code | `claude plugin install bbs@babysit`, then restart; or `/reload-plugins` |
 | `$bbs:*` not found in Codex | `codex plugin add bbs@babysit`, then start a new session |
 | Skills show without `bbs:` prefix | Legacy install — `find ~/.claude/skills -maxdepth 1 -type l -name 'bbs:*' -delete`, then reinstall the plugin |

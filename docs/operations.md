@@ -7,7 +7,7 @@ Day-2 configuration, telemetry, and upgrade handling.
 ```bash
 bbs config set telemetry local       # off | local
 bbs config set update_check true     # false silences upgrade notifications
-bbs config set auto_upgrade false    # true runs bbs upgrade on session start
+bbs config set auto_upgrade false    # true runs bbs update on session start
 bbs config set proactive true        # false = only run skills typed explicitly
 bbs config list                      # show all keys + annotated docs
 ```
@@ -95,17 +95,17 @@ The Auto-Decision Framework's audit trail is the companion file, `~/.babysit/ana
 
 ## Auto-update
 
-`bbs upgrade check` compares the local `VERSION` against `main` on GitHub, with cache-friendly TTLs (60 min when up-to-date, 12 h when an upgrade is pending). Typical preamble wiring:
+`bbs update check` compares the local `VERSION` against `main` on GitHub, with cache-friendly TTLs (60 min when up-to-date, 12 h when an upgrade is pending). Typical preamble wiring:
 
 ```bash
-UPD="$(bbs upgrade check 2>/dev/null || true)"
+UPD="$(bbs update check 2>/dev/null || true)"
 case "$UPD" in
-  "UPGRADE_AVAILABLE "*) echo "babysit upgrade available — run bbs upgrade";;
+  "UPGRADE_AVAILABLE "*) echo "babysit update available — run bbs update";;
   "JUST_UPGRADED "*)     echo "babysit upgraded: $UPD";;
 esac
 ```
 
-Snooze a pending upgrade: `bbs upgrade --snooze 1` (24 h), `2` (48 h), `3` (7 d).
+Snooze a pending update: `bbs update --snooze 1` (24 h), `2` (48 h), `3` (7 d).
 
 ## Workflow linting
 

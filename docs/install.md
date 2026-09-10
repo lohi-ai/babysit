@@ -21,7 +21,7 @@ core bins are now Go and ship inside this one binary, reachable as `bbs <sub>`:
 |---------|------|--------------|
 | `bbs config …` (alias `bbs-config`) | `config` | read/write `~/.babysit/config.yaml` |
 | `bbs ticket …` | `ticket` | ticket identity core (`env`, `resolve`, `set-verdict`, `verdict-status`, `session`, `board`) — see the strangler note below |
-| `bbs upgrade` | `upgrade` | `git pull` + `setup-skills`, writes a `JUST_UPGRADED` marker; `upgrade check` prints `UPGRADE_AVAILABLE` when a newer release exists |
+| `bbs update` | `update` | `git pull` + `setup-skills`, refreshes installed Claude Code and Codex plugins, and writes a `JUST_UPGRADED` marker; `update check` prints `UPGRADE_AVAILABLE` when a newer release exists |
 | `bbs secrets …` (alias `bbs-env`) | `secrets` | project-local `.babysit/.env` credential loader (`load` / `seed` / `ensure-gitignore`), env resolution with `.env.base` auto-load (`resolve` / `is-set` / `list-prefix` / `prompt`), and `.babysit/qa.yaml` fields (`qa probe` / `qa list` / …) |
 | `bbs design …` | `design` | design-intelligence broker (`tokens` / `suggest` / `components` / `ux-check`) — the CSV/DESIGN.md data files ship with the skill pack |
 

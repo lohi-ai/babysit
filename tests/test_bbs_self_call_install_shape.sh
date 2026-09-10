@@ -54,7 +54,7 @@ ln -sf bbs "$BREW/bbs-env"
 
 DEV="$T/dev"; mkdir -p "$DEV"
 cp "$BIN" "$DEV/bbs"
-for a in config env slug ticket autopilot design dashboard secrets qa-config upgrade; do
+for a in config env slug ticket autopilot design dashboard secrets qa-config update upgrade; do
   ln -sf bbs "$DEV/bbs-$a"
 done
 

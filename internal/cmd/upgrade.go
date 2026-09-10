@@ -15,7 +15,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// newUpgradeCmd ports bin/bbs-upgrade as `bbs upgrade`, matching its output
+// newUpgradeCmd ports bin/bbs-upgrade as `bbs update`, matching its output
 // bytes and exit codes exactly.
 //
 // Flag parsing is disabled: the bash never parses flags. `--snooze` is special
@@ -24,7 +24,8 @@ import (
 // usage dump and unknown flags into errors, neither of which the bash does.
 func newUpgradeCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:                "upgrade [check|--snooze]",
+		Use:                "update [check|--snooze]",
+		Aliases:            []string{"upgrade"},
 		Short:              "pull latest babysit, re-run setup, write just-upgraded marker",
 		DisableFlagParsing: true,
 		RunE: func(_ *cobra.Command, args []string) error {
@@ -59,7 +60,7 @@ func runUpgrade(args []string) error {
 	oldVersion := readVersion(versionFile)
 
 	if _, err := exec.LookPath("git"); err != nil {
-		fmt.Fprintln(os.Stderr, retarget("git is required for bbs-upgrade"))
+		fmt.Fprintln(os.Stderr, retarget("git is required for "+updateCommandName()))
 		return errSilent
 	}
 
@@ -73,7 +74,7 @@ func runUpgrade(args []string) error {
 
 	fmt.Println("→ Pulling latest babysit...")
 	pullArgs := []string{"pull", "--ff-only"}
-	failMsg := "git pull failed — resolve conflicts then re-run bbs-upgrade"
+	failMsg := "git pull failed — resolve conflicts then re-run " + updateCommandName()
 	if !gitOK("rev-parse", "--abbrev-ref", "@{upstream}") {
 		// No tracking branch. A bare `git pull` fails outright here, and git's
 		// own reason ("no tracking information for the current branch") is
@@ -86,7 +87,7 @@ func runUpgrade(args []string) error {
 		}
 		fmt.Printf("  (no upstream for '%s' — pulling origin/%s explicitly)\n", branch, branch)
 		pullArgs = append(pullArgs, "origin", branch)
-		failMsg = "git pull origin " + branch + " failed — see git's output above, then re-run bbs-upgrade"
+		failMsg = "git pull origin " + branch + " failed — see git's output above, then re-run " + updateCommandName()
 	}
 	pull := exec.Command("git", pullArgs...)
 	// Inherited, not captured: git's progress and conflict output is the
@@ -127,6 +128,17 @@ func runUpgrade(args []string) error {
 			fmt.Fprintln(os.Stderr, hintSkills())
 		}
 	}
+	switch driveable, ok := upgradeCodexPlugin(); {
+	case ok:
+		pluginDone = true
+	case driveable:
+		fmt.Fprintln(os.Stderr, "  The CLI upgraded, but the Codex plugin did not — re-run the command above.")
+	default:
+		if codexPluginCached() {
+			fmt.Fprintln(os.Stderr, "A Codex marketplace plugin is installed but `codex` is not on PATH — the skills half is still stale.")
+			fmt.Fprintln(os.Stderr, hintCodexSkills())
+		}
+	}
 
 	newVersion := readVersion(versionFile)
 	if oldVersion != "" && oldVersion != newVersion {
@@ -152,7 +164,7 @@ func runUpgrade(args []string) error {
 	}
 	fmt.Printf("✓ babysit upgraded%s\n", suffix)
 	if pluginDone {
-		fmt.Println("  Restart Claude Code — plugin changes only apply on restart.")
+		fmt.Println("  Restart the affected coding agent — plugin changes only apply on restart.")
 	}
 	return nil
 }
@@ -228,7 +240,20 @@ func upgradeExternal(babysit string) error {
 	case driveable:
 		failed = true
 	default:
-		manual = append(manual, hintSkills())
+		if !codexPluginCached() {
+			manual = append(manual, hintSkills())
+		}
+	}
+
+	switch driveable, ok := upgradeCodexPlugin(); {
+	case ok:
+		done = append(done, "skills")
+	case driveable:
+		failed = true
+	default:
+		if codexPluginCached() {
+			manual = append(manual, hintCodexSkills())
+		}
 	}
 
 	if len(done) == 0 && !failed {
@@ -240,11 +265,11 @@ func upgradeExternal(babysit string) error {
 		fmt.Fprintln(os.Stderr, ln)
 	}
 	if failed || len(done) == 0 {
-		fmt.Fprintln(os.Stderr, "  Then restart Claude Code — plugin changes only apply on restart.")
+		fmt.Fprintln(os.Stderr, "  Then restart the affected coding agent — plugin changes only apply on restart.")
 		return errSilent
 	}
 	fmt.Printf("✓ babysit upgraded (%s)\n", strings.Join(done, " + "))
-	fmt.Println("  Restart Claude Code — plugin changes only apply on restart.")
+	fmt.Println("  Restart the affected coding agent — plugin changes only apply on restart.")
 	return nil
 }
 
@@ -287,9 +312,30 @@ func upgradePlugin() (driveable, ok bool) {
 	return true, true
 }
 
+// upgradeCodexPlugin refreshes the Codex marketplace snapshot, then reinstalls
+// babysit so its plugin cache picks up that snapshot.
+func upgradeCodexPlugin() (driveable, ok bool) {
+	if !codexPluginCached() || !hasCmd("codex") {
+		return false, false
+	}
+	fmt.Println("→ Updating the babysit plugin (codex)...")
+	err := runVisible("codex", "plugin", "marketplace", "upgrade", "babysit")
+	if err == nil {
+		err = runVisible("codex", "plugin", "add", "bbs@babysit")
+	}
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "codex plugin update failed — see the output above, then run:")
+		fmt.Fprintln(os.Stderr, "    "+codexPluginCmds)
+		return true, false
+	}
+	return true, true
+}
+
 // pluginCmds is the pair upgradePlugin runs, named once so a failure can quote
 // exactly what to re-run and hintSkills can quote the same thing.
 const pluginCmds = "claude plugin marketplace update babysit && claude plugin update bbs@babysit"
+
+const codexPluginCmds = "codex plugin marketplace upgrade babysit && codex plugin add bbs@babysit"
 
 // hintSkills names the command that refreshes the skill pack for the plugin
 // shape this machine has.
@@ -309,7 +355,7 @@ func hintSkills() string {
 	// Telling them to "re-sync" would send them looking for a copy step that
 	// does not exist.
 	if target, err := filepath.EvalSymlinks(dir); err == nil && target != dir {
-		return "  Skills: ~/.claude/skills/babysit links to " + target + " — run `bbs upgrade` from there"
+		return "  Skills: ~/.claude/skills/babysit links to " + target + " — run `" + updateCommandName() + "` from there"
 	}
 	return "  Skills: ~/.claude/skills/babysit is a skills-dir install — re-sync it from a checkout"
 }
@@ -320,6 +366,25 @@ func pluginCached() bool {
 		return false
 	}
 	return isDir(filepath.Join(home, ".claude", "plugins", "cache", "babysit"))
+}
+
+func codexPluginCached() bool {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return false
+	}
+	return isDir(filepath.Join(home, ".codex", "plugins", "cache", "babysit"))
+}
+
+func hintCodexSkills() string {
+	return "  Skills: " + codexPluginCmds
+}
+
+func updateCommandName() string {
+	if filepath.Base(os.Args[0]) == "bbs-upgrade" {
+		return "bbs-upgrade"
+	}
+	return "bbs-update"
 }
 
 func hasCmd(name string) bool {

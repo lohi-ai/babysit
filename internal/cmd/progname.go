@@ -13,13 +13,13 @@ import (
 // hands a brew-only user something that is not on their PATH.
 //
 // Longest alternatives first: Go's regexp is leftmost-first, so `update-check`
-// must be tried before `upgrade` would ever shadow it. Names deliberately
+// must be tried before `update` would ever shadow it. Names deliberately
 // absent are the ones that only look like aliases — `bbs-serving`,
 // `bbs-qa-lease`, `bbs-merge-base` are lock and state identifiers, not
 // commands, and must survive untouched. `qa-config` and `env` are absent for a
 // different reason: renamedRe below consumes them first.
 var aliasRe = regexp.MustCompile(
-	`(^|[^/[:alnum:]_-])bbs-(update-check|autopilot|dashboard|secrets|upgrade|config|design|ticket|slug)([^[:alnum:]_-]|$)`)
+	`(^|[^/[:alnum:]_-])bbs-(update-check|autopilot|dashboard|secrets|upgrade|update|config|design|ticket|slug)([^[:alnum:]_-]|$)`)
 
 // Commands that moved under another one. Their ported help and error strings
 // still spell the old name (byte-parity with the frozen bash oracles is what

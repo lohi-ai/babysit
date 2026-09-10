@@ -9,10 +9,10 @@ import (
 	"testing"
 )
 
-// `bbs upgrade check` is the version probe; a bare `bbs upgrade` pulls and
+// `bbs update check` is the version probe; a bare `bbs update` pulls and
 // relinks. They differ by one argv word, so a routing slip here is not a wrong
 // answer but an unrequested upgrade. This pins the dispatch: with a stubbed
-// remote and an isolated state dir, `upgrade check` must print the probe line
+// remote and an isolated state dir, `update check` must print the probe line
 // and touch nothing else.
 func TestUpgradeCheckRoutesToProbe(t *testing.T) {
 	remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -32,7 +32,7 @@ func TestUpgradeCheckRoutesToProbe(t *testing.T) {
 	var out bytes.Buffer
 	root.SetOut(&out)
 	root.SetErr(&out)
-	root.SetArgs([]string{"upgrade", "check"})
+	root.SetArgs([]string{"update", "check"})
 
 	// The probe writes to os.Stdout directly (byte-parity with the bash), so
 	// capture the real fd rather than cobra's writer.
@@ -50,7 +50,7 @@ func TestUpgradeCheckRoutesToProbe(t *testing.T) {
 	_, _ = printed.ReadFrom(r)
 
 	if execErr != nil {
-		t.Fatalf("upgrade check = %v, want nil", execErr)
+		t.Fatalf("update check = %v, want nil", execErr)
 	}
 	if got := printed.String(); got != "UPGRADE_AVAILABLE 1.0.0 9.9.9\n" {
 		t.Errorf("stdout = %q, want the probe line", got)

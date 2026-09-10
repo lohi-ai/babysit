@@ -134,7 +134,7 @@ export PATH
 # *silently* (internal/cmd/root.go sets SilenceErrors) — byte-identical to a
 # legit "no ticket" exit 1 — so probe rather than trust. `bbs ticket --help` is
 # the honest test: cobra-backed, exit 0 when served. Probe only this one: the
-# hand-rolled subcommands exit 2 on `--help`, and `bbs upgrade --help` would
+# hand-rolled subcommands exit 2 on `--help`, and `bbs update --help` would
 # run a real git pull. (`bbs help <sub>` is NOT usable: cobra exits 0 for
 # unknown topics.)
 bbs ticket --help >/dev/null 2>&1 || echo \
@@ -142,7 +142,7 @@ bbs ticket --help >/dev/null 2>&1 || echo \
 
 # Auto-update check — cache-friendly, silent when up-to-date.
 # Prints UPGRADE_AVAILABLE <old> <new> or JUST_UPGRADED <old> <new> to stderr.
-_UPD=$(bbs upgrade check 2>/dev/null || true)
+_UPD=$(bbs update check 2>/dev/null || true)
 [ -n "$_UPD" ] && echo "$_UPD" >&2 || true
 
 # Session tracking — count concurrent babysit sessions, prune stale (>120 min).
@@ -284,10 +284,10 @@ work. Branch shape and git-flow policy are the workflow layer's concern, not
 a skill precondition. Never invent a ticket id; to attach identity without a
 checkout, `export BABYSIT_TICKET=<id>` (wins the resolve ladder).
 ### Handling update-check output
-- `UPGRADE_AVAILABLE <old> <new>` — mention once ("babysit upgrade available
-  — run `bbs upgrade`") and continue; never auto-run or block.
+- `UPGRADE_AVAILABLE <old> <new>` — mention once ("babysit update available
+  — run `bbs update`") and continue; never auto-run or block.
 - `JUST_UPGRADED <from> <to>` — emit this exact line at top of response:
-  > babysit upgraded v\<from\> → v\<to\>. Run `/plugin marketplace update babysit` then `/reload-plugins` to pick up the new skills (the shell upgrade can't do this for you).
+  > babysit upgraded v\<from\> → v\<to\>. Restart your coding agent to pick up the new skills.
 ## Telemetry (run last)
 After the skill completes (success, error, abort), append a completion row
 correlated by `_SESSION_ID`.
