@@ -1194,6 +1194,19 @@ func landTickets(args []string) int {
 		if b == "" {
 			return 2
 		}
+		if enforced, ready, reasons, err := ticketV2Readiness(primary, env, t, "land"); err != nil {
+			fmt.Fprintln(os.Stderr, "STATUS: BLOCKED")
+			fmt.Fprintf(os.Stderr, "REASON: %s readiness could not be evaluated: %v\n", t, err)
+			return 2
+		} else if enforced {
+			if !ready {
+				fmt.Fprintln(os.Stderr, "STATUS: BLOCKED")
+				fmt.Fprintf(os.Stderr, "REASON: %s has stale or incomplete v2 readiness: %s\n", t, strings.Join(reasons, ","))
+				return 2
+			}
+			rows = append(rows, row{t, b})
+			continue
+		}
 		var missing []string
 		for _, skill := range []string{"qa", "review-pr"} {
 			if !serveVerdictOK(primary, t, skill) {

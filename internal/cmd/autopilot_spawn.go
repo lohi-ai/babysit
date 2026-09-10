@@ -546,6 +546,7 @@ func (a *apState) runSpawn(job spawnJob, o spawnOpts) (spawnResult, error) {
 	}
 	res.PID = c.Process.Pid
 	_ = os.WriteFile(pidPath, []byte(strconv.Itoa(res.PID)+"\n"), 0o644)
+	writeProcessIdentity(pidPath, res.PID)
 	_ = c.Process.Release()
 	return res, nil
 }
@@ -583,6 +584,9 @@ func readAlivePID(path string) (int, bool) {
 	pid, err := strconv.Atoi(strings.TrimSpace(string(b)))
 	if err != nil || pid <= 0 {
 		return 0, false
+	}
+	if known, matches := readMatchingProcessIdentity(path, pid); known {
+		return pid, matches
 	}
 	return pid, processAlive(pid)
 }

@@ -1,12 +1,17 @@
 package cmd
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
+
+	"github.com/reallongnguyen/babysit/internal/config"
 )
 
 // Git-flow policy resolution — the one codepath that reads
@@ -172,11 +177,29 @@ func gitFlowFrom(content, base string) (gitFlowPolicy, error) {
 // git-flow)"`, so an unquoted value is arbitrary shell: `base_branch: main;
 // rm -rf ~` is a committed file in a repo babysit clones and reads. The other
 // keys are enum-validated, but quoting them too keeps one rule to remember.
-func printGitFlow() {
+func printGitFlow(args []string) {
 	p, err := resolveGitFlow("")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "git-flow: %v\n", err)
 		os.Exit(2)
+	}
+	if hasArg(args, "--json") {
+		effective := map[string]string{
+			"profile": p.Profile, "base_branch": p.BaseBranch, "mode": p.Mode,
+			"land": p.Land, "finish": p.Finish, "push": p.Push,
+			"rigor": p.Rigor, "review_effort": p.ReviewEffort,
+		}
+		provenance := gitFlowProvenance("")
+		body, _ := json.Marshal(struct {
+			Effective  map[string]string `json:"effective"`
+			Provenance map[string]string `json:"provenance"`
+		}{effective, provenance})
+		sum := sha256.Sum256(body)
+		printV2Envelope(map[string]interface{}{
+			"effective": effective, "provenance": provenance,
+			"digest": "sha256:" + hex.EncodeToString(sum[:]),
+		})
+		return
 	}
 	fmt.Printf("BBS_PROFILE=%s\n", shq(p.Profile))
 	fmt.Printf("BBS_BASE_BRANCH=%s\n", shq(p.BaseBranch))
@@ -186,6 +209,51 @@ func printGitFlow() {
 	fmt.Printf("BBS_PUSH=%s\n", shq(p.Push))
 	fmt.Printf("BBS_RIGOR=%s\n", shq(p.Rigor))
 	fmt.Printf("BBS_REVIEW_EFFORT=%s\n", shq(p.ReviewEffort))
+}
+
+// gitFlowProvenance explains which rung produced each effective field. It is
+// deliberately separate from gitFlowFrom: provenance is a v2 observation,
+// while the legacy resolver and its byte-for-byte shell output stay unchanged.
+func gitFlowProvenance(dir string) map[string]string {
+	content := ""
+	configured := false
+	if top := gitOutIn(dir, "rev-parse", "--show-toplevel"); top != "" {
+		if b, err := os.ReadFile(filepath.Join(top, ".babysit", "git-flow.yaml")); err == nil {
+			content, configured = string(b), true
+		}
+	}
+	profileSource := "default:pet"
+	if gfScalar(content, "profile") != "" {
+		profileSource = "git-flow.yaml:profile"
+	}
+	fieldSource := func(key, inherited string) string {
+		if gfScalar(content, key) != "" {
+			return "git-flow.yaml:" + key
+		}
+		return inherited
+	}
+	baseSource := "default:main"
+	if os.Getenv("BBS_BASE_BRANCH") != "" {
+		baseSource = "env:BBS_BASE_BRANCH"
+	} else if gitFlowBase(content) != "" {
+		baseSource = "git-flow.yaml:base"
+	} else if _, ok := config.Get("base_branch"); ok {
+		baseSource = "global-config:base_branch"
+	} else if gitOKIn(dir, "rev-parse", "--verify", "-q", "origin/HEAD") {
+		baseSource = "git:origin/HEAD"
+	}
+	profilePreset := "profile"
+	if !configured {
+		profilePreset = "default:pet"
+	}
+	return map[string]string{
+		"profile": profileSource, "base_branch": baseSource,
+		"mode":   fieldSource("mode", profilePreset),
+		"land":   fieldSource("land", profilePreset),
+		"finish": fieldSource("finish", "default:review"),
+		"push":   fieldSource("push", "default:true"),
+		"rigor":  profilePreset, "review_effort": profilePreset,
+	}
 }
 
 // shq single-quotes s for `eval`. Inside single quotes the shell expands
