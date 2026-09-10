@@ -1187,14 +1187,14 @@ func landTickets(args []string) int {
 	// Resolve branches and verdicts for EVERY ticket before merging any of them:
 	// a batch that lands two tickets and then blocks on the third's missing QA
 	// leaves a base nobody asked for.
-	type row struct{ ticket, branch string }
+	type row struct{ ticket, branch, verifiedHead string }
 	var rows []row
 	for _, t := range tickets {
 		b := ticketBranch(t)
 		if b == "" {
 			return 2
 		}
-		if enforced, ready, reasons, err := ticketV2Readiness(primary, env, t, "land"); err != nil {
+		if enforced, ready, reasons, verifiedHead, err := ticketV2Readiness(primary, env, t, "land"); err != nil {
 			fmt.Fprintln(os.Stderr, "STATUS: BLOCKED")
 			fmt.Fprintf(os.Stderr, "REASON: %s readiness could not be evaluated: %v\n", t, err)
 			return 2
@@ -1204,7 +1204,12 @@ func landTickets(args []string) int {
 				fmt.Fprintf(os.Stderr, "REASON: %s has stale or incomplete v2 readiness: %s\n", t, strings.Join(reasons, ","))
 				return 2
 			}
-			rows = append(rows, row{t, b})
+			if !fullSHARe.MatchString(verifiedHead) {
+				fmt.Fprintln(os.Stderr, "STATUS: BLOCKED")
+				fmt.Fprintf(os.Stderr, "REASON: %s readiness did not return a verified full head SHA.\n", t)
+				return 2
+			}
+			rows = append(rows, row{ticket: t, branch: b, verifiedHead: verifiedHead})
 			continue
 		}
 		var missing []string
@@ -1219,7 +1224,7 @@ func landTickets(args []string) int {
 			fmt.Fprintf(os.Stderr, "RECOMMENDATION: finish the ticket (see bbs-ticket board), then re-run; to compose it for review without landing, use 'bbs-ticket serve %s'.\n", t)
 			return 2
 		}
-		rows = append(rows, row{t, b})
+		rows = append(rows, row{ticket: t, branch: b})
 	}
 
 	gitdir := gitCOut(primary, "rev-parse", "--absolute-git-dir")
@@ -1247,10 +1252,14 @@ func landTickets(args []string) int {
 
 	landed, already := 0, 0
 	for _, r := range rows {
+		mergeTarget := r.branch
+		if r.verifiedHead != "" {
+			mergeTarget = r.verifiedHead
+		}
 		// An already-landed ticket is the normal state on a re-run (a foreman
 		// re-reconciling its batch, a resumed session): report it and move on
 		// rather than minting an empty merge commit per pass.
-		if gitCOK(primary, "merge-base", "--is-ancestor", r.branch, "HEAD") {
+		if gitCOK(primary, "merge-base", "--is-ancestor", mergeTarget, "HEAD") {
 			fmt.Printf("LANDED=0 %s %s (already on %s)\n", r.ticket, r.branch, base)
 			already++
 			continue
@@ -1258,7 +1267,7 @@ func landTickets(args []string) int {
 		// --no-ff so the ticket stays one identifiable unit on base even when it
 		// could fast-forward, which is what makes a landing reviewable after the
 		// fact and revertable as a whole.
-		if ok, said := gitCRun(primary, "merge", "--no-ff", "--no-edit", r.branch); !ok {
+		if ok, said := gitCRun(primary, "merge", "--no-ff", "--no-edit", mergeTarget); !ok {
 			conflicted, detail := mergeFailure(primary, said)
 			gitCOK(primary, "merge", "--abort")
 			fmt.Fprintln(os.Stderr, "STATUS: BLOCKED")

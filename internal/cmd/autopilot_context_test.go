@@ -23,7 +23,7 @@ func TestContextProjectionIsBoundedKeepsRequiredReadsAndRedactsLogs(t *testing.T
 	mustWrite(t, filepath.Join(home, "requirement.md"), requirement)
 	mustWrite(t, filepath.Join(home, "plan.md"), plan)
 	mustWrite(t, filepath.Join(home, "logs", "worker.log"), "normal line\nAPI_TOKEN=do-not-leak\nfinished\n")
-	mustWrite(t, filepath.Join(home, "attempts", "implement-1.json"), `{"schema_version":2,"id":"implement-1","ticket":"ap-05","run_id":"run-05","gate":"implement","state":"waiting","revision":2,"owner":"worker","idempotency_key":"key","runtime":{"kind":"native","handle":"h","transport_id":"t"},"result":{"log_path":"logs/worker.log"},"created_at":"2026-09-10T00:00:00Z","updated_at":"2026-09-10T00:01:00Z"}`)
+	mustWrite(t, filepath.Join(home, "attempts", "implement-1.json"), `{"schema_version":2,"id":"implement-1","ticket":"ap-05","run_id":"run-05","gate":"implement","state":"waiting","revision":2,"owner":"worker","idempotency_key":"key","assignment":{"prompt":"TOP SECRET SOURCE BODY","prohibited_operations":["push"]},"runtime":{"kind":"native","handle":"h","transport_id":"t"},"result":{"log_path":"logs/worker.log","raw_output":"DO NOT EMIT"},"created_at":"2026-09-10T00:00:00Z","updated_at":"2026-09-10T00:01:00Z"}`)
 	a := &apState{slug: "project", branch: "main", ticket: "ap-05", stateRoot: project}
 
 	snapshot, err := collectAutopilotSnapshot(a, "")
@@ -47,6 +47,10 @@ func TestContextProjectionIsBoundedKeepsRequiredReadsAndRedactsLogs(t *testing.T
 	}
 	if got := stringValue(snapshot.ActiveAttempt["liveness"]); got != "unknown" {
 		t.Fatalf("native liveness must remain unknown without adapter evidence, got %q", got)
+	}
+	encoded, _ := json.Marshal(snapshot.ActiveAttempt)
+	if strings.Contains(string(encoded), "TOP SECRET") || strings.Contains(string(encoded), "DO NOT EMIT") {
+		t.Fatalf("snapshot leaked unbounded attempt bodies: %s", encoded)
 	}
 }
 

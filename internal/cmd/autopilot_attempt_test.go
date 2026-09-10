@@ -112,6 +112,49 @@ func TestAttemptLifecycleIsIdempotentCASCheckedAndTerminal(t *testing.T) {
 	}
 }
 
+func TestAttemptReplayRepairsPreparedOwnershipAfterCheckpointWriteLoss(t *testing.T) {
+	repo := initSnapshotRepo(t)
+	t.Chdir(repo)
+	a, env := attemptFixture(t, repo)
+	input := attemptAssignment(env, 1, "dispatch-repair")
+	first, err := prepareAttempt(a, env.Ticket, input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cpPath := filepath.Join(env.ProjectHome, "tickets", env.Ticket, "checkpoint.json")
+	mustWrite(t, cpPath, `{"schema_version":2,"run_id":"run-04","revision":1,"ticket":"ap-04","branch":"main"}`)
+	replay, err := prepareAttempt(a, env.Ticket, input)
+	if err != nil || replay.ID != first.ID {
+		t.Fatalf("replay did not repair ownership: attempt=%+v err=%v", replay, err)
+	}
+	cp := readJSONObject(cpPath)
+	if stringValue(cp["active_attempt_id"]) != first.ID || int64Value(cp["revision"]) != 2 {
+		t.Fatalf("checkpoint ownership not repaired: %#v", cp)
+	}
+}
+
+func TestAttemptStartFailsClosedOnMalformedExistingAttempt(t *testing.T) {
+	repo := initSnapshotRepo(t)
+	t.Chdir(repo)
+	a, env := attemptFixture(t, repo)
+	mustMkdirAll(t, filepath.Join(env.ProjectHome, "tickets", env.Ticket, "attempts"))
+	mustWrite(t, filepath.Join(env.ProjectHome, "tickets", env.Ticket, "attempts", "broken.json"), "{")
+	if _, err := prepareAttempt(a, env.Ticket, attemptAssignment(env, 1, "dispatch")); err == nil {
+		t.Fatal("malformed existing attempt was ignored")
+	}
+}
+
+func TestAttemptStartRequiresExplicitRevision(t *testing.T) {
+	repo := initSnapshotRepo(t)
+	t.Chdir(repo)
+	a, env := attemptFixture(t, repo)
+	input := attemptAssignment(env, 1, "dispatch")
+	delete(input, "expected_state_revision")
+	if _, err := prepareAttempt(a, env.Ticket, input); err == nil {
+		t.Fatal("missing expected_state_revision was treated as revision zero")
+	}
+}
+
 func TestAttemptLivenessUsesProcessIncarnationAndCancellationConfirmation(t *testing.T) {
 	repo := initSnapshotRepo(t)
 	t.Chdir(repo)

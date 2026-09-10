@@ -84,7 +84,10 @@ func prepareAttempt(a *apState, ticketID string, input map[string]interface{}) (
 			return nil, fmt.Errorf("invalid %s", name)
 		}
 	}
-	expected := int64Value(input["expected_state_revision"])
+	expected, ok := exactInt64(input["expected_state_revision"])
+	if !ok || expected < 0 {
+		return nil, fmt.Errorf("assignment needs a non-negative integer expected_state_revision")
+	}
 	assignment, _ := input["assignment"].(map[string]interface{})
 	if assignment == nil {
 		assignment = map[string]interface{}{}
@@ -112,15 +115,35 @@ func prepareAttempt(a *apState, ticketID string, input map[string]interface{}) (
 		if err := os.MkdirAll(attemptDir, 0o755); err != nil {
 			return err
 		}
-		paths, _ := filepath.Glob(filepath.Join(attemptDir, "*.json"))
+		paths, globErr := filepath.Glob(filepath.Join(attemptDir, "*.json"))
+		if globErr != nil {
+			return globErr
+		}
 		for _, path := range paths {
-			prior := readAttemptRecord(path)
-			if prior == nil {
-				continue
+			prior, readErr := readAttemptRecordStrict(path)
+			if readErr != nil {
+				return fmt.Errorf("cannot inspect existing attempt %s: %w", filepath.Base(path), readErr)
 			}
 			if prior.IdempotencyKey == key {
 				if prior.RunID != runID || prior.Gate != gate || prior.Owner != owner || digestJSON(prior.Assignment) != digestJSON(assignment) {
 					return fmt.Errorf("idempotency key %s was already used for a different assignment", key)
+				}
+				if !terminalAttemptStateV2(prior.State) {
+					switch active := stringValue(cp["active_attempt_id"]); active {
+					case prior.ID:
+					case "":
+						if expected != int64Value(cp["revision"]) {
+							return fmt.Errorf("state revision changed: expected %d, current %d", expected, int64Value(cp["revision"]))
+						}
+						cp["active_attempt_id"] = prior.ID
+						cp["revision"] = int64Value(cp["revision"]) + 1
+						cp["updated_at"] = isoNow()
+						if err := writeJSONAtomic(cpPath, cp); err != nil {
+							return err
+						}
+					default:
+						return fmt.Errorf("active attempt %s already owns this ticket", active)
+					}
 				}
 				rec = prior
 				return nil
@@ -132,8 +155,11 @@ func prepareAttempt(a *apState, ticketID string, input map[string]interface{}) (
 		if expected != int64Value(cp["revision"]) {
 			return fmt.Errorf("state revision changed: expected %d, current %d", expected, int64Value(cp["revision"]))
 		}
-		idx := ticket.ReadDoc(st.IndexPath())
-		if control := idx.Get("control.state"); control != "" {
+		idx, err := readStrictObject(st.IndexPath(), true)
+		if err != nil {
+			return err
+		}
+		if control := nestedString(idx, "control", "state"); control != "" {
 			return fmt.Errorf("ticket is %s; no new attempt may dispatch", control)
 		}
 		now := isoNow()
@@ -205,9 +231,10 @@ func mutateAttempt(a *apState, ticketID, id string, expected int64, patch map[st
 	path := filepath.Join(st.Home(), "attempts", id+".json")
 	var rec *attemptRecord
 	err := withLock(st, func() error {
-		rec = readAttemptRecord(path)
-		if rec == nil {
-			return fmt.Errorf("attempt %s not found", id)
+		var readErr error
+		rec, readErr = readAttemptRecordStrict(path)
+		if readErr != nil {
+			return fmt.Errorf("attempt %s cannot be read: %w", id, readErr)
 		}
 		if rec.Revision != expected {
 			return fmt.Errorf("attempt revision changed: expected %d, current %d", expected, rec.Revision)
@@ -377,21 +404,38 @@ func readJSONObjectArg(args []string) (map[string]interface{}, error) {
 	if err := dec.Decode(&out); err != nil || out == nil {
 		return nil, fmt.Errorf("input must be a JSON object")
 	}
+	if err := requireJSONEOF(dec); err != nil {
+		return nil, fmt.Errorf("input must contain exactly one JSON object")
+	}
 	return out, nil
 }
 
 func readAttemptRecord(path string) *attemptRecord {
-	b, err := os.ReadFile(path)
+	rec, err := readAttemptRecordStrict(path)
 	if err != nil {
 		return nil
+	}
+	return rec
+}
+
+func readAttemptRecordStrict(path string) (*attemptRecord, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
 	}
 	var rec attemptRecord
 	dec := json.NewDecoder(bytes.NewReader(b))
 	dec.UseNumber()
-	if dec.Decode(&rec) != nil || rec.SchemaVersion != 2 {
-		return nil
+	if err := dec.Decode(&rec); err != nil || rec.SchemaVersion != 2 {
+		if err != nil {
+			return nil, err
+		}
+		return nil, fmt.Errorf("unsupported schema_version %d", rec.SchemaVersion)
 	}
-	return &rec
+	if err := requireJSONEOF(dec); err != nil {
+		return nil, err
+	}
+	return &rec, nil
 }
 
 func writeAttemptRecord(path string, rec *attemptRecord) error {
