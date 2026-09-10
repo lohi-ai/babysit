@@ -102,7 +102,7 @@ func (s *dashServer) handleReadiness(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "action must be push, pr, or land")
 		return
 	}
-	enforced, ready, reasons, err := ticketV2Readiness(s.currentDir, st.Env, st.Env.Ticket, action)
+	enforced, ready, reasons, _, err := ticketV2Readiness(s.currentDir, st.Env, st.Env.Ticket, action)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"available": false,
