@@ -228,6 +228,13 @@ export interface SkillEventRow {
   session?: string;
   duration_s?: number;
   outcome?: string;
+  provider_usage?: {
+    available: boolean;
+    input_tokens?: number | null;
+    output_tokens?: number | null;
+    total_tokens?: number | null;
+    reason?: string;
+  };
   [k: string]: unknown;
 }
 

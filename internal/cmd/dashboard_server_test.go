@@ -100,6 +100,17 @@ func TestDataJSIsNeutralizedInServedMode(t *testing.T) {
 	}
 }
 
+func TestReadinessRejectsAnUnknownAction(t *testing.T) {
+	s, _ := sandboxServer(t)
+	w := send(t, s, "GET", "/api/tickets/proj/bs-aaaa1111/readiness?action=merge")
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("want 400, got %d: %s", w.Code, w.Body)
+	}
+	if !strings.Contains(w.Body.String(), "action must be push, pr, or land") {
+		t.Errorf("missing readiness action guidance: %s", w.Body)
+	}
+}
+
 func TestCreateTicketWritesRequirementAndIndex(t *testing.T) {
 	s, _ := sandboxServer(t)
 	w := post(t, s, "/api/tickets", `{"project":"proj","requirement":"Make the thing work\nmore detail"}`)

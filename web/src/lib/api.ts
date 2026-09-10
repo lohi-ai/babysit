@@ -14,6 +14,10 @@ async function post<T>(path: string, body: unknown): Promise<T> {
   return send<T>('POST', path, body);
 }
 
+function get<T>(path: string): Promise<T> {
+  return send<T>('GET', path);
+}
+
 async function send<T>(method: string, path: string, body?: unknown): Promise<T> {
   const res = await fetch(path, {
     method,
@@ -134,6 +138,20 @@ export function commentOnApproval(project: string, ticket: string, draft: Commen
  *  falls back to the HTML embedded in the snapshot. */
 export function prototypeUrl(project: string, ticket: string) {
   return `/api/tickets/${project}/${ticket}/prototype`;
+}
+
+export interface ReadinessResult {
+  available: boolean;
+  action: 'push' | 'pr' | 'land';
+  enforced?: boolean;
+  ready?: boolean;
+  reason_codes?: string[];
+  reason?: string;
+}
+
+/** Reads the CLI evaluator through the served dashboard; it never derives readiness from verdict text. */
+export function ticketReadiness(project: string, ticket: string, action: ReadinessResult['action'] = 'pr') {
+  return get<ReadinessResult>(`/api/tickets/${project}/${ticket}/readiness?action=${action}`);
 }
 
 export interface SpawnResult {

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { ChevronDown } from 'lucide-react';
 import { foremanLive, type ForemanRow, type HistoryRow, type ManifestRepo, type NamedFile, type Snapshot, type TicketApproval, type TicketControl, type TicketDetail as TicketDetailData } from '../lib/data';
-import { assignTicket, controlTicket, type ControlAction } from '../lib/api';
+import { assignTicket, controlTicket, ticketReadiness, type ControlAction, type ReadinessResult } from '../lib/api';
 import { Button } from '../components/Button';
 import { Tag } from '../components/Tag';
 import { ErrorBox } from '../components/ErrorBox';
@@ -52,6 +52,21 @@ export function TicketDetail({ snapshot, ticketId }: { snapshot: Snapshot; ticke
     }
     return '';
   }, [snapshot, state.project, ticketId]);
+  const { mode } = useControlPlane();
+  const [readiness, setReadiness] = useState<ReadinessResult | null>(null);
+
+  useEffect(() => {
+    if (mode !== 'served' || !project) {
+      setReadiness(null);
+      return;
+    }
+    let active = true;
+    ticketReadiness(project, ticketId).then(
+      result => { if (active) setReadiness(result); },
+      error => { if (active) setReadiness({ available: false, action: 'pr', reason: String(error) }); },
+    );
+    return () => { active = false; };
+  }, [mode, project, ticketId]);
 
   // Pause and cancel never touch a running session — this is what says so.
   const workerRunning = (snapshot.sessions?.sessions ?? []).some(s => s.ticket === ticketId);
@@ -153,6 +168,7 @@ export function TicketDetail({ snapshot, ticketId }: { snapshot: Snapshot; ticke
       <StatusStrip
         detail={detail}
         running={runner}
+        readiness={readiness}
         foreman={
           <AssignRow
             project={project}
@@ -691,10 +707,12 @@ function ApprovalCallout({
 function StatusStrip({
   detail,
   running,
+  readiness,
   foreman,
 }: {
   detail: TicketDetailData;
   running: string | null;
+  readiness: ReadinessResult | null;
   foreman: ReactNode;
 }) {
   const qa = detail.verdict_statuses['qa'] ?? 'none';
@@ -727,6 +745,7 @@ function StatusStrip({
     { label: 'Foreman', value: foreman },
     { label: 'QA', value: <Tag tone={VERDICT_TONE[qa] ?? 'muted'}>{qa}</Tag> },
     { label: 'Review', value: <Tag tone={VERDICT_TONE[review] ?? 'muted'}>{review}</Tag> },
+    { label: 'Readiness', value: readinessValue(readiness) },
     { label: 'Size', value: detail.size ?? '—' },
     { label: 'Updated', value: <span title={formatDate(detail.updated_at)}>{formatRelative(detail.updated_at)}</span> },
   ];
@@ -765,6 +784,15 @@ function StatusStrip({
       ))}
     </dl>
   );
+}
+
+function readinessValue(readiness: ReadinessResult | null): ReactNode {
+  if (!readiness) return <span style={{ color: 'var(--text-muted)' }}>snapshot only</span>;
+  if (!readiness.available) return <span title={readiness.reason} style={{ color: 'var(--text-muted)' }}>unavailable</span>;
+  if (!readiness.enforced) return <span style={{ color: 'var(--text-muted)' }}>legacy</span>;
+  if (readiness.ready) return <Tag tone="ok">ready</Tag>;
+  const reasons = readiness.reason_codes?.join(', ') || 'not ready';
+  return <span className="font-mono" title={reasons} style={{ color: 'var(--status-blocked-text)' }}>{reasons}</span>;
 }
 
 function TabButton({

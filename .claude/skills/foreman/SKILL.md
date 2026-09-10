@@ -556,6 +556,18 @@ BABYSIT_TICKET=<id> bbs ticket verdict-status --skill qa        # DONE|…
 BABYSIT_TICKET=<id> bbs ticket verdict-status --skill review-pr
 ```
 
+For a version-2 run, read the canonical evaluator before any finish handler;
+do not infer freshness from those Markdown verdicts:
+
+```bash
+BABYSIT_TICKET=<id> bbs ticket readiness --json --action <push|pr|land>
+```
+
+Inspect `data.enforced` and `data.ready`: an `ok: true` envelope with
+`ready:false` is a blocked release and its `reason_codes` are the row to
+report. An unenforced legacy run retains the verdict path above. This is the
+same evaluator used by the hook and `ticket land`, not a second foreman rule.
+
 then report the row (ticket, branch, verdicts, pushed, one-line summary) and
 archive the pane (`"$ORCA" terminal read --terminal "$T" --limit 2000 --json > <scratch>/$T.json`).
 QA across workers serializes on `bbs ticket qa-lease` — workers handle that
