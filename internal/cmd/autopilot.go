@@ -22,7 +22,7 @@ import (
 // bash script (unknown flags/args are ignored, not rejected by cobra).
 func newAutopilotCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:                "autopilot {checkpoint|read|clear|current|set-current|timeline|recover|base-branch|git-flow|lint-workflow|probe|explain|check-skill-deps|spawn-goal|spawn-review|spawn-verify|review-gate} ...",
+		Use:                "autopilot {checkpoint|read|clear|current|set-current|timeline|recover|snapshot|base-branch|git-flow|lint-workflow|probe|explain|check-skill-deps|spawn-goal|spawn-review|spawn-verify|review-gate} ...",
 		Short:              "autopilot state helper (checkpoints, timeline, probe/explain)",
 		DisableFlagParsing: true,
 		RunE: func(_ *cobra.Command, args []string) error {
@@ -32,7 +32,7 @@ func newAutopilotCmd() *cobra.Command {
 	}
 }
 
-const autopilotUsage = "usage: bbs-autopilot {checkpoint|read|clear|current|set-current|timeline|recover|base-branch|git-flow|lint-workflow|probe|explain|check-skill-deps|spawn-goal|spawn-review|spawn-verify|review-gate} ..."
+const autopilotUsage = "usage: bbs-autopilot {checkpoint|read|clear|current|set-current|timeline|recover|snapshot|base-branch|git-flow|lint-workflow|probe|explain|check-skill-deps|spawn-goal|spawn-review|spawn-verify|review-gate} ..."
 
 // apState is the identity + state-root resolved once per invocation, mirroring
 // the top-of-script derivation in bin/bbs-autopilot.
@@ -67,10 +67,12 @@ func runAutopilot(args []string) {
 		a.timeline(rest)
 	case "recover":
 		a.recover()
+	case "snapshot":
+		a.snapshotV2(rest)
 	case "base-branch":
 		fmt.Println(a.baseBranch())
 	case "git-flow":
-		printGitFlow()
+		printGitFlow(rest)
 	case "lint-workflow":
 		a.lintWorkflow(rest)
 	case "probe":
