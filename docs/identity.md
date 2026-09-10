@@ -116,7 +116,8 @@ yourself confused, the one extension difference disambiguates them.
 | Create on ticket creation | `bbs ticket ensure` | Atomic mktemp+mv; under existing index-lock |
 | Update single repo's branch | `bbs ticket set-branch <ticket> <repo> <branch>` | Atomic mktemp+mv; bumps `updated_at`; under existing index-lock |
 | Read | `bbs ticket get-manifest [<ticket>]` | Validates `version: 1`; round-trips byte-identically to a no-op set-branch |
-| Remove | `bbs ticket clear` | Removes the entire `tickets/<id>/` directory |
+| Remove one | Dashboard delete | Moves one ticket directory to `~/.babysit/trash` |
+| Remove all active tickets | `bbs ticket clear --all` | Moves every `projects/*/tickets/*` directory to `~/.babysit/trash`; leaves configs, sessions, analytics, branches, and worktrees untouched |
 
 All writes acquire the existing `_LOCK_PATH` lock used for `index.json`
 mutations. Concurrent set-branch calls serialize.
@@ -210,7 +211,7 @@ Six explicit BLOCK shapes. Each emits the three-line
 | Failure | RECOMMENDATION line |
 |---------|--------------------|
 | `BBS_TICKET` vs `BABYSIT_TICKET` conflict | `unset one of them, e.g. `unset BBS_TICKET` to use the BABYSIT_TICKET value` |
-| `manifest.yaml` malformed YAML | `edit <path> by hand, or run `bbs ticket clear` to start over` |
+| `manifest.yaml` malformed YAML | `edit <path> by hand, or move the malformed manifest aside to start over` |
 | `manifest.yaml` schema version > 1 | `upgrade babysit (`/plugin marketplace update babysit`) or check out an older babysit version` |
 | `BABYSIT_TICKET` set, ticket dir absent | `unset BABYSIT_TICKET, or run `bbs ticket session end <BABYSIT_SESSION>`` |
 | `bbs ticket session attach <nonexistent uuid>` | ``bbs ticket session list` to see active sessions` |

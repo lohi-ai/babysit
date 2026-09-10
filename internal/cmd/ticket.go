@@ -95,6 +95,8 @@ func newTicketCmd() *cobra.Command {
 				runSetBranch(args[1:])
 			case "ensure":
 				runEnsure(args[1:])
+			case "clear":
+				runClear(args[1:])
 			case "merge-base":
 				runMergeBase(args[1:])
 			case "refresh":
@@ -158,6 +160,9 @@ Subcommands:
                     worktree divert; worktree = always divert, primary stays
                     on base; diverts print WORKTREE=<path>; developer role
                     asks before in-place — exit 3; --cut-branch/--no-branch
+  clear --all       move every active ticket record under ~/.babysit/projects
+                    to ~/.babysit/trash; leaves config, sessions, analytics,
+                    branches, and worktrees untouched
   init              initialize index.json + manifest.yaml for the current ticket
   resolve [--explain]   print ticket id (env → manifest cwd-match → branch);
                         exit 0 resolved, 1 no resolution, 2 conflict-BLOCKED
