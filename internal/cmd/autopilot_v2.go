@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -220,6 +221,10 @@ func collectAutopilotSnapshotOnce(a *apState, ticketID, ticketHome string) (*aut
 	}
 	gitState, err := snapshotGitState(top, policy.Effective["base_branch"])
 	if err != nil {
+		var se *snapshotError
+		if errors.As(err, &se) {
+			return nil, se
+		}
 		return nil, &snapshotError{Code: "GIT_STATE_UNAVAILABLE", Message: err.Error(), Retryable: true, Exit: 3}
 	}
 
@@ -261,9 +266,18 @@ func collectAutopilotSnapshotOnce(a *apState, ticketID, ticketHome string) (*aut
 		WorkflowDigest: stringValue(cp["workflow_digest"]), Mode: deriveMode(idx, ticketHome, top),
 		Control: idx["control"], StopAfter: stringValue(cp["stop_after"]), Contract: contractVersion(cp),
 	}
+	activeID := stringValue(cp["active_attempt_id"])
+	if activeID != "" {
+		if safeTicket(activeID) != activeID {
+			return nil, &snapshotError{Code: "STATE_MALFORMED", Message: "checkpoint has invalid active_attempt_id", Exit: 3}
+		}
+		if _, err := readAttemptRecordStrict(filepath.Join(ticketHome, "attempts", activeID+".json")); err != nil {
+			return nil, &snapshotError{Code: "STATE_MALFORMED", Message: "active attempt is malformed or unreadable", Details: map[string]string{"attempt_id": activeID}, Exit: 3}
+		}
+	}
 	s.Artifacts = collectSnapshotArtifacts(ticketHome, s.Run.Workflow)
-	s.Gates = collectSnapshotGates(ticketHome)
-	s.ActiveAttempt = activeAttempt(ticketHome, stringValue(cp["active_attempt_id"]))
+	s.Gates = collectSnapshotGates(ticketHome, cp)
+	s.ActiveAttempt = activeAttempt(ticketHome, activeID)
 	s.Obligations = deriveObligations(s, st)
 	return s, nil
 }
@@ -282,7 +296,21 @@ func readStrictObject(path string, required bool) (map[string]interface{}, error
 	if err := dec.Decode(&out); err != nil || out == nil {
 		return nil, &snapshotError{Code: "STATE_MALFORMED", Message: "malformed required state: " + path, Details: map[string]string{"path": path}, Exit: 3}
 	}
+	if err := requireJSONEOF(dec); err != nil {
+		return nil, &snapshotError{Code: "STATE_MALFORMED", Message: "malformed required state: " + path, Details: map[string]string{"path": path}, Exit: 3}
+	}
 	return out, nil
+}
+
+func requireJSONEOF(dec *json.Decoder) error {
+	var extra interface{}
+	if err := dec.Decode(&extra); err != io.EOF {
+		if err == nil {
+			return fmt.Errorf("multiple JSON values")
+		}
+		return err
+	}
+	return nil
 }
 
 func snapshotGitFlow(dir string) (snapshotPolicy, error) {
@@ -301,6 +329,23 @@ func snapshotGitFlow(dir string) (snapshotPolicy, error) {
 }
 
 func snapshotGitState(dir, base string) (snapshotGit, error) {
+	for attempt := 0; attempt < 2; attempt++ {
+		first, err := snapshotGitStateOnce(dir, base)
+		if err != nil {
+			return snapshotGit{}, err
+		}
+		second, err := snapshotGitStateOnce(dir, base)
+		if err != nil {
+			return snapshotGit{}, err
+		}
+		if first == second {
+			return second, nil
+		}
+	}
+	return snapshotGit{}, &snapshotError{Code: "STATE_CHANGED", Message: "git state changed while it was being read", Retryable: true, Exit: 3}
+}
+
+func snapshotGitStateOnce(dir, base string) (snapshotGit, error) {
 	head, err := gitOutputStrict(dir, "rev-parse", "HEAD")
 	if err != nil {
 		return snapshotGit{}, err
@@ -442,21 +487,26 @@ func collectSnapshotArtifacts(ticketHome, workflow string) []snapshotArtifact {
 	return out
 }
 
-func collectSnapshotGates(ticketHome string) []snapshotGate {
+func collectSnapshotGates(ticketHome string, cp map[string]interface{}) []snapshotGate {
 	out := make([]snapshotGate, 0, 2)
+	accepted, _ := cp["accepted_evidence"].(map[string]interface{})
 	for _, name := range []string{"review-pr", "qa"} {
-		path := filepath.Join(ticketHome, "evidence", "verification", "gates", name+".json")
 		gate := snapshotGate{Name: name, State: "missing"}
-		b, err := os.ReadFile(path)
-		if err == nil {
-			var ev map[string]interface{}
-			if json.Unmarshal(b, &ev) != nil {
+		attemptID := stringValue(accepted[name])
+		if attemptID != "" && safeTicket(attemptID) == attemptID {
+			path := filepath.Join(ticketHome, "evidence", "verification", "attempts", attemptID+".json")
+			ev, err := readStrictObject(path, true)
+			if err != nil {
 				gate.State, gate.ReasonCodes = "unknown", []string{"malformed_evidence"}
+			} else if stringValue(ev["attempt_id"]) != attemptID || stringValue(ev["gate"]) != name {
+				gate.State, gate.ReasonCodes = "unknown", []string{"evidence_identity_mismatch"}
 			} else {
 				gate.State = evidenceGateState(ev)
-				gate.AttemptID = stringValue(ev["attempt_id"])
+				gate.AttemptID = attemptID
 				gate.EvidencePath = path
 			}
+		} else if attemptID != "" {
+			gate.State, gate.ReasonCodes = "unknown", []string{"invalid_attempt_id"}
 		}
 		out = append(out, gate)
 	}
@@ -464,14 +514,15 @@ func collectSnapshotGates(ticketHome string) []snapshotGate {
 }
 
 func evidenceGateState(ev map[string]interface{}) string {
-	if strings.EqualFold(stringValue(ev["result"]), "PASS") && strings.EqualFold(stringValue(ev["status"]), "DONE") {
-		return "pass"
-	}
-	if strings.EqualFold(stringValue(ev["result"]), "FAIL") {
-		return "fail"
-	}
 	if len(stringSlice(ev["limitations"])) > 0 {
 		return "limited"
+	}
+	if strings.EqualFold(stringValue(ev["result"]), "FAIL") || hasMaterialFindings(interfaceSlice(ev["unresolved_findings"])) {
+		return "fail"
+	}
+	status := stringValue(ev["status"])
+	if strings.EqualFold(stringValue(ev["result"]), "PASS") && (status == "DONE" || status == "DONE_WITH_CONCERNS") {
+		return "pass"
 	}
 	return "unknown"
 }
@@ -479,25 +530,48 @@ func evidenceGateState(ev map[string]interface{}) string {
 func activeAttempt(ticketHome, requested string) map[string]interface{} {
 	if requested != "" {
 		if rec := readJSONObject(filepath.Join(ticketHome, "attempts", requested+".json")); rec != nil && !terminalAttemptStateV2(stringValue(rec["state"])) {
-			attachAttemptLiveness(rec, filepath.Join(ticketHome, "attempts", requested+".json"))
-			return rec
+			return projectActiveAttempt(rec, filepath.Join(ticketHome, "attempts", requested+".json"))
 		}
 	}
 	paths, _ := filepath.Glob(filepath.Join(ticketHome, "attempts", "*.json"))
 	sort.Sort(sort.Reverse(sort.StringSlice(paths)))
 	for _, path := range paths {
 		if rec := readJSONObject(path); rec != nil && !terminalAttemptStateV2(stringValue(rec["state"])) {
-			attachAttemptLiveness(rec, path)
-			return rec
+			return projectActiveAttempt(rec, path)
 		}
 	}
 	return nil
 }
 
-func attachAttemptLiveness(out map[string]interface{}, path string) {
+// projectActiveAttempt keeps snapshots/context bounded and prevents arbitrary
+// assignment/result bodies from becoming telemetry-like context output.
+func projectActiveAttempt(rec map[string]interface{}, path string) map[string]interface{} {
+	out := map[string]interface{}{}
+	for _, key := range []string{"id", "ticket", "run_id", "gate", "state", "revision", "owner", "updated_at"} {
+		if value, ok := rec[key]; ok {
+			out[key] = value
+		}
+	}
+	if runtime, ok := rec["runtime"].(map[string]interface{}); ok {
+		projected := map[string]interface{}{}
+		for _, key := range []string{"kind", "pid", "process_start", "handle", "transport_id"} {
+			if value, ok := runtime[key]; ok {
+				projected[key] = value
+			}
+		}
+		out["runtime"] = projected
+	}
+	for _, key := range []string{"result", "failure"} {
+		if value, ok := rec[key].(map[string]interface{}); ok {
+			if logPath := stringValue(value["log_path"]); logPath != "" {
+				out[key] = map[string]interface{}{"log_path": logPath}
+			}
+		}
+	}
 	if rec := readAttemptRecord(path); rec != nil {
 		out["liveness"] = attemptLiveness(rec)
 	}
+	return out
 }
 
 func readJSONObject(path string) map[string]interface{} {
@@ -506,7 +580,9 @@ func readJSONObject(path string) map[string]interface{} {
 		return nil
 	}
 	var out map[string]interface{}
-	if json.Unmarshal(b, &out) != nil {
+	dec := json.NewDecoder(bytes.NewReader(b))
+	dec.UseNumber()
+	if dec.Decode(&out) != nil || out == nil || requireJSONEOF(dec) != nil {
 		return nil
 	}
 	return out
@@ -576,7 +652,17 @@ func snapshotStateToken(ticketHome string) (string, error) {
 	for _, rel := range []string{"index.json", "checkpoint.json", "manifest.yaml", "requirement.md", "plan.md", filepath.Join("handoffs", "LATEST")} {
 		paths = append(paths, filepath.Join(ticketHome, rel))
 	}
-	for _, pattern := range []string{filepath.Join(ticketHome, "attempts", "*.json"), filepath.Join(ticketHome, "evidence", "verification", "gates", "*.json")} {
+	if latest, err := os.ReadFile(filepath.Join(ticketHome, "handoffs", "LATEST")); err == nil {
+		name := strings.TrimSpace(string(latest))
+		if !invalidLatestName(name) {
+			paths = append(paths, filepath.Join(ticketHome, "handoffs", name))
+		}
+	}
+	for _, pattern := range []string{
+		filepath.Join(ticketHome, "attempts", "*.json"),
+		filepath.Join(ticketHome, "evidence", "verification", "attempts", "*.json"),
+		filepath.Join(ticketHome, "evidence", "verification", "gates", "*.json"),
+	} {
 		matches, _ := filepath.Glob(pattern)
 		paths = append(paths, matches...)
 	}
@@ -643,6 +729,22 @@ func int64Value(v interface{}) int64 {
 		return n
 	}
 	return 0
+}
+
+func exactInt64(v interface{}) (int64, bool) {
+	switch x := v.(type) {
+	case json.Number:
+		n, err := x.Int64()
+		return n, err == nil
+	case int:
+		return int64(x), true
+	case int64:
+		return x, true
+	case float64:
+		n := int64(x)
+		return n, float64(n) == x
+	}
+	return 0, false
 }
 
 func stringValue(v interface{}) string {

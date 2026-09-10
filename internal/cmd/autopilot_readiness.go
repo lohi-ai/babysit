@@ -91,6 +91,12 @@ func evaluateReadiness(env identity.Env, action string) (readinessResult, error)
 			result.ReasonCodes = append(result.ReasonCodes, "control:"+stringValue(control["state"]))
 		}
 	}
+	if s.Git.Dirty {
+		result.ReasonCodes = append(result.ReasonCodes, "git:dirty")
+	}
+	if s.ActiveAttempt != nil {
+		result.ReasonCodes = append(result.ReasonCodes, "attempt:active")
+	}
 	ticketHome := ticket.New(env).Home()
 	cp, err := readStrictObject(filepath.Join(ticketHome, "checkpoint.json"), true)
 	if err != nil {
@@ -98,16 +104,21 @@ func evaluateReadiness(env identity.Env, action string) (readinessResult, error)
 	}
 	accepted, _ := cp["accepted_evidence"].(map[string]interface{})
 	for _, gate := range needed {
-		path := filepath.Join(ticketHome, "evidence", "verification", "gates", gate+".json")
-		ev := readJSONObject(path)
-		if ev == nil {
+		attemptID := stringValue(accepted[gate])
+		if attemptID == "" {
 			result.ReasonCodes = append(result.ReasonCodes, gate+":missing")
 			continue
 		}
-		attemptID := stringValue(ev["attempt_id"])
-		if accepted == nil || stringValue(accepted[gate]) != attemptID {
-			result.ReasonCodes = append(result.ReasonCodes, gate+":unaccepted")
-			continue
+		if safeTicket(attemptID) != attemptID {
+			return readinessResult{}, fmt.Errorf("accepted %s evidence has invalid attempt id", gate)
+		}
+		path := filepath.Join(ticketHome, "evidence", "verification", "attempts", attemptID+".json")
+		ev, readErr := readStrictObject(path, true)
+		if readErr != nil {
+			return readinessResult{}, readErr
+		}
+		if err := validateAcceptedV2Evidence(ev, env, cp, gate, attemptID); err != nil {
+			return readinessResult{}, fmt.Errorf("accepted %s evidence is invalid: %w", gate, err)
 		}
 		for _, reason := range evidenceReadinessReasons(ev, gate, result.CurrentSubject) {
 			result.ReasonCodes = append(result.ReasonCodes, gate+":"+reason)
@@ -115,6 +126,32 @@ func evaluateReadiness(env identity.Env, action string) (readinessResult, error)
 	}
 	result.Ready = len(result.ReasonCodes) == 0
 	return result, nil
+}
+
+func validateAcceptedV2Evidence(ev map[string]interface{}, env identity.Env, cp map[string]interface{}, gate, attemptID string) error {
+	if err := validateV2VerificationEvidence(ev, env); err != nil {
+		return err
+	}
+	attempt, err := readAttemptRecordStrict(filepath.Join(ticket.New(env).Home(), "attempts", attemptID+".json"))
+	if err != nil {
+		return fmt.Errorf("attempt cannot be read: %w", err)
+	}
+	producer, _ := ev["producer"].(map[string]interface{})
+	for key, pair := range map[string][2]string{
+		"attempt": {stringValue(ev["attempt_id"]), attemptID},
+		"ticket":  {stringValue(ev["ticket"]), env.Ticket},
+		"run":     {stringValue(ev["run_id"]), stringValue(cp["run_id"])},
+		"gate":    {stringValue(ev["gate"]), gate},
+		"owner":   {stringValue(producer["owner"]), attempt.Owner},
+	} {
+		if pair[0] != pair[1] {
+			return fmt.Errorf("%s mismatch", key)
+		}
+	}
+	if attempt.ID != attemptID || attempt.RunID != stringValue(cp["run_id"]) || attempt.Gate != gate || attempt.State != "completed" {
+		return fmt.Errorf("attempt lifecycle does not match accepted evidence")
+	}
+	return nil
 }
 
 func currentEvidenceSubject(s *autopilotSnapshot) map[string]interface{} {
@@ -209,41 +246,43 @@ func setV2VerificationEvidence(env identity.Env, body []byte) (string, error) {
 	if err := dec.Decode(&ev); err != nil || ev == nil {
 		return "", fmt.Errorf("version-2 verification evidence is not a JSON object")
 	}
+	if err := requireJSONEOF(dec); err != nil {
+		return "", fmt.Errorf("version-2 verification evidence must contain exactly one JSON object")
+	}
 	if err := validateV2VerificationEvidence(ev, env); err != nil {
 		return "", err
 	}
 
-	a := &apState{slug: env.Slug, branch: env.Branch, ticket: env.Ticket, stateRoot: env.ProjectHome}
-	s, err := collectAutopilotSnapshot(a, env.Ticket)
-	if err != nil {
-		return "", err
-	}
-	if s.Run == nil || s.Run.Contract != 2 {
-		return "", fmt.Errorf("version-2 evidence needs a schema_version 2 checkpoint")
-	}
 	gate := stringValue(ev["gate"])
-	if reasons := evidenceReadinessReasons(ev, gate, currentEvidenceSubject(s)); containsStaleReason(reasons) {
-		return "", fmt.Errorf("evidence is stale for current state: %s", strings.Join(reasons, ","))
-	}
-
 	st := ticket.New(env)
+	a := &apState{slug: env.Slug, branch: env.Branch, ticket: env.Ticket, stateRoot: env.ProjectHome}
 	attemptID := stringValue(ev["attempt_id"])
 	ticketHome := st.Home()
 	var resultPath string
-	err = withLock(st, func() error {
-		attempt := readJSONObject(filepath.Join(ticketHome, "attempts", attemptID+".json"))
-		if attempt == nil {
-			return fmt.Errorf("attempt %s does not exist", attemptID)
+	err := withLock(st, func() error {
+		s, snapshotErr := collectAutopilotSnapshot(a, env.Ticket)
+		if snapshotErr != nil {
+			return snapshotErr
 		}
-		if stringValue(attempt["state"]) != "completed" {
-			return fmt.Errorf("attempt %s is %s, not completed", attemptID, stringValue(attempt["state"]))
+		if s.Run == nil || s.Run.Contract != 2 {
+			return fmt.Errorf("version-2 evidence needs a schema_version 2 checkpoint")
+		}
+		if reasons := evidenceReadinessReasons(ev, gate, currentEvidenceSubject(s)); containsStaleReason(reasons) {
+			return fmt.Errorf("evidence is stale for current state: %s", strings.Join(reasons, ","))
+		}
+		attempt, readErr := readAttemptRecordStrict(filepath.Join(ticketHome, "attempts", attemptID+".json"))
+		if readErr != nil {
+			return fmt.Errorf("attempt %s cannot be read: %w", attemptID, readErr)
+		}
+		if attempt.State != "completed" {
+			return fmt.Errorf("attempt %s is %s, not completed", attemptID, attempt.State)
 		}
 		producer, _ := ev["producer"].(map[string]interface{})
 		for key, pair := range map[string][2]string{
 			"ticket": {stringValue(ev["ticket"]), env.Ticket},
-			"run":    {stringValue(ev["run_id"]), stringValue(attempt["run_id"])},
-			"gate":   {gate, stringValue(attempt["gate"])},
-			"owner":  {stringValue(producer["owner"]), stringValue(attempt["owner"])},
+			"run":    {stringValue(ev["run_id"]), attempt.RunID},
+			"gate":   {gate, attempt.Gate},
+			"owner":  {stringValue(producer["owner"]), attempt.Owner},
 		} {
 			if pair[0] != pair[1] {
 				return fmt.Errorf("%s mismatch: evidence=%q attempt=%q", key, pair[0], pair[1])
@@ -374,14 +413,33 @@ func validateV2VerificationEvidence(ev map[string]interface{}, env identity.Env)
 			return fmt.Errorf("checks[%d] must be an object", i)
 		}
 		argv := interfaceSlice(check["argv"])
-		if len(argv) == 0 || stringValue(check["cwd"]) == "" {
+		cwd := stringValue(check["cwd"])
+		if len(argv) == 0 || cwd == "" {
 			return fmt.Errorf("checks[%d] needs argv and cwd", i)
 		}
-		if strings.EqualFold(result, "PASS") && int64Value(check["exit_code"]) != 0 {
+		for j, arg := range argv {
+			if _, ok := arg.(string); !ok {
+				return fmt.Errorf("checks[%d].argv[%d] must be a string", i, j)
+			}
+		}
+		exitCode, ok := exactInt64(check["exit_code"])
+		if !ok {
+			return fmt.Errorf("checks[%d].exit_code must be an integer", i)
+		}
+		if strings.EqualFold(result, "PASS") && exitCode != 0 {
 			return fmt.Errorf("PASS contradicts checks[%d].exit_code", i)
 		}
+		ticketHome := ticket.New(env).Home()
+		top := gitOut("rev-parse", "--show-toplevel")
+		resolvedCWD, err := resolveEvidencePath(cwd, ticketHome, top)
+		if err != nil {
+			return fmt.Errorf("checks[%d].cwd: %w", i, err)
+		}
+		if fi, statErr := os.Stat(resolvedCWD); statErr != nil || !fi.IsDir() {
+			return fmt.Errorf("checks[%d].cwd must resolve to a directory", i)
+		}
 		if logPath := stringValue(check["log_path"]); logPath != "" {
-			resolved, err := resolveEvidencePath(logPath, ticket.New(env).Home(), stringValue(check["cwd"]))
+			resolved, err := resolveEvidencePath(logPath, ticketHome, resolvedCWD)
 			if err != nil {
 				return fmt.Errorf("checks[%d].log_path: %w", i, err)
 			}
@@ -451,7 +509,7 @@ func readinessReasonText(reasons []string) string {
 // ticketV2Readiness evaluates a ticket against the worktree recorded in its
 // manifest. Land can run from the primary checkout, whose tree is intentionally
 // not the ticket tree; evaluating there would make every fresh ticket stale.
-func ticketV2Readiness(primary string, base identity.Env, ticketID, action string) (bool, bool, []string, error) {
+func ticketV2Readiness(primary string, base identity.Env, ticketID, action string) (bool, bool, []string, string, error) {
 	st := storeForTicket(base, ticketID)
 	dir := primary
 	if manifest, err := ticket.ReadManifest(st.ManifestPath()); err == nil {
@@ -476,9 +534,9 @@ func ticketV2Readiness(primary string, base identity.Env, ticketID, action strin
 	out, err := cmd.Output()
 	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
-			return false, false, nil, fmt.Errorf("readiness exited %d: %s", exitErr.ExitCode(), strings.TrimSpace(string(out)))
+			return false, false, nil, "", fmt.Errorf("readiness exited %d: %s", exitErr.ExitCode(), strings.TrimSpace(string(out)))
 		}
-		return false, false, nil, err
+		return false, false, nil, "", err
 	}
 	var envelope struct {
 		SchemaVersion int             `json:"schema_version"`
@@ -487,15 +545,15 @@ func ticketV2Readiness(primary string, base identity.Env, ticketID, action strin
 		Error         *v2Error        `json:"error"`
 	}
 	if err := json.Unmarshal(out, &envelope); err != nil {
-		return false, false, nil, fmt.Errorf("invalid readiness response: %w", err)
+		return false, false, nil, "", fmt.Errorf("invalid readiness response: %w", err)
 	}
 	if envelope.SchemaVersion != 2 || !envelope.OK {
 		if envelope.Error != nil {
-			return false, false, nil, fmt.Errorf("%s: %s", envelope.Error.Code, envelope.Error.Message)
+			return false, false, nil, "", fmt.Errorf("%s: %s", envelope.Error.Code, envelope.Error.Message)
 		}
-		return false, false, nil, fmt.Errorf("unsupported readiness response")
+		return false, false, nil, "", fmt.Errorf("unsupported readiness response")
 	}
-	return envelope.Data.Enforced, envelope.Data.Ready, envelope.Data.ReasonCodes, nil
+	return envelope.Data.Enforced, envelope.Data.Ready, envelope.Data.ReasonCodes, stringValue(envelope.Data.CurrentSubject["head_sha"]), nil
 }
 
 func overlayProcessEnv(values map[string]string) []string {

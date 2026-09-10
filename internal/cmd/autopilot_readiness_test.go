@@ -78,6 +78,70 @@ func TestV2EvidenceRejectsContradictionAndImmutableRewrite(t *testing.T) {
 	}
 }
 
+func TestV2ReadinessUsesImmutableAcceptedEvidence(t *testing.T) {
+	repo, env := initReadinessFixture(t)
+	t.Chdir(repo)
+
+	var failed map[string]interface{}
+	if err := json.Unmarshal(evidenceForCurrentSnapshot(t, env, "review-pr", "review-1", 1), &failed); err != nil {
+		t.Fatal(err)
+	}
+	failed["result"] = "FAIL"
+	body, _ := json.Marshal(failed)
+	if _, err := setV2VerificationEvidence(env, body); err != nil {
+		t.Fatal(err)
+	}
+	gatePath := filepath.Join(env.ProjectHome, "tickets", env.Ticket, "evidence", "verification", "gates", "review-pr.json")
+	failed["result"], failed["status"] = "PASS", "DONE"
+	for _, raw := range failed["checks"].([]interface{}) {
+		raw.(map[string]interface{})["exit_code"] = float64(0)
+	}
+	forged, _ := json.Marshal(failed)
+	mustWrite(t, gatePath, string(forged))
+
+	result, err := evaluateReadiness(env, "push")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Ready || !containsString(result.ReasonCodes, "review-pr:result_not_pass") {
+		t.Fatalf("mutable gate projection overrode immutable failure: %+v", result)
+	}
+	immutablePath := filepath.Join(env.ProjectHome, "tickets", env.Ticket, "evidence", "verification", "attempts", "review-1.json")
+	immutable := readJSONObject(immutablePath)
+	immutable["producer"].(map[string]interface{})["owner"] = "different-worker"
+	tampered, _ := json.Marshal(immutable)
+	mustWrite(t, immutablePath, string(tampered))
+	if _, err := evaluateReadiness(env, "push"); err == nil || !strings.Contains(err.Error(), "owner mismatch") {
+		t.Fatalf("tampered immutable evidence was not rejected: %v", err)
+	}
+}
+
+func TestV2EvidenceRejectsIncompleteChecksAndEscapingCWD(t *testing.T) {
+	repo, env := initReadinessFixture(t)
+	t.Chdir(repo)
+	var ev map[string]interface{}
+	if err := json.Unmarshal(evidenceForCurrentSnapshot(t, env, "review-pr", "review-1", 0), &ev); err != nil {
+		t.Fatal(err)
+	}
+	check := ev["checks"].([]interface{})[0].(map[string]interface{})
+	delete(check, "exit_code")
+	missing, _ := json.Marshal(ev)
+	if _, err := setV2VerificationEvidence(env, missing); err == nil || !strings.Contains(err.Error(), "exit_code") {
+		t.Fatalf("missing exit code accepted: %v", err)
+	}
+
+	outside := filepath.Join(t.TempDir(), "outside.log")
+	mustWrite(t, outside, "ok\n")
+	check["exit_code"] = float64(0)
+	check["cwd"] = filepath.Dir(outside)
+	check["log_path"] = outside
+	check["log_digest"], _ = digestFile(outside)
+	escaping, _ := json.Marshal(ev)
+	if _, err := setV2VerificationEvidence(env, escaping); err == nil || !strings.Contains(err.Error(), ".cwd") {
+		t.Fatalf("escaping check cwd accepted: %v", err)
+	}
+}
+
 func TestV2ReadinessRejectsCodeBaseAndPolicyChanges(t *testing.T) {
 	for _, tc := range []struct {
 		name, reason string
@@ -172,7 +236,7 @@ func evidenceForCurrentSnapshot(t *testing.T, env identity.Env, gate, attemptID 
 		"gate": gate, "status": "DONE", "result": "PASS", "subject": currentEvidenceSubject(s),
 		"producer": map[string]interface{}{"harness": "test", "model": nil, "isolation": "fresh-native-context", "owner": "worker-1"},
 		"checks": []interface{}{map[string]interface{}{
-			"argv": []interface{}{"go", "test", "./internal/cmd"}, "cwd": filepath.Dir(filepath.Dir(filepath.Dir(logPath))),
+			"argv": []interface{}{"go", "test", "./internal/cmd"}, "cwd": gitOut("rev-parse", "--show-toplevel"),
 			"exit_code": exitCode, "log_path": logPath, "log_digest": logDigest, "acceptance_ids": []interface{}{"AP-03"},
 		}},
 		"surface":             map[string]interface{}{"kind": "local-test", "fingerprint": currentSurfaceFingerprint()},
