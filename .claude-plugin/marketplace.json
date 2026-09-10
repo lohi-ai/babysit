@@ -5,13 +5,13 @@
     "url": "https://github.com/lohi-ai/babysit"
   },
   "metadata": {
-    "version": "1.80.3",
+    "version": "1.80.4",
     "description": "Babysit — autonomous coding-agent skill pack."
   },
   "plugins": [
     {
       "name": "bbs",
-      "version": "1.80.3",
+      "version": "1.80.4",
       "description": "Autonomous skill pack — scheduled runs, background jobs, CI loops.",
       "source": "./",
       "category": "productivity"

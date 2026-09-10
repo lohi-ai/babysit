@@ -1,6 +1,6 @@
 {
   "name": "bbs",
-  "version": "1.80.3",
+  "version": "1.80.4",
   "description": "Autonomous product-building workflows for planning, implementation, review, and QA.",
   "author": {
     "name": "lohi-ai",
