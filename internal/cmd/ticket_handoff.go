@@ -213,6 +213,15 @@ func runSetEvidence(args []string) {
 		fmt.Fprintln(os.Stderr, "set-evidence: --json or --json-file required")
 		os.Exit(2)
 	}
+	if kind == "verification" && evidenceSchemaVersion(jsonStr) == 2 {
+		path, err := setV2VerificationEvidence(env, []byte(jsonStr))
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "set-evidence:", err)
+			os.Exit(2)
+		}
+		fmt.Println(path)
+		os.Exit(0)
+	}
 	if msg := validateEvidence(kind, jsonStr); msg != "" {
 		fmt.Fprint(os.Stderr, msg)
 		os.Exit(2)

@@ -22,7 +22,7 @@ import (
 // bash script (unknown flags/args are ignored, not rejected by cobra).
 func newAutopilotCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:                "autopilot {checkpoint|read|clear|current|set-current|timeline|recover|snapshot|base-branch|git-flow|lint-workflow|probe|explain|check-skill-deps|spawn-goal|spawn-review|spawn-verify|review-gate} ...",
+		Use:                "autopilot {checkpoint|read|clear|current|set-current|timeline|recover|snapshot|context|attempt|base-branch|git-flow|lint-workflow|probe|explain|check-skill-deps|spawn-goal|spawn-review|spawn-verify|review-gate} ...",
 		Short:              "autopilot state helper (checkpoints, timeline, probe/explain)",
 		DisableFlagParsing: true,
 		RunE: func(_ *cobra.Command, args []string) error {
@@ -32,7 +32,7 @@ func newAutopilotCmd() *cobra.Command {
 	}
 }
 
-const autopilotUsage = "usage: bbs-autopilot {checkpoint|read|clear|current|set-current|timeline|recover|snapshot|base-branch|git-flow|lint-workflow|probe|explain|check-skill-deps|spawn-goal|spawn-review|spawn-verify|review-gate} ..."
+const autopilotUsage = "usage: bbs-autopilot {checkpoint|read|clear|current|set-current|timeline|recover|snapshot|context|attempt|base-branch|git-flow|lint-workflow|probe|explain|check-skill-deps|spawn-goal|spawn-review|spawn-verify|review-gate} ..."
 
 // apState is the identity + state-root resolved once per invocation, mirroring
 // the top-of-script derivation in bin/bbs-autopilot.
@@ -66,9 +66,13 @@ func runAutopilot(args []string) {
 	case "timeline":
 		a.timeline(rest)
 	case "recover":
-		a.recover()
+		a.recover(rest)
 	case "snapshot":
 		a.snapshotV2(rest)
+	case "context":
+		a.contextV2(rest)
+	case "attempt":
+		a.attemptV2(rest)
 	case "base-branch":
 		fmt.Println(a.baseBranch())
 	case "git-flow":
@@ -281,9 +285,24 @@ func fileNonEmpty(p string) bool {
 // ─── checkpoint ──────────────────────────────────────────────────────────────
 
 func (a *apState) checkpoint(args []string) {
-	var ticket, workflow, step, status, note, depth string
+	var ticket, workflow, step, status, note, depth, contractVersionArg, stopAfter string
+	var expectedRevision *int64
 	var force, refresh bool
 	for i := 0; i < len(args); i++ {
+		if strings.HasPrefix(args[i], "--contract-version=") {
+			contractVersionArg = strings.TrimPrefix(args[i], "--contract-version=")
+			continue
+		}
+		if strings.HasPrefix(args[i], "--expect-revision=") {
+			v := strings.TrimPrefix(args[i], "--expect-revision=")
+			n, err := strconv.ParseInt(v, 10, 64)
+			if err != nil || n < 0 {
+				fmt.Fprintln(os.Stderr, "checkpoint: --expect-revision must be a non-negative integer")
+				os.Exit(2)
+			}
+			expectedRevision = &n
+			continue
+		}
 		switch args[i] {
 		case "--ticket":
 			ticket, i = next(args, i)
@@ -297,6 +316,19 @@ func (a *apState) checkpoint(args []string) {
 			note, i = next(args, i)
 		case "--depth":
 			depth, i = next(args, i)
+		case "--contract-version":
+			contractVersionArg, i = next(args, i)
+		case "--expect-revision":
+			v, ni := next(args, i)
+			i = ni
+			n, err := strconv.ParseInt(v, 10, 64)
+			if err != nil || n < 0 {
+				fmt.Fprintln(os.Stderr, "checkpoint: --expect-revision must be a non-negative integer")
+				os.Exit(2)
+			}
+			expectedRevision = &n
+		case "--stop-after":
+			stopAfter, i = next(args, i)
 		case "--force":
 			force = true
 		case "--refresh":
@@ -317,6 +349,25 @@ func (a *apState) checkpoint(args []string) {
 	case "in_progress", "done_step", "done", "blocked":
 	default:
 		fmt.Fprintf(os.Stderr, "checkpoint: invalid status '%s'\n", status)
+		os.Exit(2)
+	}
+	if contractVersionArg != "" && contractVersionArg != "2" {
+		fmt.Fprintf(os.Stderr, "checkpoint: unsupported contract version %q\n", contractVersionArg)
+		os.Exit(2)
+	}
+	existingCP := filepath.Join(a.stateRoot, "tickets", safeTicket(ticket), "checkpoint.json")
+	if contractVersionArg == "2" || int64Value(readJSONObject(existingCP)["schema_version"]) == 2 {
+		if err := a.checkpointV2(checkpointV2Input{
+			Ticket: ticket, Workflow: workflow, Step: step, Status: status,
+			Note: note, Depth: depth, StopAfter: stopAfter, ExpectedRevision: expectedRevision, Force: force,
+		}); err != nil {
+			fmt.Fprintln(os.Stderr, "checkpoint:", err)
+			os.Exit(3)
+		}
+		return
+	}
+	if expectedRevision != nil {
+		fmt.Fprintln(os.Stderr, "checkpoint: --expect-revision requires contract version 2")
 		os.Exit(2)
 	}
 
@@ -438,6 +489,13 @@ func (a *apState) checkpointRefresh(ticket string) {
 		os.Exit(2)
 	}
 	cp := filepath.Join(dir, "checkpoint.json")
+	if int64Value(readJSONObject(cp)["schema_version"]) == 2 {
+		if err := a.refreshCheckpointV2(ticket); err != nil {
+			fmt.Fprintln(os.Stderr, "checkpoint --refresh:", err)
+			os.Exit(1)
+		}
+		return
+	}
 	prev, ok := readCheckpoint(cp)
 	if !ok {
 		fmt.Fprintf(os.Stderr, "checkpoint --refresh: no checkpoint for %s\n", ticket)
@@ -574,7 +632,11 @@ func (a *apState) timeline(args []string) {
 
 // ─── recover ─────────────────────────────────────────────────────────────────
 
-func (a *apState) recover() {
+func (a *apState) recover(args []string) {
+	if hasArg(args, "--json") {
+		a.recoverV2(args)
+		return
+	}
 	fmt.Println("--- BABYSIT CONTEXT RECOVERY ---")
 	fmt.Printf("SLUG: %s\n", a.slug)
 	fmt.Printf("BRANCH: %s\n", a.branch)

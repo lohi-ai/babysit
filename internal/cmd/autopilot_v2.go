@@ -479,6 +479,7 @@ func evidenceGateState(ev map[string]interface{}) string {
 func activeAttempt(ticketHome, requested string) map[string]interface{} {
 	if requested != "" {
 		if rec := readJSONObject(filepath.Join(ticketHome, "attempts", requested+".json")); rec != nil && !terminalAttemptStateV2(stringValue(rec["state"])) {
+			attachAttemptLiveness(rec, filepath.Join(ticketHome, "attempts", requested+".json"))
 			return rec
 		}
 	}
@@ -486,10 +487,17 @@ func activeAttempt(ticketHome, requested string) map[string]interface{} {
 	sort.Sort(sort.Reverse(sort.StringSlice(paths)))
 	for _, path := range paths {
 		if rec := readJSONObject(path); rec != nil && !terminalAttemptStateV2(stringValue(rec["state"])) {
+			attachAttemptLiveness(rec, path)
 			return rec
 		}
 	}
 	return nil
+}
+
+func attachAttemptLiveness(out map[string]interface{}, path string) {
+	if rec := readAttemptRecord(path); rec != nil {
+		out["liveness"] = attemptLiveness(rec)
+	}
 }
 
 func readJSONObject(path string) map[string]interface{} {

@@ -76,6 +76,11 @@ func atomicWriteBytes(path string, b []byte) error {
 	return os.Rename(name, path)
 }
 
+// WriteAtomic exposes the Layout C temp-file + rename primitive to versioned
+// ticket artifacts. Callers remain responsible for holding the ticket lock
+// when a write participates in a multi-file state transition.
+func WriteAtomic(path string, b []byte) error { return atomicWriteBytes(path, b) }
+
 // EnsureDefaults mirrors the json_mutate ensure_defaults op: seed the schema's
 // fields only where absent, and stamp created_at once.
 func (d Doc) EnsureDefaults(ticketID string) {
