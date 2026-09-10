@@ -43,11 +43,11 @@ func runGetManifest(args []string) {
 // manifest. Unlike get-manifest, a version mismatch or a missing repo is fatal
 // (exit 2), matching the bash `|| exit 2` guards.
 func runSetBranch(args []string) {
-	sticket, srepo, sbranch := argAt(args, 0), argAt(args, 1), argAt(args, 2)
-	if sticket == "" || srepo == "" || sbranch == "" {
+	if len(args) < 3 || args[0] == "" || args[1] == "" || args[2] == "" {
 		fmt.Fprintln(os.Stderr, retarget("set-branch: usage: bbs-ticket set-branch <ticket> <repo> <branch>"))
 		os.Exit(2)
 	}
+	sticket, srepo, sbranch := args[0], args[1], args[2]
 	env := identity.Resolve()
 	env.Ticket = sticket
 	st := ticket.New(env)
@@ -197,12 +197,4 @@ func manifestVersion(m *ticket.Manifest) string {
 		return ""
 	}
 	return m.Version
-}
-
-// argAt returns the positional arg at i, or "" — mirrors bash `${N:-}`.
-func argAt(args []string, i int) string {
-	if i < len(args) {
-		return args[i]
-	}
-	return ""
 }
