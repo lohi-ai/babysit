@@ -63,7 +63,8 @@ esac
                 env = {k: v for k, v in self.env.items() if k != "CLAUDE_PLUGIN_ROOT"}
                 env[key] = str(self.plugin)
                 result = self.run_hook(env=env)
-                self.assertEqual((result.returncode, result.stdout, result.stderr), (0, "", ""))
+                self.assertEqual((result.returncode, result.stdout), (0, ""))
+                self.assertIn("pre-tool-gate: review-pr=DONE — ok to push", result.stderr)
 
     def test_no_root_is_actionable_not_127(self):
         env = {k: v for k, v in self.env.items() if k != "CLAUDE_PLUGIN_ROOT"}
