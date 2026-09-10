@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -589,12 +588,6 @@ func (a *apState) refreshCheckpointV2(ticketID string) error {
 		cp["updated_at"] = isoNow()
 		return writeJSONAtomic(path, cp)
 	})
-}
-
-func sortedAttemptPaths(home string) []string {
-	paths, _ := filepath.Glob(filepath.Join(home, "attempts", "*.json"))
-	sort.Strings(paths)
-	return paths
 }
 
 func processIdentityPath(pidPath string) string { return pidPath + ".identity.json" }

@@ -499,13 +499,6 @@ func containsStaleReason(reasons []string) bool {
 	return false
 }
 
-// readinessReasonText is stable, shell-safe summary text for hook adapters.
-func readinessReasonText(reasons []string) string {
-	copyReasons := append([]string(nil), reasons...)
-	sort.Strings(copyReasons)
-	return strings.Join(copyReasons, ",")
-}
-
 // ticketV2Readiness evaluates a ticket against the worktree recorded in its
 // manifest. Land can run from the primary checkout, whose tree is intentionally
 // not the ticket tree; evaluating there would make every fresh ticket stale.

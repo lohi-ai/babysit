@@ -20,8 +20,6 @@ import (
 	"github.com/reallongnguyen/babysit/internal/ticket"
 )
 
-const autopilotContractVersion = 2
-
 type v2Envelope struct {
 	SchemaVersion int         `json:"schema_version"`
 	OK            bool        `json:"ok"`
