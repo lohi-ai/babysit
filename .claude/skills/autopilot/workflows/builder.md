@@ -61,9 +61,12 @@ If none match and there is no ticket/requirement, stop with `NEEDS_CONTEXT`.
    is autopilot's own step, never a skill's.
 4. **orchestrate mode:** run each child in manifest order via `builder`,
    checkpoint each merged child, then merge completed children into the parent.
-5. Run `review-pr --fix` (applies fixes to the working tree) and persist the
-   verdict with `bbs ticket set-verdict --skill review-pr` — the push gate
-   reads it. (Skip in verify mode.)
+5. Run `review-pr --fix` via SKILL.md's **Automatic review / QA subagents**
+   policy (applies fixes to the working tree), then persist and read back the
+   verdict with `bbs ticket set-verdict --skill review-pr` and
+   `bbs ticket verdict-status --skill review-pr` — the push gate reads it.
+   Verify mode may reuse review only if its persisted DONE covers the current
+   change; otherwise run it too.
    **Under `--verify`** (the flag, or `bbs ticket get-pointer verify` reading
    true in any casing — it prints `True`),
    steps 5 and 6 are not run here at all. Commit the implementation first, then
@@ -73,9 +76,13 @@ If none match and there is no ticket/requirement, stop with `NEEDS_CONTEXT`.
    `bbs ticket verdict-status --skill review-pr` / `--skill qa` and continue at
    step 7. Do not also run them here — `set-verdict` is last-writer-wins, so a
    second in-session pass replaces the independent verdict with the biased one.
-   No verdict means the verifier died: `BLOCKED` naming `verify.log`.
-6. Run `qa` against the requirement's acceptance criteria, the plan's
-   `**Verify:**` line, and the implement handoff — not just the diff. Default
+   No fresh verdict means the verifier died: `BLOCKED` naming its returned
+   `ORCA=` tab or `LOG=` path, not an assumed log file.
+6. Run `qa` via the same automatic subagent policy, after review fixes are
+   integrated, against the requirement's acceptance criteria, the plan's
+   `**Verify:**` line, and the implement handoff — not just the diff. The
+   parent owns the following surface preparation and git operations before
+   dispatch, and keeps any lease until the worker finishes. Default
    (no `--mode`): the change is on the branch this checkout already serves, so
    QA runs directly — nothing to land, no lease. A worktree run lands first:
    `bbs ticket merge-base` before QA. When other tickets are in flight on the
@@ -98,7 +105,7 @@ If none match and there is no ticket/requirement, stop with `NEEDS_CONTEXT`.
    eval "$(bbs autopilot git-flow)"   # → BBS_FINISH: review | land | pr
    ```
    `land` → `bbs ticket land "$TICKET"`; `pr` → run the `create-pr` skill
-   (a Skill-tool invocation, not a shell command); `review` (the default, and
+   (through the harness's skill mechanism); `review` (the default, and
    every repo that never opted in) → stop here, the human owns it. The repo's
    standing authorization is the only thing that decides this. A missing
    verdict is not a case to work around: `land` refuses outright, and the PR
