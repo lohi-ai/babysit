@@ -35,3 +35,19 @@ def test_contract_audit_marks_legacy_oracles():
         "P4-implement-unplanned",
         "P5-implement-unapproved",
     ]
+
+
+def test_cli_rejects_missing_evaluation_set(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(
+        "sys.argv",
+        ["run_autopilot_v2_eval.py", "--eval-set", str(tmp_path / "missing.json")],
+    )
+
+    try:
+        EVAL.main()
+    except SystemExit as error:
+        assert error.code == 2
+    else:
+        raise AssertionError("missing evaluation set should exit")
+
+    assert "cannot read evaluation set" in capsys.readouterr().err

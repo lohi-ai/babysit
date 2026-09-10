@@ -71,7 +71,10 @@ def main() -> int:
     parser.add_argument("--run-local", action="store_true")
     args = parser.parse_args()
 
-    cases = json.loads(args.eval_set.read_text())
+    try:
+        cases = json.loads(args.eval_set.read_text())
+    except (OSError, json.JSONDecodeError) as err:
+        parser.error(f"cannot read evaluation set: {err}")
     report = classify_cases(cases)
     report["revision"] = subprocess.check_output(
         ["git", "rev-parse", "HEAD"], cwd=args.repo_root, text=True
