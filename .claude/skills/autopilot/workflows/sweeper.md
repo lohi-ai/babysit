@@ -14,8 +14,9 @@ should get smaller or faster without changing behavior.
    typecheck / build and record the green baseline.
 2. Run `sweep`: apply focused, behavior-preserving cleanups (dead code,
    duplication, unused features, measured hot paths).
-3. Run `review-pr --fix` (applies fixes to the working tree).
-4. Run `qa` (or the strongest fallback) and confirm behavior matches the
+3. Run `review-pr --fix` through autopilot's Automatic review / QA subagent
+   policy (applies fixes to the working tree).
+4. Run `qa` through the same policy (or the strongest fallback) and confirm behavior matches the
    baseline. Persist the verdict with `bbs ticket set-verdict --skill qa`.
 5. Commit and push when policy allows.
 6. Write a handoff: what shrank, net line delta, and baseline-still-green proof.

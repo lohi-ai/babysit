@@ -66,6 +66,7 @@ func (s *dashServer) mux() *http.ServeMux {
 	m.HandleFunc("POST /api/tickets/{project}/{ticket}/approval", s.handleApproval)
 	m.HandleFunc("POST /api/tickets/{project}/{ticket}/approval/comment", s.handleApprovalComment)
 	m.HandleFunc("GET /api/tickets/{project}/{ticket}/prototype", s.handlePrototype)
+	m.HandleFunc("GET /api/tickets/{project}/{ticket}/readiness", s.handleReadiness)
 	m.HandleFunc("POST /api/foremen", s.handleSpawnForeman)
 	m.HandleFunc("POST /api/foremen/{id}/retire", s.handleRetireForeman)
 
@@ -80,6 +81,43 @@ func (s *dashServer) mux() *http.ServeMux {
 	})
 	m.Handle("/", http.FileServerFS(s.distFS))
 	return m
+}
+
+// handleReadiness exposes the release evaluator to the served dashboard. It
+// deliberately delegates to ticketV2Readiness rather than interpreting verdict
+// prose here: freshness depends on the ticket worktree, policy, and evidence
+// subject, which are the evaluator's single source of truth. Snapshot mode has
+// no local server and therefore must not claim a live readiness result.
+func (s *dashServer) handleReadiness(w http.ResponseWriter, r *http.Request) {
+	st, err := s.ticketStore(r.PathValue("project"), r.PathValue("ticket"))
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	action := r.URL.Query().Get("action")
+	if action == "" {
+		action = "pr"
+	}
+	if action != "push" && action != "pr" && action != "land" {
+		writeErr(w, http.StatusBadRequest, "action must be push, pr, or land")
+		return
+	}
+	enforced, ready, reasons, err := ticketV2Readiness(s.currentDir, st.Env, st.Env.Ticket, action)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"available": false,
+			"action":    action,
+			"reason":    err.Error(),
+		})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"available":    true,
+		"action":       action,
+		"enforced":     enforced,
+		"ready":        ready,
+		"reason_codes": reasons,
+	})
 }
 
 // guard rejects the cross-origin POST. A localhost control plane is reachable

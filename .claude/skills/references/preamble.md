@@ -230,10 +230,16 @@ if [ -n "$TICKET" ]; then
   bbs ticket init 2>/dev/null || true
 fi
 
-# Context Recovery — print latest checkpoint + recent timeline for this
-# ticket, so a cold agent knows where the prior one left off. Silent when
-# no ticket.
-if [ -n "$TICKET" ]; then
+# Context Recovery — prefer the versioned, read-only state packet when the
+# installed binary advertises it. An older binary or missing jq keeps the
+# legacy recovery path unchanged; a successful read is facts, never release
+# permission.
+_V2_SNAPSHOT="$(bbs autopilot snapshot --json 2>/dev/null || true)"
+if command -v jq >/dev/null 2>&1 \
+  && printf '%s' "$_V2_SNAPSHOT" | jq -e '.schema_version == 2 and .ok == true' >/dev/null 2>&1; then
+  echo "AUTOPILOT_CONTRACT: v2"
+  printf '%s' "$_V2_SNAPSHOT" | jq -c '.data | {snapshot_id,state_revision,ticket,run,git,policy,gates,obligations}'
+elif [ -n "$TICKET" ]; then
   bbs autopilot recover 2>/dev/null || true
 fi
 

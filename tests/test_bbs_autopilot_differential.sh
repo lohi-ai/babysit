@@ -32,7 +32,8 @@ mask() { sed -E 's/[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z/<TS>/g
 #   spawn-review: `--reviewer <agent>` reviews plan + prototype (post-port).
 #   review-gate: the one design-review gate autopilot stops at (post-port).
 #   spawn-verify: `--verify` grades the diff in a context that never wrote it (post-port).
-mask_usage() { sed -E 's/\|git-flow\|/|/; s/\|spawn-goal\|spawn-review\|spawn-verify\|review-gate\}/}/'; }
+#   autopilot-v2: snapshot/context/attempt are additive typed contracts.
+mask_usage() { sed -E 's/\|snapshot\|context\|attempt\|/|/; s/\|git-flow\|/|/; s/\|spawn-goal\|spawn-review\|spawn-verify\|review-gate\}/}/'; }
 cmp_case() { # name  expected(masked)  actual(masked)  ec_e  ec_a
   if [ "$2" = "$3" ] && [ "$4" = "$5" ]; then
     echo "ok   $1"; PASS=$((PASS+1))

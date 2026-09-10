@@ -1,18 +1,14 @@
 #!/usr/bin/env bash
-# tests/test_autopilot_readiness_gate.sh — Phase-1 bootstrap gate.
+# tests/test_autopilot_readiness_gate.sh — policy/readiness consumer boundary.
 #
-# v1.47.0 replaced the SKILL.md §0.4 gate bash with prose in the builder
-# workflow (step 1). v1.53.0 turned the stop into a bootstrap: an
-# unconfigured repo seeds default git-flow.yaml and continues (non-tech
-# invokers can't answer branch policy). This test pins all three halves:
+# The v2 packet makes policy observation read-only. An unconfigured repository
+# uses the resolver's pet defaults; a workflow must not manufacture a startup
+# git-flow file while it is executing. This test pins the observable legacy
+# probe plus the new caller boundary.
 #
-#   1. `bbs-autopilot probe` emits state_repo_configured / state_landing_doc
-#      derived from .babysit/git-flow.yaml + CLAUDE.md|AGENTS.md at git toplevel.
-#   2. builder.md step 1 consumes them: unconfigured single-repo → seed
-#      documented defaults + /bbs:setup-project recommendation for the QA
-#      harness; missing landing doc is a warning, not a stop.
-#   3. The seed bash block in builder.md actually produces a valid
-#      git-flow.yaml when executed in an unconfigured repo.
+#   1. legacy `bbs-autopilot probe` retains its historical signals;
+#   2. `snapshot --json` is a valid, non-mutating v2 read; and
+#   3. builder capability-checks the v2 packet and never writes policy.
 
 set -u
 SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
@@ -31,6 +27,7 @@ fail() { FAIL=$((FAIL + 1)); FAIL_NAMES+=("$1"); printf '  \033[0;31mFAIL\033[0m
 T="$(mktemp -d)"
 (
   export PATH="$SCRIPT_DIR/bin:$PATH"
+  unset BABYSIT_TICKET BBS_TICKET
   git init -q "$T/repo"; cd "$T/repo"
   git -c user.email=t@t -c user.name=t commit --allow-empty -q -m init
 
@@ -57,51 +54,26 @@ T="$(mktemp -d)"
 ) && ok "landing-doc-signal-accepts-AGENTS-md" || fail "landing-doc-signal-accepts-AGENTS-md"
 rm -rf "$T"
 
-# ── builder-consumes-bootstrap-gate ─────────────────────────────────
-# The prose in builder.md step 1 is the only consumer of the probe's
-# readiness signals. Pin its load-bearing pieces: the signal name, the
-# seed-and-continue behavior (no NEEDS_CONTEXT stop), the setup-project
-# recommendation for the QA harness, and landing-doc-as-warning.
-gate="$(awk '/Bootstrap gate/{h=1} h{print} h&&/warning/{exit}' "$BUILDER_MD")"
-(
-  printf '%s' "$gate" | grep -q 'state_repo_configured=0'      || { echo "no state_repo_configured=0 trigger"; exit 1; }
-  printf '%s' "$gate" | grep -q '\.babysit/git-flow\.yaml'     || { echo "no git-flow.yaml mention"; exit 1; }
-  printf '%s' "$gate" | grep -qi 'seed'                        || { echo "gate does not seed defaults"; exit 1; }
-  printf '%s' "$gate" | grep -q 'NEEDS_CONTEXT'                && { echo "gate regressed to a NEEDS_CONTEXT stop"; exit 1; }
-  printf '%s' "$gate" | grep -q '/bbs:setup-project'           || { echo "no setup-project recommendation"; exit 1; }
-  printf '%s' "$gate" | grep -q 'state_landing_doc=0'          || { echo "no landing-doc warning clause"; exit 1; }
-) && ok "builder-consumes-bootstrap-gate" || fail "builder-consumes-bootstrap-gate"
-
-# ── bootstrap-seed-block-executes ───────────────────────────────────
-# Extract the ```bash block inside the gate and run it in an unconfigured
-# repo with no remote: it must write a parseable git-flow.yaml with a
-# non-empty base_branch, mode: branch, and push: false.
-seed="$(printf '%s\n' "$gate" | awk '/```bash/{f=1;next} f&&/```/{exit} f')"
+# ── v2-snapshot-is-read-only ────────────────────────────────────────
 T="$(mktemp -d)"
 (
-  [ -n "$seed" ] || { echo "no bash seed block inside the gate"; exit 1; }
+  export PATH="$SCRIPT_DIR/bin:$PATH"
+  unset BABYSIT_TICKET BBS_TICKET
   git init -q "$T/repo"; cd "$T/repo"
   git -c user.email=t@t -c user.name=t commit --allow-empty -q -m init
-  bash -eu -c "$seed" || { echo "seed block failed to execute"; exit 1; }
-  cfg=".babysit/git-flow.yaml"
-  [ -f "$cfg" ] || { echo "seed did not write $cfg"; exit 1; }
-  grep -q '^base_branch: .' "$cfg"  || { echo "empty base_branch"; exit 1; }
-  grep -qx 'profile: startup' "$cfg" || { echo "profile != startup"; exit 1; }
-  grep -qx 'push: false' "$cfg"     || { echo "push != false without a remote"; exit 1; }
-  # the seed is only useful if the resolver reads it back as the shape the
-  # gate promised: standard rigor, a PR before anything lands, no push without
-  # a remote — and no branch cut, because a repo nobody configured must keep
-  # working on the branch the human was standing on.
-  grep -q '^mode:' "$cfg" && { echo "seed wrote a mode: key"; exit 1; }
-  gf="$("$SCRIPT_DIR/bin/bbs" autopilot git-flow)" || { echo "git-flow rejected the seed"; exit 1; }
-  # read it the way a skill does — the output is a shell fragment, not a table
-  eval "$gf"
-  [ "$BBS_MODE" = trunk ]      || { echo "seed does not derive mode=trunk: $gf"; exit 1; }
-  [ "$BBS_LAND" = pr ]         || { echo "seed does not derive land=pr: $gf"; exit 1; }
-  [ "$BBS_RIGOR" = standard ]  || { echo "seed does not derive standard rigor: $gf"; exit 1; }
-  [ "$BBS_PUSH" = false ]      || { echo "seed does not derive push=false: $gf"; exit 1; }
-) && ok "bootstrap-seed-block-executes" || fail "bootstrap-seed-block-executes"
+  out="$("$BBS_AUTOPILOT" snapshot --json)"
+  printf '%s' "$out" | jq -e '.schema_version == 2 and .ok == true and .data.ticket == null' >/dev/null \
+    || { echo "snapshot did not return a valid no-ticket envelope"; exit 1; }
+  [ ! -e .babysit ] || { echo "snapshot created ticket state"; exit 1; }
+) && ok "v2-snapshot-is-read-only" || fail "v2-snapshot-is-read-only"
 rm -rf "$T"
+
+# ── builder-uses-read-only-policy ───────────────────────────────────
+(
+  grep -q 'snapshot --json' "$BUILDER_MD" || { echo "builder does not capability-check snapshot"; exit 1; }
+  grep -q 'never create or rewrite' "$BUILDER_MD" || { echo "builder can still write policy"; exit 1; }
+  grep -q '\$bbs:setup-project' "$BUILDER_MD" || { echo "no setup-project recommendation"; exit 1; }
+) && ok "builder-uses-read-only-policy" || fail "builder-uses-read-only-policy"
 
 echo
 if [ "$FAIL" -eq 0 ]; then

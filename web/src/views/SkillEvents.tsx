@@ -25,6 +25,12 @@ const OUTCOME_TONE: Record<string, 'ok' | 'warn' | 'err' | 'muted' | 'info'> = {
   failed: 'err',
 };
 
+function usageLabel(usage: { available: boolean; total_tokens?: number | null; reason?: string } | undefined) {
+  if (!usage) return '—';
+  if (!usage.available) return 'unavailable';
+  return usage.total_tokens == null ? 'observed' : `${usage.total_tokens.toLocaleString()} tokens`;
+}
+
 export function SkillEvents({ snapshot }: { snapshot: Snapshot }) {
   const { state } = useFilter();
   const skillEvents = snapshot.skillEvents ?? [];
@@ -80,16 +86,17 @@ export function SkillEvents({ snapshot }: { snapshot: Snapshot }) {
             backgroundColor: 'var(--surface-bg)',
           }}
         >
-          <DenseRow columns="88px 120px 70px 80px 90px 1fr" header>
+          <DenseRow columns="88px 120px 70px 80px 90px 120px 1fr" header>
             <span className={HEAD_CLASS} style={HEAD_STYLE}>When</span>
             <span className={HEAD_CLASS} style={HEAD_STYLE}>Skill</span>
             <span className={HEAD_CLASS} style={HEAD_STYLE}>Event</span>
             <span className={HEAD_CLASS} style={HEAD_STYLE}>Duration</span>
             <span className={HEAD_CLASS} style={HEAD_STYLE}>Outcome</span>
+            <span className={HEAD_CLASS} style={HEAD_STYLE}>Usage</span>
             <span className={HEAD_CLASS} style={HEAD_STYLE}>Session</span>
           </DenseRow>
           {filtered.map((e, i) => (
-            <DenseRow key={i} columns="88px 120px 70px 80px 90px 1fr">
+            <DenseRow key={i} columns="88px 120px 70px 80px 90px 120px 1fr">
               <span className="px-3 py-1.5 text-xs truncate min-w-0" style={{ color: 'var(--text-muted)' }} title={e.ts}>
                 {formatRelative(e.ts)}
               </span>
@@ -104,6 +111,9 @@ export function SkillEvents({ snapshot }: { snapshot: Snapshot }) {
                 {e.outcome
                   ? <Tag tone={OUTCOME_TONE[e.outcome.toLowerCase()] ?? 'info'}>{e.outcome}</Tag>
                   : <span className="text-xs" style={{ color: 'var(--text-muted)' }}>—</span>}
+              </span>
+              <span className="px-3 py-1.5 text-xs truncate min-w-0" style={{ color: 'var(--text-muted)' }} title={e.provider_usage?.reason}>
+                {usageLabel(e.provider_usage)}
               </span>
               <span className="px-3 py-1.5 font-mono text-xs truncate min-w-0" style={{ color: 'var(--text-muted)' }} title={e.session}>
                 {e.session ?? '—'}
