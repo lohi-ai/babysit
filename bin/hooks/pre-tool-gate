@@ -138,6 +138,26 @@ case "$RC" in
 esac
 [ -n "$TICKET" ] || pass "empty ticket"
 
+# Version-2 runs use the shared typed evaluator. Older binaries/runs fall
+# through to the byte-compatible verdict checks below. An evaluator error on a
+# v2 command is a closed gate, never an implicit legacy downgrade.
+V2_ACTION="$STAGE"
+[ "$V2_ACTION" = merge ] && V2_ACTION=land
+V2_READINESS="$("${TICKET_BIN[@]}" readiness --json --action "$V2_ACTION" 2>/dev/null || true)"
+if printf '%s' "$V2_READINESS" | jq -e '.schema_version == 2' >/dev/null 2>&1; then
+  if ! printf '%s' "$V2_READINESS" | jq -e '.ok == true' >/dev/null 2>&1; then
+    V2_ERROR="$(printf '%s' "$V2_READINESS" | jq -r '.error.code // "READINESS_ERROR"')"
+    emit deny "Autopilot v2 readiness failed on $TICKET ($V2_ERROR); blocking $STAGE rather than falling back to stale verdict prose."
+  fi
+  if printf '%s' "$V2_READINESS" | jq -e '.data.enforced == true' >/dev/null 2>&1; then
+    V2_REASONS="$(printf '%s' "$V2_READINESS" | jq -r '.data.reason_codes | join(",")')"
+    if ! printf '%s' "$V2_READINESS" | jq -e '.data.ready == true' >/dev/null 2>&1; then
+      emit deny "Autopilot v2 is not ready for $STAGE on $TICKET ($V2_REASONS). Re-run the stale or missing gate on the current tree."
+    fi
+    pass "autopilot-v2 readiness=ready — ok for $STAGE"
+  fi
+fi
+
 vs() { "${TICKET_BIN[@]}" verdict-status --skill "$1" 2>/dev/null || echo none; }
 
 # A verdict is "ready" if DONE or DONE_WITH_CONCERNS. "BLOCKED"/"NEEDS_CONTEXT" = not ready.

@@ -121,6 +121,8 @@ func newTicketCmd() *cobra.Command {
 				runEvidenceStatus(args[1:])
 			case "qa-evidence":
 				runQAEvidence(args[1:])
+			case "readiness":
+				runReadiness(args[1:])
 			case "path":
 				runPath(args[1:])
 			case "list":
@@ -191,6 +193,8 @@ Subcommands:
   set-evidence --kind K (--json STR | --json-file FILE)   K ∈ verification|risk-gate|adversarial
   evidence-status --kind K       print {none|valid|malformed}
   qa-evidence                    audit qa verdict body: {none|ok|contradiction:<d>|thin:<d>|unexplained}
+  readiness --json --action push|land|pr
+                                 read-only typed gate freshness for the exact action
   append-history --event E [--actor A] [--extra-json JSON]
 
 Only for runs that cut something (--mode=branch|worktree, e.g. a foreman
