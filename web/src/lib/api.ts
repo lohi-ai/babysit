@@ -22,7 +22,7 @@ async function send<T>(method: string, path: string, body?: unknown): Promise<T>
   const res = await fetch(path, {
     method,
     headers: { 'Content-Type': 'application/json' },
-    body: method === 'DELETE' ? undefined : JSON.stringify(body ?? {}),
+    body: method === 'GET' || method === 'DELETE' ? undefined : JSON.stringify(body ?? {}),
   });
   // The server answers every failure with {"error": "..."} — a plain status
   // code tells the human nothing about which precondition they missed.
