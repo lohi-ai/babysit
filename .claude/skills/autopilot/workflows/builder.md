@@ -23,32 +23,11 @@ If none match and there is no ticket/requirement, stop with `NEEDS_CONTEXT`.
 ## run
 > produces: verdict:builder + qa:checked + git:branch-ready + finish:closed-out
 1. Ensure ticket, branch, and checkpoint exist; record the mode in the
-   checkpoint.
-   **Bootstrap gate:** `bbs autopilot probe` reporting
-   `state_repo_configured=0` — no `.babysit/git-flow.yaml` at the git
-   toplevel — is not a stop: branch policy is mechanical, and a
-   non-technical invoker can't answer it. Seed the documented defaults and
-   keep going:
-   ```bash
-   TOP=$(git rev-parse --show-toplevel)
-   BASE=$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's|^origin/||')
-   [ -n "$BASE" ] || for b in main master; do git show-ref -q --verify "refs/heads/$b" && BASE=$b && break; done
-   mkdir -p "$TOP/.babysit"
-   printf 'profile: startup\nbase_branch: %s\n' "${BASE:-main}" \
-     > "$TOP/.babysit/git-flow.yaml"
-   # every profile presets push: true — a repo with no remote must say so
-   git remote get-url origin >/dev/null 2>&1 || echo 'push: false' >> "$TOP/.babysit/git-flow.yaml"
-   ```
-   `startup` is the safe guess: standard rigor, a PR before anything lands.
-   Seed those two keys and nothing else — no `mode:`, so the run stays on the
-   branch the human was standing on, which is the only shape a repo nobody
-   configured can be assumed to want. The profile is a speed↔quality call the
-   human owns, so name what was seeded and point at `/bbs:setup-project` to
-   change it.
-   Record the seeded defaults in the handoff and recommend
-   `/bbs:setup-project` for the QA harness (`qa.yaml`, credentials) — that
-   part is not guessable. `state_landing_doc=0` (no CLAUDE.md or AGENTS.md)
-   stays a warning to note in the handoff, not a stop.
+   checkpoint. Prefer a valid v2 `bbs autopilot snapshot --json` packet for
+   these facts, otherwise use the legacy resolver. No `.babysit/git-flow.yaml`
+   is a valid `pet` policy from the resolver; never create or rewrite it while
+   executing. Record missing QA configuration or a landing document as a
+   handoff warning and point at `$bbs:setup-project` when it matters.
 2. **build mode only (skip when init already seeded `plan.md`):** run
    `plan-draft` (user-facing work routes through `design-ui`, so the plan
    carries the UI spec + prototype). Write `plan.md` unless the task is XS.

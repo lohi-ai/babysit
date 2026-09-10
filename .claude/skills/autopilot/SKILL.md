@@ -156,6 +156,14 @@ into the harness's native task list at loop entry — rebuilt from checkpoint
 + `plan.md` on cold re-entry — and close each as its gate passes; step skills
 add their finer tasks to the same list. The task list is the visible progress
 view, disk stays the brain. End every pass with the status block below.
+
+When available, read `bbs autopilot snapshot --json` once at loop entry and
+accept it only when its envelope is `schema_version: 2` and `ok: true`. Use its
+identity, policy, artifact digests, gates, and obligations as the common
+read-only packet; read every listed artifact that is required for the chosen
+action. An unavailable/unsupported packet falls back to the legacy reads.
+Never treat an `ok: true` snapshot or a projected gate as readiness or finish
+permission: AP-03's readiness evaluator is the authorization boundary.
 ## Step Skills
 "Run `<skill>`" means load and execute that skill through the active harness's
 skill mechanism (or the full-file fallback above), never approximate its job

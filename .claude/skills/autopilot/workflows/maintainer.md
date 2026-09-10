@@ -23,8 +23,9 @@ production system safe as it scales. Two modes, chosen from the invocation:
    then fix the top finding with the smallest safe change. A pure audit (no safe
    fix) is a valid run. **fix:** run `investigate` to root-cause, then apply the
    smallest fix via `implement` with a regression check.
-3. If code changed, run `review-pr --fix` (applies fixes to the working tree).
-4. Run `qa` (or the strongest fallback) to confirm no regression. Persist the
+3. If code changed, run `review-pr --fix` through autopilot's Automatic review /
+   QA subagent policy (applies fixes to the working tree).
+4. Run `qa` through the same policy (or the strongest fallback) to confirm no regression. Persist the
    verdict with `bbs ticket set-verdict --skill qa`.
 5. Commit and push any fix when policy allows.
 6. Write a handoff: mode + lens/root-cause, fix, verification, and the remaining
