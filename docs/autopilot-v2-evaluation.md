@@ -81,3 +81,31 @@ deterministic implementation evidence, but is not eligible for a default
 rollout claim. The paired live benchmark and observed provider usage remain
 unavailable, and the pre-existing P20 fixture must stay visible until fixed
 or versioned out of the baseline.
+
+## AP-08 authority-hardening follow-up
+
+This follow-up preserves the AP-08 result above as historical evidence and
+evaluates the subsequently verified Core hardening commit
+`6bc86bc5a5f8ebbd67737c47e46f1280a154e20f`. Core published both
+`DONE/PASS` review and QA verdicts before this worktree merged it; the merged
+candidate was `98a67d3dbe7bc24c1e92ae7f855bd434d059bbed`.
+
+Combined verification found one compatibility issue: the dashboard caller
+still expected four values from `ticketV2Readiness`, while the hardened Core
+helper returns a verified-head value as well. The minimal dashboard adaptation
+is included in final code revision `4bfc9a5bf9be8587911b7f946cfed64ccc27c095`.
+
+- Checkout-built `bin/bbs`, the focused race suite, v2 context/readiness and
+  checkpoint-refresh contracts, pre-tool gate (20), land (9), QA-lease (11),
+  differential (18), and hook/plugin Python coverage (11 plus 8 subtests)
+  passed.
+- `go test ./... -count=1` completed against the combined tree without an
+  observed regression; `web` type-check/Vite build also passed. The package
+  install reported 6 existing dependency-audit advisories and was not changed.
+- The evaluator again classified all 28 fixtures. Its local run retains the
+  documented P20 identity failure (`1 failed, 54 passed, 57 skipped`); no live
+  provider harness ran, so provider usage remains unavailable (`null`).
+
+Recommendation remains human review only: the final core authority boundary
+is covered by deterministic evidence, but P20 and unavailable paired live
+usage prevent a default-rollout claim.
