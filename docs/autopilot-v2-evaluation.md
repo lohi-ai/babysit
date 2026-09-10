@@ -56,3 +56,28 @@ worktree, rerun the command above plus the combined-tree suites, and append
 the candidate revision, quality failures, usage coverage, and rollout
 recommendation. A live paired benchmark remains unavailable until explicitly
 authorized and supported harness usage is observable.
+
+## AP-08 combined result
+
+AP-08 ran on candidate `fa810fd96da20ecc33b1f34c067318c44c6217fd`, after
+merging Core `7c4413dfa3cda5993254104eadc5cd155d136c27` and Integration
+`8e26ceeb10e891ed23af9a5523d972efaa78f7fb` into this evaluation worktree.
+
+- The evaluator classifies all 28 fixtures: 8 local binary rows, 19
+  deterministic wiring rows, and one locally unavailable row. It records 20
+  live-eligible rows but executed none: no provider harness was authorized or
+  invoked, and provider usage is `null`.
+- `go test ./...`, the 18-case differential suite, v2 context/readiness and
+  checkpoint-refresh contracts, clean-environment git-flow (17), land (9),
+  and QA-lease (11) suites all passed. Hook/plugin Python coverage passed 11
+  tests plus 8 subtests.
+- The evaluator's local execution reports the unchanged AP-01 P20 identity
+  fixture defect: `1 failed, 54 passed, 57 skipped`. Its output continues to
+  resolve the expected branch as `unknown`; this result is not attributed to
+  the combined v2 changes.
+
+Recommendation: the combined candidate is suitable for human review of its
+deterministic implementation evidence, but is not eligible for a default
+rollout claim. The paired live benchmark and observed provider usage remain
+unavailable, and the pre-existing P20 fixture must stay visible until fixed
+or versioned out of the baseline.
