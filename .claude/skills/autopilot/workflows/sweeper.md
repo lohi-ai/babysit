@@ -18,7 +18,8 @@ should get smaller or faster without changing behavior.
    policy (applies fixes to the working tree).
 4. Run `qa` through the same policy (or the strongest fallback) and confirm behavior matches the
    baseline. Persist the verdict with `bbs ticket set-verdict --skill qa`.
-5. Commit and push when policy allows.
+5. Commit the result locally. Autopilot never pushes, lands, or opens a PR —
+   close-out is the human's `create-pr` (or the dispatching foreman's).
 6. Write a handoff: what shrank, net line delta, and baseline-still-green proof.
    When a signal warrants, name the forward lifecycle edge after `create-pr`:
    surface shipped and measurable → `grower`; scale/security/cost signal
@@ -33,5 +34,5 @@ should get smaller or faster without changing behavior.
 STATUS: DONE | DONE_WITH_CONCERNS | NEEDS_CONTEXT | BLOCKED
 VERDICT: SWEPT
 SUMMARY: <what shrank + line delta + QA evidence>
-NEXT: per the repo's finish policy — by default, human review then /bbs:create-pr
+NEXT: human review, then /bbs:create-pr
 ```

@@ -22,7 +22,7 @@ viết `/bbs:` của Claude Code trừ khi lệnh dành riêng cho Codex.
 /bbs:foreman rebuild the novel request flow
 ```
 
-Mỗi yêu cầu một worker hiện hình, nằm trong terminal Orca riêng ở sidebar (mỗi worker chạy autopilot trọn gói — plan, code, review, QA, push), design được duyệt trước khi viết dòng code nào, và mọi ticket xong đều được merge lên base local để bạn review cả lô đang chạy trong một trình duyệt — rồi mới tạo PR. Đây là luồng nâng cao: nó cần [Orca](https://www.onorca.dev), và chỉ đáng công khi bạn có vài ticket độc lập để giao cùng lúc.
+Mỗi yêu cầu một worker hiện hình, nằm trong terminal Orca riêng ở sidebar (mỗi worker chạy autopilot trọn gói — plan, code, review, QA — trong worktree mà foreman tạo), design được duyệt trước khi viết dòng code nào, và mọi ticket xong đều được merge lên base local để bạn review cả lô đang chạy trong một trình duyệt — rồi mới tạo PR. Đây là luồng nâng cao: nó cần [Orca](https://www.onorca.dev), và chỉ đáng công khi bạn có vài ticket độc lập để giao cùng lúc.
 
 *babysit là việc bạn làm khi khỏi cần ai trông.* Nó chuộng mấy quyết định Claude tự làm tự kiểm được, hơn là mấy quyết định phải có người ngồi kè kè — đẻ ra cho các lần chạy theo lịch, pipeline được điều phối, và bất cứ thứ gì bạn muốn giao rồi đi chơi.
 
@@ -34,14 +34,14 @@ Nếu bạn là dev chính của một team nhỏ, đây là trọn vòng lặp 
 /bbs:setup-project                        # một lần mỗi repo — profile + mặc định QA
 /bbs:autopilot "thêm nút bật dark-mode"   # việc gì cũng được: nó plan → code → review → QA
 #   → đọc tickets/<id>/plan.md, rồi dán block /goal nó in ra và đi chơi
-#   → autopilot viết code, review, chạy QA, push branch
+#   → autopilot viết code, review, chạy QA, commit lên branch bạn đang đứng
 #   → bạn review bằng chứng, rồi:
-bbs ticket serve bs-ab123                 # với startup/enterprise: đưa ticket lên dev server
+bbs ticket serve bs-ab123                 # chỉ khi ticket chạy trong worktree riêng (foreman / --mode=worktree)
 #   → xem nó chạy trong browser; muốn sửa thì bảo session của ticket, rồi chạy lại serve
 /bbs:create-pr                            # bạn tự mở PR — autopilot không bao giờ tự mở
 ```
 
-Với `startup` và `enterprise`, code của ticket nằm trong worktree riêng dưới `.babysit/worktrees/`, không phải trong checkout bạn đang nhìn — `bbs ticket serve` là thứ đưa nó ra trước mặt bạn. Với `pet` thì code đã nằm sẵn trên branch của bạn, bỏ qua dòng đó.
+Code của ticket nằm ngay trên branch bạn đang đứng, nên dev server reload là thấy. `bbs ticket serve` dành cho hình dạng kia — ticket chạy trong worktree riêng (`bbs ticket ensure --mode=worktree`, hoặc một lô `/bbs:foreman`), code không nằm trong checkout này.
 
 Từng bước:
 
@@ -51,9 +51,6 @@ Từng bước:
 **Các chốt của con người — nơi bạn giữ quyền.** Autopilot chỉ dừng ở những khoảnh khắc thật sự thuộc về bạn; chọn khoảnh khắc nào bằng flag:
 
 - `--stop-after=plan` — duyệt hướng đi trước khi viết một dòng code.
-- `--auto` — bỏ bước dán; spawn `/goal` trên đúng agent bạn đang chạy (Grok thì Grok, Claude thì Claude).
-- `--reviewer <agent>` — spawn agent đó review plan và prototype. Agent nào cũng được — `claude`, `omp`, `grok`, `codex` — miễn không phải agent đang build. Bỏ qua thì không review bằng agent. Kèm `--auto`, approve sẽ start `/goal` trên agent lúc bắt đầu.
-- `--verify` — chấm code đã viết xong bằng một context mới: commit xong, review và QA chạy trong một process riêng chưa từng thấy diff này được viết ra, và chỉ file verdict quay về. Mặc định vẫn agent đó — quên *lý do* code trông như vậy mới là điểm chính; thêm `--agent` nếu muốn chấm bằng model khác.
 - *mặc định* — dừng ở trạng thái QA-xong, bạn review bằng chứng.
 - **`/bbs:create-pr`** — bạn tự gọi; autopilot không bao giờ tự mở PR.
 
@@ -218,7 +215,7 @@ Chỉ có một cái núm. Wizard hỏi đúng một câu — **ở repo này, s
 |---|---|---|---|
 | ai dùng | solo, dự án nghiệp dư | solo freelance / team nhỏ | team, codebase doanh nghiệp |
 | ưu tiên | ship ngay | tốc độ release > chất lượng code | chất lượng code > tốc độ release |
-| việc của ticket nằm đâu | không cắt branch — đi thẳng trên base | `feat/<id>_<slug>`, trong worktree riêng | `feat/<id>_<slug>`, trong worktree riêng |
+| việc của ticket nằm đâu | trên branch bạn đang đứng | trên branch bạn đang đứng | trên branch bạn đang đứng |
 | review diễn ra ở đâu | không ở đâu cả — push chính là release | **tại máy**, trong browser, tác giả tự merge | **trên GitHub**, người khác merge |
 | độ gắt QA | `smoke` — 3–5 ca | `standard` — 5–10 | `strict` — 8–12 |
 | effort `review-pr` | `low` | `medium` | `high` |
@@ -227,19 +224,23 @@ Mỗi profile cũng đòi hỏi vài thứ ở *bạn* — khi bắt đầu mộ
 
 **Một repo bạn chưa hề cấu hình sẽ tự suy ra `pet`** — không cắt branch, không có chỗ review, việc đi thẳng trên cái branch bạn đang đứng, y như chạy git trần. Lễ nghi là thứ repo phải tự xin, không phải thứ được phát sẵn.
 
-**Lần đầu dùng, hoặc chưa chắc? Chọn `startup`.** Đây là chỗ bắt đầu an toàn với một repo bạn còn quý: mỗi ticket làm việc trong worktree riêng, cả mẻ chỉ chạm tới base branch sau khi bạn đã gộp lại và xem tận mắt trong browser, và không gì lên được remote mà thiếu một PR do chính bạn mở. Đổi profile sau này chỉ tốn một dòng.
+**Lần đầu dùng, hoặc chưa chắc? Chọn `startup`.** Đây là chỗ bắt đầu an toàn với một repo bạn còn quý: không gì lên được remote mà thiếu một PR do chính bạn mở, và QA chạy ở độ gắt `standard`. Đổi profile sau này chỉ tốn một dòng.
 
 Độ gắt chỉ nới **bề rộng, không hạ cái ngưỡng**. Một `PASS` mang đúng một nghĩa ở cả ba mức: mọi chiều rubric áp dụng được phải từ B trở lên, và phải có một lượt chạy end-to-end mới tinh trên đúng code cuối cùng. Dự án nghiệp dư chạy ít ca hơn — chứ không phải không chạy ca nào, và cũng không bao giờ pass với một chiều điểm C.
 
 Tự tay đặt `mode:`, `land:`, hay `push:` sẽ đè lên preset của profile. Đó là cửa thoát hiểm, không phải hình dạng thường ngày — cái núm nào bạn tự tay vặn ra thì cái núm đó thôi bám theo profile.
 
-#### Chạy song song đi kèm sẵn trong profile
+#### Ticket song song là thứ phải xin, không bao giờ tự cấu hình
 
-`startup` và `enterprise` bật worktree sẵn, vì chạy nhiều ticket cùng lúc mới là hình dạng bình thường của cả hai. Không có gì phải xin, cũng không có profile nào tên "song song" để chọn: mỗi ticket có worktree riêng, checkout chính của bạn ở nguyên trên `base_branch` làm dev server dùng chung, và `bbs ticket serve` gộp cả mẻ đã xong lên đó để bạn xem trong một browser trước khi mở PR nào.
+**Không profile nào cắt branch hay lôi bạn vào worktree.** Cả ba đều làm việc trên branch bạn đang đứng, y như không có babysit — profile chỉ quyết chỗ review và độ gắt QA, không quyết việc nằm ở đâu. Cố ý vậy: một công cụ lặng lẽ dời việc của bạn là công cụ bạn không quản được.
 
-**Nó có giá, nên biết mình mua gì.** Vòng lặp trong không còn 0 bước: vì code nằm trong worktree còn dev server phục vụ checkout chính, mỗi vòng test là một commit cộng `bbs ticket merge-base` thay vì sửa-rồi-refresh. Nếu bạn thật sự làm từng ticket một, mua lại vòng lặp nhanh bằng đúng một key — `mode: branch`, kéo theo `land: pr` và cắt `feat/…` tại chỗ. `/bbs:setup-project` hỏi thẳng bạn câu này ("chạy nhiều ticket cùng lúc hay từng cái một?"), nên bạn không phải tự luận ra `mode:`.
+Cô lập là thứ xin theo từng lần chạy, khi bạn thật sự muốn:
 
-`pet` là ngoại lệ: nó ở lại trunk, và muốn nhiều ticket tách rời chính là dấu hiệu repo đã lớn hơn `pet`. `/bbs:foreman` vẫn chạy được cả mẻ trong repo `pet` — nó tự xin worktree theo từng lần giao việc, bất kể config nói gì.
+- `/bbs:foreman` — một mẻ: foreman tự tạo một worktree cho mỗi ticket, repo nào cũng được, config nói gì cũng vậy.
+- `bbs ticket ensure --slug-hint <slug> --mode=worktree` — riêng ticket này một worktree; rồi chạy autopilot trong đó.
+- `bbs ticket ensure --slug-hint <slug> --mode=branch` — cắt `feat/<id>_<slug>` tại chỗ.
+
+**Worktree có giá, nên biết mình mua gì.** Vòng lặp trong không còn 0 bước: vì code nằm trong worktree còn dev server phục vụ checkout chính, mỗi vòng test là một commit cộng `bbs ticket merge-base` thay vì sửa-rồi-refresh. Cái nó mua là ticket tách rời — review từng cái một, bỏ cái hỏng, và land từng cái thành một PR sạch. Repo nào lúc nào cũng muốn hình dạng đó thì viết tay `mode: worktree` + `land: local`; không gì tự viết nó cho bạn.
 
 Các lệnh chuyển việc giữa worktree và bề mặt dùng chung — `merge-base`, `switch`, `reset-base`, cùng lớp cho người dùng `board`, `serve`, `/bbs:fix-pr` — nằm ở mục [Làm nhiều ticket song song](#làm-nhiều-ticket-song-song-mode-worktree). Chi tiết: [`references/git-flow.md`](.claude/skills/references/git-flow.md).
 
@@ -251,7 +252,7 @@ Các lệnh chuyển việc giữa worktree và bề mặt dùng chung — `merg
 /bbs:autopilot "add a settings page with dark mode toggle"
 ```
 
-Autopilot init ticket — requirement, plan, branch — rồi dừng lại và in ra một block `/goal` làm **tin nhắn cuối cùng**. Block đó chính là việc duy nhất bạn làm tiếp theo: **copy nó, dán lại vào Claude Code, rồi đi chơi.** Session goal sẽ viết code, review, chạy QA, và push branch. Review xong thì tự mở PR. Truyền `--auto` để bỏ bước dán: `/goal` chạy trên đúng agent bạn đang chạy. Truyền `--reviewer codex` (hoặc agent nào khác đã đăng ký) nếu muốn một agent thứ hai review plan trước — bắt buộc khác agent đang build, để cái nhìn đó thực sự độc lập.
+Autopilot init ticket — requirement, plan — rồi dừng lại và in ra một block `/goal` làm **tin nhắn cuối cùng**. Block đó chính là việc duy nhất bạn làm tiếp theo: **copy nó, dán lại vào Claude Code, rồi đi chơi.** Session goal sẽ viết code, review, chạy QA, và commit lên branch bạn đang đứng — autopilot không bao giờ cắt branch, push, hay mở PR. Review xong thì tự mở PR.
 
 > **Bản bàn giao trông như vầy** — autopilot kết thúc bằng một đoạn dẫn bằng lời thường, rồi tới block để copy:
 >
@@ -263,8 +264,8 @@ Autopilot init ticket — requirement, plan, branch — rồi dừng lại và i
 >
 > 👉 Copy the block below and paste it into Claude Code to build it:
 >
-> /goal bs-ab123 is done: qa verdict PASS/FIXED persisted via bbs ticket set-verdict,
-> review-pr verdict persisted, branch pushed, handoff note written — or a
+> /goal bs-ab123 is done: work committed locally, qa verdict PASS/FIXED persisted
+> via bbs ticket set-verdict, review-pr verdict persisted, handoff note written — or a
 > NEEDS_CONTEXT / BLOCKED status block printed verbatim.
 > Work it: /bbs:autopilot builder bs-ab123
 > ```
@@ -288,7 +289,7 @@ Khi vòng lặp một-ticket đã quen tay, `foreman` chạy cả một mẻ. T�
 
 Foreman mở một worker cho mỗi ticket — một terminal Orca bạn bấm ở sidebar để xem hoặc tự lái — theo dõi các pane, và giữ chốt chặn giữa design và build: khi một worker dừng ở bản bàn giao plan/prototype, foreman review design, góp ý, rồi hoặc bật đèn xanh cho build hoặc hỏi bạn khi tiếng nói của bạn có thể đổi hướng kết quả. Nó tự trả lời các câu hỏi máy móc của worker, chuyển cho bạn những câu cần bạn, kiểm chứng mọi verdict QA/review trên đĩa, và khép từng ticket lại đúng như repo của bạn đã cấu hình: `finish: land` merge nó lên base local để bạn review sản phẩm gộp trên dev server, `finish: pr` mở PR, còn mặc định thì để checkpoint cuối lại cho bạn.
 
-**Một thứ phải có trước, nên nó mới là bài học thứ hai:** [Orca](https://www.onorca.dev) — thiếu là foreman dừng ngay. Bạn không cần cấu hình lại repo: `startup`/`enterprise` vốn đã ở mode worktree, còn trong repo `pet` thì foreman tự xin worktree theo từng lần giao việc, nên các ticket song song không bao giờ giành nhau một checkout. Profile của bạn vẫn là thứ quyết định độ gắt. Với một ticket lẻ chạy tuần tự, nó chẳng hơn `/bbs:autopilot` chỗ nào.
+**Một thứ phải có trước, nên nó mới là bài học thứ hai:** [Orca](https://www.onorca.dev) — thiếu là foreman dừng ngay. Bạn không cần cấu hình lại repo: foreman tự tạo worktree cho mỗi ticket trước khi giao việc, profile nào cũng vậy, nên các ticket song song không bao giờ giành nhau một checkout. Profile của bạn vẫn là thứ quyết định độ gắt. Với một ticket lẻ chạy tuần tự, nó chẳng hơn `/bbs:autopilot` chỗ nào.
 
 ## Cách dùng
 
@@ -298,7 +299,7 @@ Babysit là một dây chuyền nhỏ để ship một thay đổi. Bạn thả 
 
 1. **"Có phải đây là thứ đáng làm không?"** — `requirement.md` sẵn sàng. Bạn đọc và duyệt.
 2. **"Có phải đây là cách làm đúng không?"** — `plan.md` sẵn sàng. Bạn đọc, chỉnh, duyệt.
-3. **"Nó có chạy thật không?"** — code đã viết, đã review, đã QA, đã push.
+3. **"Nó có chạy thật không?"** — code đã viết, đã review, đã QA, đã commit.
 4. **"Có nên biến thành PR không?"** — bạn review bản handoff rồi chạy `/bbs:create-pr`; khi reviewer để lại comment, `/bbs:fix-pr` xử lý từng cái.
 
 ### Chọn chỗ nó dừng
@@ -315,16 +316,16 @@ Mỗi khi một stage xong, ticket có thêm một dòng `Next:` — đúng ngh�
 ### Ba kiểu input
 
 ```
-/bbs:autopilot "<ý tưởng một dòng>"   # feature mới — tạo ticket + branch, chạy đầu-tới-cuối
+/bbs:autopilot "<ý tưởng một dòng>"   # feature mới — tạo ticket, chạy đầu-tới-cuối
 /bbs:autopilot bs-ab123              # ticket có sẵn — state-route tới stage kế tiếp
-/bbs:autopilot                       # resume — nối lại từ checkpoint của branch hiện tại
+/bbs:autopilot                       # resume — nối lại từ checkpoint của ticket đã resolve
 ```
 
-Cả bề mặt chỉ có vậy. Năm flag mở rộng thêm — `--stop-after=requirement|plan` để dừng ở checkpoint sớm hơn, `--auto` để spawn `/goal` trên agent lúc bắt đầu, `--reviewer <agent>` để thêm bước review plan độc lập bằng agent khác, `--verify` để đẩy review và QA sang một process context mới chưa từng thấy code được viết, và `--mode=worktree` để chạy riêng ticket này trong worktree của nó dù profile không bắt (repo `pet`, hoặc repo đã chọn `mode: branch`). Không có token động từ nào cả.
+Cả bề mặt chỉ có vậy. Ba flag mở rộng thêm — `--stop-after=requirement|plan` để dừng ở checkpoint sớm hơn, và `--planner <model>` / `--planner-effort <effort>` để chọn model tạo plan/prototype. Autopilot luôn chạy trên checkout bạn khởi động nó; cô lập là `bbs ticket ensure --mode=…` hoặc `/bbs:foreman`, không bao giờ là flag của autopilot. Không có token động từ nào cả.
 
 ### Làm nhiều ticket song song (mode `worktree`)
 
-**Với `startup` và `enterprise`, đây là luồng thường ngày của bạn, không phải luồng nâng cao** — profile đã đặt bạn vào mode worktree, nên đây chính là các lệnh mà một lần chạy ticket lẻ giao lại cho bạn. `/bbs:foreman` lái đúng mục này cho cả một mẻ — dispatch, chốt design, kiểm verdict, bề mặt gộp — nhưng bạn không cần nó thì mọi thứ ở đây vẫn chạy.
+**Đây là hình dạng mà một lô foreman (hoặc `bbs ticket ensure --mode=worktree` chạy tay) cho bạn** — các lệnh mà một lần chạy như vậy giao lại. `/bbs:foreman` lái đúng mục này cho cả một mẻ — dispatch, chốt design, kiểm verdict, bề mặt gộp — nhưng bạn không cần nó thì mọi thứ ở đây vẫn chạy.
 
 Mỗi repo có một checkout nặng chạy dev server; mỗi ticket sống trong worktree nhẹ riêng của nó. Nhờ vậy mọi thứ chạy song song được hết — *trừ* cái khoảnh khắc có người cần thấy một ticket đang chạy thật — và khoảnh khắc đó có đúng ba lệnh:
 
@@ -378,7 +379,7 @@ Bảng skill đầy đủ (kèm phân loại autonomous-ready / interactive-only
 
 ## CLI đi kèm
 
-Tất cả là một binary duy nhất, gọi dạng `bbs <sub>` — `bbs autopilot` (bộ chạy), `bbs ticket env` (resolver lấy branch làm mỏ neo), cộng các trợ giúp cho env, config, snapshot db, và kiểm tra upgrade. `brew install lohi-ai/babysit/bbs` đặt nó lên `PATH`; nếu cài từ checkout thì `setup-skills` build nó rồi symlink `~/.local/bin/bbs`, kèm các alias argv0 `bbs-*` vào `~/.claude/` cho các caller cũ. Bảng đầy đủ và mục đích ở [`docs/companion-cli.md`](docs/companion-cli.md). Chạy `bbs <sub> --help` để xem cách dùng bất kỳ cái nào.
+Tất cả là một binary duy nhất, gọi dạng `bbs <sub>` — `bbs autopilot` (bộ chạy), `bbs ticket env` (resolver danh tính: `BABYSIT_TICKET` → manifest → branch), cộng các trợ giúp cho env, config, snapshot db, và kiểm tra upgrade. `brew install lohi-ai/babysit/bbs` đặt nó lên `PATH`; nếu cài từ checkout thì `setup-skills` build nó rồi symlink `~/.local/bin/bbs`, kèm các alias argv0 `bbs-*` vào `~/.claude/` cho các caller cũ. Bảng đầy đủ và mục đích ở [`docs/companion-cli.md`](docs/companion-cli.md). Chạy `bbs <sub> --help` để xem cách dùng bất kỳ cái nào.
 
 ## Vận hành
 

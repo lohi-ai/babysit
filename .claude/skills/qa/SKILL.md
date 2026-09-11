@@ -42,13 +42,14 @@ Exercise the application like a user and leave reproducible evidence.
    migrate), run it before probing. Before trusting any surface, confirm it
    actually serves the change (probe a marker from the diff); if not, name
    the stale surface rather than testing blind. Fixes edit the files in the
-   checkout under test — committing and landing them, like branching, stays
-   the invoking workflow's job — re-verify on the updated surface.
-   Running inside a ticket worktree (`--mode=worktree`, a foreman batch) is
-   the exception: the dev server lives in the repo's **primary checkout
-   only** (one heavy tree per repo — never npm-install or boot a server in a
-   worktree), so landing, the qa-lease, and `QA_ENV_REVERT` before releasing
-   it all apply — see `../references/worktrees.md § QA loop`.
+   checkout under test — committing them stays the invoking workflow's job —
+   re-verify on the updated surface.
+   Running inside a ticket worktree (a foreman batch) is the exception: the
+   dev server lives in the repo's **primary checkout only** (one heavy tree
+   per repo — never npm-install or boot a server in a worktree), so this
+   skill runs the surface protocol itself — `merge-base`, the qa-lease, and
+   `QA_ENV_REVERT` before releasing it — see
+   `../references/worktrees.md § QA loop`.
 3. Code-level checks (tests, typecheck, lint) first — they gate, they don't
    prove.
 4. Size the matrix to the repo's rigor: `eval "$(bbs autopilot git-flow)"` →

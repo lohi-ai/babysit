@@ -78,19 +78,7 @@ func resolveGitFlow(dir string) (gitFlowPolicy, error) {
 		}
 	}
 	p, err := gitFlowFrom(content, baseBranchIn(dir))
-	return verifierClamp(p), err
-}
-
-// verifierClamp is the mechanical half of "the verifier does not close out".
-// A spawned verifier grades a diff it did not write; the session that spawned
-// it owns git. Asking for that in the prompt only would be prose enforcement —
-// 44cf669 is the record of what that is worth — so the policy the run actually
-// reads answers for it: nothing to finish, nothing to push.
-func verifierClamp(p gitFlowPolicy) gitFlowPolicy {
-	if os.Getenv("BABYSIT_VERIFIER") != "" {
-		p.Finish, p.Push = "review", "false"
-	}
-	return p
+	return p, err
 }
 
 // gitFlowFrom is resolveGitFlow's pure core: yaml text + the already-resolved

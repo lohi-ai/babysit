@@ -199,11 +199,11 @@ _AGENT="${BABYSIT_AGENT:-}"
 [ -z "$_AGENT" ] && [ -n "${GROK_SESSION_ID:-${GROK_AGENT:-}}" ] && _AGENT="grok"
 [ -z "$_AGENT" ] && [ -n "${CLAUDE_CODE_SESSION_ID:-}" ] && _AGENT="claude"
 case "$_AGENT" in codex) _SKILL_REF='$bbs:' ;; omp) _SKILL_REF='/' ;; *) _SKILL_REF='/bbs:' ;; esac
-[ -n "$OPENCLAW_SESSION" ] || [ -n "$BABYSIT_SPAWNED" ] && _SPAWNED="true" || _SPAWNED="false"
+[ -n "$OPENCLAW_SESSION" ] && _SPAWNED="true" || _SPAWNED="false"
 
-# Project scope — slug + ticket re-derived from git remote + branch on every
-# preamble, never from conversation memory. Empty TICKET = branch encodes
-# none (e.g. main) — the skill decides whether that's OK.
+# Project scope — slug + ticket re-derived through the identity ladder on every
+# preamble (env → manifest cwd-match → branch), never from conversation memory.
+# Empty TICKET = no identity resolved (e.g. main with no env) — the skill decides whether that's OK.
 eval "$(bbs ticket env 2>/dev/null || true)"
 SLUG="${SLUG:-unknown}"
 TICKET="${TICKET:-}"
@@ -261,10 +261,14 @@ Replace `SKILL_NAME` with the skill's `name:` from frontmatter.
 - **`SPAWNED=true`** — an orchestrator started this session; skip welcome
   text and optional summaries.
 ### Ticket consistency — the four-layer invariant
-1. **Branch name is the anchor** (`feat/<ticket>_<slug>`) — `TICKET` is
-   re-derived from it every wake-up; conversation memory is never trusted.
-2. **Checkpoint cross-check** — `checkpoint.json` records `branch`; if it
-   doesn't match the current branch, stop and report (block below).
+1. **The resolve ladder is the anchor** — `bbs ticket resolve` walks
+   `BABYSIT_TICKET` → `manifest.yaml` cwd-match → branch regex
+   (`feat/<ticket>_<slug>`). `TICKET` is re-derived every wake-up;
+   conversation memory is never trusted. Trunk tickets (the default) are
+   env/manifest-identified and share the current branch — a branch name is
+   a valid identity source, never a required one.
+2. **Checkpoint cross-check** — `checkpoint.json` records `ticket`; if it
+   doesn't match the resolved ticket, stop and report (block below).
 3. **Timeline audit** — `bbs autopilot` appends step boundaries to
    `timeline.jsonl`.
 4. **Ticket system is the oracle** — `bbs ticket get status` is ground truth
@@ -273,10 +277,10 @@ Divergence (layers 1↔2 disagree):
 ```
 STATUS: BLOCKED
 VERDICT: —
-SUMMARY: Branch/checkpoint divergence — cannot safely resume.
-REASON: branch='<current>' but checkpoint.branch='<recorded>' for ticket <ticket>
-ATTEMPTED: Derived ticket from branch, read checkpoint.json, compared branch fields
-RECOMMENDATION: Human triages — checkout the recorded branch or clear state with `bbs autopilot clear <ticket>`
+SUMMARY: Ticket/checkpoint divergence — cannot safely resume.
+REASON: resolved ticket='<current>' but checkpoint.ticket='<recorded>'
+ATTEMPTED: Resolved ticket via the ladder, read checkpoint.json, compared ticket fields
+RECOMMENDATION: Human triages — export the recorded BABYSIT_TICKET, or clear state with `bbs autopilot clear <ticket>`
 ```
 **No-ticket scope** — empty `TICKET` is a valid shape: skip ticket-state
 writes with a one-line note, take requirement/plan from conversation, do the

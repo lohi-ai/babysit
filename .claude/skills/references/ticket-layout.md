@@ -59,28 +59,33 @@ Set at creation time: `bbs ticket init --parent <id> --origin-type sub_ticket
 --seed <path> --position <n>`. `set-parent` writes only the parent link, so a
 child left at the `standalone` default will not route to `builder`'s child mode.
 ## Bootstrap: how tickets come into being
-Tickets exist when the branch matches
+Tickets resolve through the identity ladder — `BABYSIT_TICKET` env →
+`manifest.yaml` cwd-match → branch regex
 `(feat|fix|chore|bug|refactor)/<id>_<slug>` — the preamble derives `$TICKET`
 and runs `bbs ticket init`. Entry-point skills invoked without a ticket (e.g.
 from `main`) run the universal entry hook early instead of failing:
 ```bash
-eval "$(bbs ticket ensure \
+ENSURE_OUT=$(bbs ticket ensure --no-branch \
   --from-input "$USER_REQUEST" \
   --type feat \
-  --reason <skill-name>-entry)"
-# Safe-cut divert: ensure only cuts in place from a clean base-branch
-# checkout. When it printed WORKTREE=, all work happens there.
-[ -n "${WORKTREE:-}" ] && cd "$WORKTREE"
+  --reason <skill-name>-entry)
+TICKET=$(printf '%s\n' "$ENSURE_OUT" | sed -n 's/^TICKET=//p')
+# Parse, never eval — TICKET_HOME/WORKTREE are unquoted paths. Carry the id
+# per command: BABYSIT_TICKET="$TICKET" <cmd> (exports don't survive
+# per-call shells).
 ```
-`ensure` is idempotent. Fast-path (already on a ticket branch): no-op, prints
-`CREATED=0` + ticket env. Slow-path: generates `bs-<8hex>`, seeds
-`requirement.md`, prints `CREATED=1` + ticket env. Under `trunk` — the default,
-and everything without an explicit `--mode` — that is all it does: no branch is
-cut and `export BABYSIT_TICKET=<id>` carries the identity. With
-`--mode=branch|worktree` it also cuts `feat/<id>_<slug>` through the **safe-cut
-gate** (in place only from a clean base checkout; otherwise diverts to a
-worktree and prints `WORKTREE=<path>` — cd there; see
-[git-flow.md](git-flow.md)).
+`ensure` is idempotent. Fast-path (identity already resolved — env, manifest
+cwd-match, or a ticket branch): no-op, prints `CREATED=0` + ticket env.
+Slow-path: generates `bs-<8hex>`, seeds `requirement.md`, prints `CREATED=1`
++ ticket env. Under `trunk` — the default, and everything without an
+explicit `--mode` — that is all it does: no branch is cut and the
+`TICKET=<id>` line carries the identity (prefix later commands with
+`BABYSIT_TICKET`). Autopilot always runs it this way — `--no-branch` —
+because it works on the checkout it was started in. Only a foreman dispatch
+or an explicit human `--mode=branch|worktree` cuts `feat/<id>_<slug>`
+through the **safe-cut gate** (in place only from a clean base checkout;
+otherwise diverts to a worktree and prints `WORKTREE=<path>` — cd there;
+see [git-flow.md](git-flow.md)).
 **Exit 3 = `NEEDS_CONFIRM`** — in developer mode the slow-path never cuts a
 branch in place silently: without `--cut-branch` it exits 3. Render one
 `AskUserQuestion` (cut the branch vs stay + `BABYSIT_TICKET`) and re-run with

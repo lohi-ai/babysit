@@ -230,51 +230,6 @@ func Resolve(key, flag string) (Profile, error) {
 	return p, nil
 }
 
-// currentEnv maps an agent to env vars that prove this process is running
-// inside it. Only agents that actually export a marker appear here, and the
-// list is short on purpose — see Current for why guessing is worse than "".
-//
-// Order is precedence, and claude is deliberately LAST because these
-// environments nest: an omp session started from a Claude Code terminal
-// inherits CLAUDECODE=1 and CLAUDE_CODE_SESSION_ID wholesale (verified by
-// dumping the child env of `omp -p` under Claude Code). Claude Code's marker is
-// therefore the one most likely to be somebody else's leftover, so anything
-// with a marker of its own has to be tested first.
-var currentEnv = []struct {
-	name string
-	vars []string
-}{
-	{"codex", []string{"CODEX_SESSION_ID", "CODEX_THREAD_ID"}},
-	{"grok", []string{"GROK_AGENT", "GROK_SESSION_ID"}},
-	{"claude", []string{"CLAUDE_CODE_SESSION_ID"}},
-}
-
-// Current names the CLI this process is running inside, or "".
-//
-// omp is absent by design: it exports no session marker (probed — its child
-// environment carries only Orca's and the parent CLI's vars), so there is
-// nothing to detect it by. Codex exports CODEX_SESSION_ID and CODEX_THREAD_ID;
-// either is sufficient, and checking it before Claude avoids a nested Codex
-// session inheriting CLAUDE_CODE_SESSION_ID from its parent.
-//
-// The cost of "" is bounded and the callers are built for it: resolveGoalAgent
-// falls through to BABYSIT_AGENT and then to the configured worker_agent, which
-// is a stated preference rather than a guess. And every session babysit itself
-// spawns is stamped with BABYSIT_AGENT=<name>, which outranks this function —
-// so a nested `--auto` inside a babysit-spawned omp worker resolves to omp even
-// though Current() cannot see it. The only case left is a human-started omp
-// session, where the configured default is the right answer anyway.
-func Current() string {
-	for _, c := range currentEnv {
-		for _, v := range c.vars {
-			if os.Getenv(v) != "" {
-				return c.name
-			}
-		}
-	}
-	return ""
-}
-
 // ByName resolves a recorded agent name with no config ladder. Spawn uses it on
 // the resume path: the conversation being re-opened was minted by a specific
 // CLI, and the config may have changed since. Resuming a Claude session with

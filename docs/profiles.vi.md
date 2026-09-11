@@ -46,9 +46,9 @@ branch, không profile nào lôi bạn vào worktree — `bbs autopilot git-flow
 phải xin, không bao giờ là thứ file config tự bật sau lưng bạn:
 
 ```bash
-/bbs:autopilot --mode=worktree "<yêu cầu>"          # ticket này có checkout riêng
-bbs ticket ensure --slug-hint thing --mode=branch   # …hoặc cắt branch feat/… tại chỗ
-/bbs:foreman                                        # chạy lô: mỗi ticket một worktree
+bbs ticket ensure --slug-hint thing --mode=worktree   # ticket này có checkout riêng
+bbs ticket ensure --slug-hint thing --mode=branch     # …hoặc cắt branch feat/… tại chỗ
+/bbs:foreman                                          # chạy lô: foreman tạo worktree cho mỗi ticket
 ```
 
 Repo nào lúc nào cũng muốn một trong hai hình dạng đó thì viết tay
@@ -225,7 +225,7 @@ REASON: primary checkout … is on 'feat/…', not base 'main'.
 
 Cần [Orca](https://www.onorca.dev), phụ thuộc cứng. Đưa cho nó vài yêu cầu độc lập; nó
 mở mỗi ticket một worker nhìn thấy được, mỗi worker trong terminal Orca riêng
-chạy autopilot đầu-tới-cuối, và tự xin `--mode=worktree` theo từng lần giao — nên
+chạy autopilot đầu-tới-cuối, và tự tạo worktree cho ticket trước mỗi lần giao — nên
 nó chạy y hệt nhau trên mọi repo, đã cấu hình hay chưa:
 
 ```
@@ -238,8 +238,9 @@ Nó cũng gác cửa thiết kế trước khi có dòng code nào, và có th�
 ### Cách B — tự giao việc
 
 ```bash
-/bbs:autopilot --mode=worktree "<yêu cầu>"             # mỗi ticket một lần
-bbs ticket ensure --slug-hint <slug> --mode=worktree   # …hoặc chỉ tạo worktree
+OUT=$(bbs ticket ensure --slug-hint <slug> --mode=worktree)   # mỗi ticket một worktree
+cd "$(printf '%s\n' "$OUT" | sed -n 's/^WORKTREE=//p')"       # vào đúng path nó in ra
+/bbs:autopilot "<yêu cầu>"
 ```
 
 Repo nào *lần nào cũng* làm kiểu này thì khỏi gõ flag nữa:

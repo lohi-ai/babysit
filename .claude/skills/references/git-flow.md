@@ -22,18 +22,22 @@ Rigor scales *breadth* only — `PASS` means the same thing in all three tiers
 qa + review-pr verdicts are the only gate before the push. An explicit
 `mode:`/`land:`/`push:`/`finish:` key always wins over the profile.
 
-## Work rides the current branch
-`BBS_MODE` is `trunk` under every profile: babysit never cuts a branch or
-moves you to a worktree on its own. Identity then rides `BABYSIT_TICKET` —
-`ensure` prints the `export` line, and without it the pre-push hook resolves
-no ticket and the verdicts stop gating anything. Isolation is requested per
-run, never inherited from a config file:
-- `--mode=branch` on `ensure` / autopilot — cut `feat/<id>_<slug>` in place
-  (diverts to a worktree if the checkout is dirty or off base).
-- `--mode=worktree` — cut into `.babysit/worktrees/<ticket>_<slug>/`, primary
-  checkout untouched. `foreman` passes this for every worker in a batch. The
-  machinery that shape needs — `merge-base`, qa-lease, `switch`/`serve`,
-  `land: local`, `finish` — lives in [worktrees.md](worktrees.md).
+## Who owns git
+- **Autopilot** works on the checkout it was started in. It commits its own
+  work locally and nothing more — never branches, worktrees, pushes, lands,
+  or opens a PR. `BBS_MODE` is `trunk` under every profile and autopilot
+  never reads it.
+- **Foreman** owns isolation and close-out. It creates the ticket worktree
+  (`bbs ticket ensure --mode=worktree`), starts the worker inside it, and
+  applies the repo's `finish:` policy (`review` | `land` | `pr`) once the
+  verdicts read DONE. The machinery that shape needs — `merge-base`,
+  qa-lease, `switch`/`serve`, `land` — lives in [worktrees.md](worktrees.md).
+- **A human** can still ask for isolation directly:
+  `bbs ticket ensure --mode=branch` cuts `feat/<id>_<slug>` in place
+  (diverts to a worktree if the checkout is dirty or off base);
+  `--mode=worktree` cuts into `.babysit/worktrees/<ticket>_<slug>/` with the
+  primary checkout untouched. Nothing opts in implicitly — isolation is
+  always an explicit ask.
 
 ## When something does get a branch
 Ticket branches are cut and refreshed against `origin/<base>` (fetch-first) —

@@ -212,7 +212,7 @@ func runApproval(args []string) {
 		fmt.Fprintln(os.Stderr, "approval: publish | status | resolve | await | comment | comments | self-resolve")
 		os.Exit(2)
 	}
-	env := identity.Resolve()
+	env := resolveEnv()
 	needTicket(env)
 	st := ticket.New(env)
 

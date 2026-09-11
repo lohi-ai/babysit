@@ -152,7 +152,7 @@ func runPath(args []string) {
 		}
 	}
 
-	env := identity.Resolve()
+	env := resolveEnv()
 	needTicket(env)
 	st := ticket.New(env)
 	th := st.Home()
@@ -472,7 +472,7 @@ func runList(args []string) {
 		pskill = safePathComponent(kind, "skill", pskill)
 	}
 
-	env := identity.Resolve()
+	env := resolveEnv()
 	needTicket(env)
 	th := ticket.New(env).Home()
 
@@ -561,7 +561,12 @@ func runReconcile(args []string) {
 		os.Exit(2)
 	}
 
-	env := identity.Resolve()
+	var env identity.Env
+	if all || one != "" {
+		env = resolveProject() // explicit target(s) — cwd ambiguity must not block
+	} else {
+		env = resolveEnv()
+	}
 	if all {
 		tdir := filepath.Join(env.ProjectHome, "tickets")
 		entries, err := os.ReadDir(tdir)

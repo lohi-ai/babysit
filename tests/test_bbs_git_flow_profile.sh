@@ -324,12 +324,12 @@ SK="$SCRIPT_DIR/.claude/skills"
   awk '/land: none/{f=1} f&&/STATUS: BLOCKED/{found=1} END{exit !found}' "$pr" \
     || { echo "create-pr does not BLOCK under land: none"; exit 1; }
 
-  # finish is one rule with two callers: a single ticket and a batch must close
-  # out the same way, or the flow a repo configured depends on how it was run.
-  for skill in autopilot foreman; do
-    grep -q 'BBS_FINISH' "$SK/$skill/SKILL.md" \
-      || { echo "$skill does not close out per the repo's finish policy"; exit 1; }
-  done
+  # finish is foreman's alone: autopilot is an assistant — it commits locally
+  # and never closes out, so it must NOT read BBS_FINISH; foreman must.
+  grep -q 'BBS_FINISH' "$SK/foreman/SKILL.md" \
+    || { echo "foreman does not close out per the repo's finish policy"; exit 1; }
+  ! grep -q 'BBS_FINISH' "$SK/autopilot/SKILL.md" \
+    || { echo "autopilot still reads the finish policy — close-out is foreman's"; exit 1; }
 
   rv="$SK/review-pr/SKILL.md"
   grep -q 'BBS_REVIEW_EFFORT' "$rv" || { echo "review-pr does not fall back to the repo's effort"; exit 1; }

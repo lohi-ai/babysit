@@ -18,10 +18,20 @@ import (
 )
 
 // ErrNoRepo signals that git could not resolve a worktree — i.e. we are not in
-// a git repository. bin/bbs-slug aborts here under `set -euo pipefail` (its
-// unguarded `git worktree list` on line 29), exiting 128 with no output before
-// any subcommand logic runs; the caller reproduces that exit exactly.
+// a repository at all. Callers that treat "no repo" as a soft condition check
+// for this exact error.
 var ErrNoRepo = errors.New("not a git repository")
+
+// EnvConflictError is the loud abort when BABYSIT_TICKET and BBS_TICKET are
+// both set and disagree — continuing would pick one silently.
+type EnvConflictError struct {
+	BabysitTicket string
+	BBSTicket     string
+}
+
+func (e *EnvConflictError) Error() string {
+	return fmt.Sprintf("bbs-slug: BABYSIT_TICKET=%s conflicts with BBS_TICKET=%s; unset one to proceed.", e.BabysitTicket, e.BBSTicket)
+}
 
 // Info is the resolved identity, mirroring the KEY=VALUE lines bin/bbs-slug
 // emits for `eval`.
@@ -110,7 +120,7 @@ func ResolveIn(dir string) (*Info, error) {
 	// override the branch. Both set and disagreeing is a loud abort.
 	bab, bbs := os.Getenv("BABYSIT_TICKET"), os.Getenv("BBS_TICKET")
 	if bab != "" && bbs != "" && bab != bbs {
-		return nil, fmt.Errorf("bbs-slug: BABYSIT_TICKET=%s conflicts with BBS_TICKET=%s; unset one to proceed.", bab, bbs)
+		return nil, &EnvConflictError{BabysitTicket: bab, BBSTicket: bbs}
 	}
 	if bab != "" {
 		ticket = bab

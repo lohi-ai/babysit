@@ -5,8 +5,9 @@ stdout status block ([preamble.md § Completion Status Protocol](preamble.md#com
 git state (branch + commits — the diff is the primary deliverable), the
 ticket directory `~/.babysit/projects/<slug>/tickets/<ticket>/`
 ([ticket-layout.md](ticket-layout.md)), and — `developer` runs only —
-conversation context. `<ticket>` is always re-derived from the branch, never
-conversation memory
+conversation context. `<ticket>` resolves through the identity ladder —
+`BABYSIT_TICKET` → manifest cwd-match → branch regex — never conversation
+memory
 ([preamble.md § Ticket consistency](preamble.md#ticket-consistency--the-four-layer-invariant)).
 ## Verdicts per skill
 A verdict is a short fixed-shape string reported next to `STATUS`:

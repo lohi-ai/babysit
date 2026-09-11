@@ -119,13 +119,16 @@ find them — workflows already cover the strict path):
 4. **Git-dirty refusal** — pushed/dirty/clean is the workflow's concern (it
    wraps release gates with the appropriate policy). A skill that does
    read-only or contained work shouldn't refuse a dirty tree.
-5. **Git-flow protocol in the skill** — worktree landing (`merge-base`/`switch`),
-   git-flow `mode:` branching, base-checkout policy, and every git mutation
-   (branch, commit, push) belong to autopilot's workflows: skills are
-   infra-isolated and only edit the working tree. A skill invoked directly
-   (e.g. via `/goal`) operates on the current checkout as-is and verifies
-   the surface it tests actually serves the change, instead of enforcing
-   how it got there.
+5. **Git-flow protocol in the skill** — git-flow `mode:` branching and
+   base-checkout policy belong to the workflow layer: autopilot commits on
+   the current checkout and nothing more; foreman owns worktrees, landing,
+   and the `finish:` policy. The one sanctioned exception is `qa`, which
+   runs the shared-surface protocol (`merge-base`/lease/`revert`) itself
+   when it finds itself inside a ticket worktree — that is test-surface
+   management, not topology. Other skills are infra-isolated and only edit
+   the working tree. A skill invoked directly (e.g. via `/goal`) operates on
+   the current checkout as-is and verifies the surface it tests actually
+   serves the change, instead of enforcing how it got there.
 
 Rule of thumb: when adding a gate to a skill, ask "does the workflow that
 calls this skill already enforce this?" If yes, the skill check is dead
@@ -179,16 +182,15 @@ the babysit repo itself; non-`developer` invocations from babysit-office or
 gastown won't see it. Keep runtime rules in preamble.md; keep authoring
 guidance here.
 
-## `autopilot` is the entry point for multi-step work
+`autopilot` is the skill that makes the rest of babysit usable unattended. Core units plan, implement, review, and QA; domain skills stay directly invocable. `autopilot` is a **goal proxy**: init owns durable state (ticket, requirement, plan) on the current checkout — it never manages git topology — then Claude Code's `/goal` owns the work loop — inside it the model works free-form with full context, the workflow file is a mode router + gate list rather than a script, and the persisted `review-pr`/`qa` verdicts are the terminal condition.
 
-`autopilot` is the skill that makes the rest of babysit usable unattended. Core units plan, implement, review, and QA; domain skills stay directly invocable. `autopilot` is a **goal proxy**: init owns durable state (ticket, branch, requirement, plan), then Claude Code's `/goal` owns the work loop — inside it the model works free-form with full context, the workflow file is a mode router + gate list rather than a script, and the persisted `review-pr`/`qa` verdicts are the terminal condition.
 
 When to reach for it (and how to think about it when editing it):
 
 - **The composition problem it solves is context, not control flow.** Chaining `plan-draft` → `implement` ad-hoc can lose the plan and handoff state if the session crashes or gets compacted. `autopilot` runs the workflow in one session, and checkpoints all state to disk (`checkpoint.json`, `plan.md`, `requirement.md`, `handoffs/`) after each step. A fresh session after a crash re-reads the workflow + checkpoint and picks up at the next step — no conversation memory required.
 - **Prefer `/bbs:autopilot <workflow> <ticket>` over hand-chaining skills** whenever the work is >1 heavy skill, or when the user's ask could be "build this whole thing." Inline free-text (`/bbs:autopilot <one-line requirement>`) routes to the `builder` workflow, which creates the ticket, seeds `requirement.md`, and picks its own mode (child / orchestrate / implement / build / verify) from ticket state.
 - **Workflows are markdown, not code.** `.claude/skills/autopilot/workflows/*.md` (builtins) and `.claude/workflows/*.md` (per-project). Steps are `## <step-id>` headings with optional `> needs:` / `> produces:` directives. Workflow frontmatter declares `needs-state:` prerequisites so autopilot's Assign phase can route deterministically. Adding a new workflow is a file, not a refactor. See [authoring.md](.claude/skills/autopilot/references/authoring.md).
-- **When editing autopilot or its workflows**, disk state must always be *sufficient*: on cold start or resume, re-read the workflow file and checkpoint, re-derive `$TICKET` from the branch. That's the crash-survival contract — anything that makes resume *require* in-context state is a regression. But sufficiency is not amnesia: within a continuous session the model keeps using what it already learned; a rule that forces a healthy session to behave like a cold one caps run quality at the worst case.
+- **When editing autopilot or its workflows**, disk state must always be *sufficient*: on cold start or resume, re-read the workflow file and checkpoint, re-derive `$TICKET` through the identity ladder (`BABYSIT_TICKET` → manifest cwd-match → branch regex). That's the crash-survival contract — anything that makes resume *require* in-context state is a regression. But sufficiency is not amnesia: within a continuous session the model keeps using what it already learned; a rule that forces a healthy session to behave like a cold one caps run quality at the worst case.
 
 ### Human checkpoints shape where workflows stop
 
@@ -197,7 +199,7 @@ Workflows are split along the four points where a human actually adds value:
 1. **Requirement accepted** → `requirement.md` on the ticket. Autopilot drafts it in Flow steps 1–2 and stops at `--stop-after=requirement` if requested; requirement drafting is part of autopilot, not a separate skill.
 2. **Plan accepted** → `plan.md` on the ticket. Owner: autopilot init via `plan-draft`; user-facing work routes through `design-ui` inside it, so the plan carries the UI spec + prototype **before** the `/goal` handoff — the handoff is where design is reviewed ahead of implementation (builder build mode covers the case init didn't seed it); stops at `--stop-after=plan` if requested. **This is the one checkpoint a foreman self-resolves by default.** A foreman writes the same approval-record verdict the dashboard writes, via `bbs ticket approval self-resolve`, after filling the same rubric with named evidence and logging it to `decisions.jsonl` — no explicit grant required, so an overnight or cron-driven batch does not stall on the first worker that adds a component. Opt back into human-held with `bbs foreman hold <id>` (a `hold:` block on `~/.babysit/foremen/<id>.yaml`, naming who held and when); release with `hold release` (effective at the next checkpoint — nothing is rolled back). Optional bounds only: `bbs foreman grant <id>` (`--hours`, `--max`, `--tickets`; `--unbounded` must be typed) narrows default autonomy; `grant revoke` returns to unbounded default autonomy and does **not** force human-held. Two things no posture reaches: money, auth and irreversible-data paths always escalate, and a rubric that can't be filled ends in `BLOCKED` with the gaps named rather than an approval or a wait.
 3. **QA ready** → branch implemented, reviewed, checked with `qa` or a named fallback. Owner: `builder` (implement / build / child / verify modes) — the default end-to-end stop. For a batch of *independent* tickets, the `foreman` skill owns this checkpoint batch-wide: one visible worker per ticket in its own Orca terminal (Orca is a hard dependency — foreman preflights and fails fast without it), each running autopilot, a design-review gate at the plan handoff (greenlight by pasting the worker's `/goal` block, escalate to the human via `AskUserQuestion` or the dashboard's approval record), QA serialized on `bbs ticket qa-lease` (one test surface), verdicts verified on disk.
-4. **PR ready** → human reviews the QA handoff and invokes `create-pr`. A run crosses this checkpoint — autopilot on one ticket, `foreman` across a batch — only when the repo asked it to: `finish: land | pr` in `.babysit/git-flow.yaml` (derived as `BBS_FINISH`) names the handler — `bbs ticket land` or the `create-pr` skill — and the default, `review`, keeps the checkpoint human. The key is the durable authorization; both handlers re-check the qa + review-pr verdicts on disk, and a run only reaches them on verdicts it just read as `DONE` — `land` refuses unverified work outright, while a *missing* verdict makes the PR hook ask, which with nobody at the pane is a stall.
+4. **PR ready** → human reviews the QA handoff and invokes `create-pr`. Autopilot never crosses this checkpoint — it commits locally and stops. Only a `foreman` batch crosses it, and only when the repo asked: `finish: land | pr` in `.babysit/git-flow.yaml` (derived as `BBS_FINISH`) names the handler — `bbs ticket land` or the `create-pr` skill — and the default, `review`, keeps the checkpoint human. The key is the durable authorization; both handlers re-check the qa + review-pr verdicts on disk, and a run only reaches them on verdicts it just read as `DONE` — `land` refuses unverified work outright, while a *missing* verdict makes the PR hook ask, which with nobody at the pane is a stall.
 
 When adding or editing a workflow, be explicit about which checkpoint it stops at, and make sure the final step's handoff comment ends with a `Next:` line pointing at the human's next action (read + accept plan, review QA evidence, run `create-pr`, etc.). A workflow that crosses a checkpoint without stopping should say so in its frontmatter description (see `builder.md`).
 

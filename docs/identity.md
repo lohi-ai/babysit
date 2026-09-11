@@ -19,8 +19,8 @@ is a bug.
 
 | Variable | Set by | Read by | Purpose |
 |----------|--------|---------|---------|
-| `BABYSIT_TICKET` | `bbs autopilot` §0.X, `bbs ticket session attach`, user shell rc, test harnesses | Every skill preamble (via `bbs ticket env`'s env-first override) | Names the ticket id. Short-circuits all branch and cwd inference. |
-| `BABYSIT_SESSION` | `bbs autopilot` §0.X (mints uuid if unset), `bbs ticket session attach` | preamble session-writer, `bbs autopilot checkpoint` | Names a single Claude Code run so concurrent / crashed sessions can rehydrate. |
+| `BABYSIT_TICKET` | `bbs ticket ensure` (prints `TICKET=<id>`; the invoking skill stores it and prefixes later commands — exports don't survive per-call shells), `bbs ticket session attach`, user shell rc, test harnesses | Every skill preamble (via `bbs ticket env`'s env-first override) | Names the ticket id. Short-circuits all branch and cwd inference. |
+| `BABYSIT_SESSION` | the host agent's own session id (preamble default), `bbs ticket session attach` | preamble session-writer, `bbs autopilot checkpoint` | Names a single agent run so concurrent / crashed sessions can rehydrate. |
 
 Both are optional. None are required for the legacy single-repo
 ergonomic path: a developer who `cd`s into a feat-branch checkout and
@@ -86,15 +86,24 @@ repos:
   - name: <SLUG>          # what bbs ticket env derives from the git remote
     branch: feat/bs-abc12345_add-healthz
     canonical: .          # repo root
-    worktree: .           # repo root, or the absolute .babysit/worktrees/
-                          # path when the safe-cut gate diverted the cut
+    worktree: .           # "." = the shared checkout (trunk tickets) — the
+                          # resolver skips it by design, since several trunk
+                          # tickets can share one cwd; an absolute
+                          # .babysit/worktrees/ path when the safe-cut gate
+                          # diverted the cut — that path participates in the
+                          # manifest cwd-match rung
     base: main
     pushed: false         # mirrors state_branch_pushed from autopilot probe
 ```
 
 `canonical` is display-only (the dashboard reads it); identity resolution
-keys off `worktree`. A mismatch there is a silent identity miss in step #2
-of resolve.
+keys off `worktree`. `.` is the special skipped value — a shared-checkout
+(trunk) row is not a claim on the cwd — while absolute paths and other
+relative paths (resolved against cwd) participate in the manifest
+cwd-match rung. Trunk tickets therefore cannot be recovered by the
+manifest rung; bare autopilot Resume instead reads the active pair in
+`current.txt` (`bbs autopilot current`), validated against the ticket dir
+and a checkpoint naming that ticket.
 
 `manifest.yaml` is **eagerly written** by `bbs ticket ensure` — there is
 no `if file_exists` branch in resolve.
@@ -227,19 +236,33 @@ switch tickets, `unset BABYSIT_TICKET` then re-resolve.
 
 ## Caller surface
 
-The only places that call `bbs ticket resolve` in production:
+The ladder (`ticket.ResolveLadder` — env → manifest cwd-match → branch) is
+the resolver behind every ticket-*inference* path: `bbs ticket env`,
+`ensure`, `resolve`, readiness, and the `ticket_*` handlers that derive
+the ticket from the checkout resolve through `resolveEnv()`. This is
+required because the preamble's
+`eval "$(bbs ticket env)"` sets shell `TICKET` only — it neither exports
+`BABYSIT_TICKET` nor survives per-call shells — so each command re-resolves
+on its own.
 
-- **`bbs autopilot` §0.X** — the orchestrator chokepoint. Calls resolve
-  once per autopilot run, exports `BABYSIT_TICKET`, and every downstream
-  skill preamble inherits it via `bbs ticket env`'s env-first override.
+- **Skill init** — `bbs ticket ensure --no-branch` prints `TICKET=<id>`;
+  the invoking skill stores it in context and prefixes every later
+  `bbs ticket` call with `BABYSIT_TICKET=<id>` (an export only holds
+  within the same shell invocation). Downstream commands read it via the
+  ladder's env-first rung.
+- **Explicit-ticket commands** — `get-manifest <ticket>`,
+  `set-branch <ticket> …`, `switch <ticket>…`, `land <ticket>…`,
+  `qa-lease --ticket`, `reconcile --ticket|--all` — resolve project scope
+  only (`ticket.ResolveProject`): an unrelated manifest ambiguity in the
+  cwd must not reject a fully explicit command. The env-conflict abort
+  still applies.
+- **Project-only commands** — `board`, `find-similar` — use
+  `identity.Resolve()` directly; they never need ticket inference.
 - **Direct CLI** — `bbs ticket resolve` (and `--explain` for debugging),
   user scripts.
 
-The 32 existing skill preambles continue to call `bbs ticket env`. They
-do not call `resolve` directly. The env-first override in `bbs ticket env`
-short-circuits to `BABYSIT_TICKET` when set, so resolve's manifest-cwd
-walk runs only at the autopilot §0.X chokepoint, never per-preamble.
-This bounds the `O(N tickets)` walk to one call per autopilot run.
+The manifest-cwd walk is `O(N tickets)` and runs only when no env identity
+exists — the env rung short-circuits first.
 
 ---
 

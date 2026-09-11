@@ -44,9 +44,9 @@ a tool you cannot manage, so isolation is something a *run* asks for, never
 something a config file turns on behind you:
 
 ```bash
-/bbs:autopilot --mode=worktree "<requirement>"   # this ticket gets its own checkout
-bbs ticket ensure --slug-hint thing --mode=branch  # …or a feat/… branch cut in place
-/bbs:foreman                                     # a batch: one worktree per ticket
+bbs ticket ensure --slug-hint thing --mode=worktree   # this ticket gets its own checkout
+bbs ticket ensure --slug-hint thing --mode=branch     # …or a feat/… branch cut in place
+/bbs:foreman                                          # a batch: foreman gives each ticket a worktree
 ```
 
 A repo that always wants one of those can write `mode: worktree` (or
@@ -223,8 +223,8 @@ REASON: primary checkout … is on 'feat/…', not base 'main'.
 
 Needs [Orca](https://www.onorca.dev) as a hard dependency. Hand it several independent
 requests; it opens one visible worker per ticket, each in its own Orca terminal
-running autopilot end to end, and requests `--mode=worktree` per dispatch — so
-it works the same on any repo, configured or not:
+running autopilot end to end, and creates the ticket worktree itself before
+each dispatch — so it works the same on any repo, configured or not:
 
 ```
 /bbs:foreman
@@ -236,8 +236,9 @@ tickets onto your local base so you review the batch together.
 ### Option B — dispatch them yourself
 
 ```bash
-/bbs:autopilot --mode=worktree "<requirement>"     # once per ticket
-bbs ticket ensure --slug-hint <slug> --mode=worktree   # …or just the worktree
+OUT=$(bbs ticket ensure --slug-hint <slug> --mode=worktree)   # one worktree per ticket
+cd "$(printf '%s\n' "$OUT" | sed -n 's/^WORKTREE=//p')"       # into the path it printed
+/bbs:autopilot "<requirement>"
 ```
 
 A repo that works this way *every* time can stop typing the flag:

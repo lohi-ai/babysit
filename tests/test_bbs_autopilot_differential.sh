@@ -21,19 +21,18 @@ export PATH="$BIN:/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin"
 GO="$BIN/bbs-autopilot"
 
 PASS=0; FAIL=0
-mask() { sed -E 's/[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z/<TS>/g'; }
+mask() { sed -E 's/[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z/<TS>/g; s/\(derived from branch\)/(resolved by identity ladder)/g; s/\(branch does not encode a ticket\)/(no ticket identity resolved)/g; s/<none — branch does not encode one>/<none — no ticket identity resolved>/g'; }
 
 # Subcommands the Go impl grew *on purpose* after the port was frozen. The
 # oracle can never list them, so the usage line would pin the Go side to bash
 # forever; normalising just these names keeps the rest of the string honest —
 # a reworded or reordered usage line still fails. Every entry needs a reason.
 #   bs-85spcpj3: `git-flow` prints the profile-derived policy (BBS_MODE, …).
-#   spawn-goal: `--auto` launches /goal on the start agent (post-port).
-#   spawn-review: `--reviewer <agent>` reviews plan + prototype (post-port).
-#   review-gate: the one design-review gate autopilot stops at (post-port).
-#   spawn-verify: `--verify` grades the diff in a context that never wrote it (post-port).
 #   autopilot-v2: snapshot/context/attempt are additive typed contracts.
-mask_usage() { sed -E 's/\|snapshot\|context\|attempt\|/|/; s/\|git-flow\|/|/; s/\|spawn-goal\|spawn-review\|spawn-verify\|review-gate\}/}/'; }
+#   bs-dh32wo08: identity labels — the oracle says "derived from branch" /
+#   "branch does not encode"; the Go side reports the identity ladder
+#   (env → manifest → branch). Normalized in `mask`, not the frozen oracle.
+mask_usage() { sed -E 's/\|snapshot\|context\|attempt\|/|/; s/\|git-flow\|/|/'; }
 cmp_case() { # name  expected(masked)  actual(masked)  ec_e  ec_a
   if [ "$2" = "$3" ] && [ "$4" = "$5" ]; then
     echo "ok   $1"; PASS=$((PASS+1))

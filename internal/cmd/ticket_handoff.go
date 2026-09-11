@@ -10,7 +10,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/reallongnguyen/babysit/internal/identity"
 	"github.com/reallongnguyen/babysit/internal/ticket"
 )
 
@@ -22,7 +21,7 @@ import (
 // numbered <NNN>-<skill>-<status>.md handoff, update handoffs/LATEST, and append
 // a history row. Holds the index lock while allocating the sequence number.
 func runAddHandoff(args []string) {
-	env := identity.Resolve()
+	env := resolveEnv()
 	needTicket(env)
 	var skill, status, body, bodyFile string
 	for i := 0; i < len(args); i++ {
@@ -96,7 +95,7 @@ func nextHandoffSeq(home string) string {
 // the highest-NNN <NNN>-<skill>-*.md; else the handoffs/LATEST pointer (validated
 // so a poisoned LATEST cannot escape the handoffs dir).
 func runLatestHandoff(args []string) {
-	env := identity.Resolve()
+	env := resolveEnv()
 	needTicket(env)
 	var filterSkill string
 	for i := 0; i < len(args); i++ {
@@ -133,7 +132,7 @@ func invalidLatestName(name string) bool {
 // runSetReview ports set-review (bbs-ticket.bash:1475-1500): overwrite
 // reviews/<skill>.md and append a history row. Unknown args fail loud (exit 2).
 func runSetReview(args []string) {
-	env := identity.Resolve()
+	env := resolveEnv()
 	needTicket(env)
 	var skill, body, bodyFile string
 	haveBody := false
@@ -187,7 +186,7 @@ var evidenceReq = map[string][]string{
 // JSON evidence blob on write (so a malformed blob never lands silently) and
 // persist it at evidence/<kind>/result.json.
 func runSetEvidence(args []string) {
-	env := identity.Resolve()
+	env := resolveEnv()
 	needTicket(env)
 	var kind, jsonStr, jsonFile string
 	for i := 0; i < len(args); i++ {
@@ -276,7 +275,7 @@ func scalarStr(v interface{}) string {
 // runEvidenceStatus ports evidence-status (bbs-ticket.bash:1552-1577): {none|
 // valid|malformed} for a typed evidence artifact, by set-evidence's rules.
 func runEvidenceStatus(args []string) {
-	env := identity.Resolve()
+	env := resolveEnv()
 	needTicket(env)
 	var kind string
 	for i := 0; i < len(args); i++ {
@@ -326,7 +325,7 @@ var (
 // runQAEvidence ports qa-evidence (bbs-ticket.bash:1589-1632): audit the persisted
 // qa verdict against the coverage rubric it claims. Classifies, never scores.
 func runQAEvidence(args []string) {
-	env := identity.Resolve()
+	env := resolveEnv()
 	needTicket(env)
 	vp := filepath.Join(ticket.New(env).Home(), "verdicts", "qa.md")
 	b, err := os.ReadFile(vp)

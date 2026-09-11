@@ -22,7 +22,9 @@ reversible experiment per run.
 4. If code changed: run `review-pr --fix`, then `qa` through autopilot's
    Automatic review / QA subagent policy (or the strongest fallback), and
    persist the verdict with `bbs ticket set-verdict --skill qa`.
-5. Commit and push any scaffolded variant when policy allows.
+5. Commit any scaffolded variant locally. Autopilot never pushes, lands, or
+   opens a PR — close-out is the human's `create-pr` (or the dispatching
+   foreman's).
 6. Write a handoff: metric, winning experiment + constraining assumption, and
    what shipped behind which flag. When a signal warrants, name the forward
    lifecycle edge after `create-pr`: load, cost, or reliability pressure seen
@@ -37,5 +39,5 @@ reversible experiment per run.
 STATUS: DONE | DONE_WITH_CONCERNS | NEEDS_CONTEXT | BLOCKED
 VERDICT: RANKED | SCAFFOLDED
 SUMMARY: <metric + winner + flag/verification if implemented>
-NEXT: approve the experiment, or close out per the repo's finish policy
+NEXT: approve the experiment, then human review + /bbs:create-pr
 ```

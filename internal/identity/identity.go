@@ -26,11 +26,24 @@ type Env struct {
 	ProjectHome   string
 }
 
-// Resolve derives the slug and applies the ladder. Like the bash
+// Resolve derives project scope — slug, branch, project home — plus the
+// env/branch ticket. The manifest cwd-match rung lives in
+// ticket.ResolveLadder; callers that only need project scope (board,
+// find-similar) use this so cwd ambiguity can't block them. Like the bash
 // `eval "$(bbs-slug env 2>/dev/null || true)"`, a failed derivation (the
 // env-conflict exit, or running outside a git repo) is not fatal — the fields
 // stay unset and the documented "unknown" defaults take over.
 func Resolve() Env {
+	e, _ := ResolveStrict()
+	return e
+}
+
+// ResolveStrict is Resolve with the error surfaced: *slug.EnvConflictError
+// when BABYSIT_TICKET and BBS_TICKET disagree (a loud abort, not a soft
+// "no identity"), slug.ErrNoRepo outside a repository, nil otherwise.
+// Ticket-scoped commands use this via ticket.ResolveLadder so a conflict
+// fails locally instead of resolving to an empty ticket.
+func ResolveStrict() (Env, error) {
 	info, err := slug.Resolve()
 	if err != nil {
 		info = &slug.Info{}
@@ -45,13 +58,16 @@ func Resolve() Env {
 
 	// slug.Resolve always computes a project home, and the bash `eval` imported
 	// it into the shell before the fallback expansion ran — so its value wins
-	// whenever the derivation succeeded. The BABYSIT_HOME fallback only applies
-	// when it didn't.
+	// whenever the derivation succeeded. On the failure path the bash fell
+	// back through $BABYSIT_PROJECT_HOME, then the $BABYSIT_HOME default.
 	e.ProjectHome = info.ProjectHome
+	if e.ProjectHome == "" {
+		e.ProjectHome = os.Getenv("BABYSIT_PROJECT_HOME")
+	}
 	if e.ProjectHome == "" {
 		e.ProjectHome = filepath.Join(BabysitHome(), "projects", e.Slug)
 	}
-	return e
+	return e, err
 }
 
 // BabysitHome is ${BABYSIT_HOME:-$HOME/.babysit}.

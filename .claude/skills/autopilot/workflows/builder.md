@@ -1,7 +1,7 @@
 ---
 workflow: builder
 version: 1
-description: Turn an idea, requirement, or accepted plan into a production-grade, QA-verified branch. The default path for new product work; absorbs full-build, plan-only, implement, orchestrate, sub-ticket, and verify-only modes by reading state.
+description: Turn an idea, requirement, or accepted plan into a production-grade, QA-verified change on the current checkout. The default path for new product work; absorbs full-build, plan-only, implement, orchestrate, sub-ticket, and verify-only modes by reading state.
 needs-state:
   requirement_md: optional
 ---
@@ -21,13 +21,15 @@ Re-read ticket state, checkpoint, and git status; choose the **first** match:
 | **verify** | none of the above, but a non-base branch has commits | QA-only pass on existing work. |
 If none match and there is no ticket/requirement, stop with `NEEDS_CONTEXT`.
 ## run
-> produces: verdict:builder + qa:checked + git:branch-ready + finish:closed-out
-1. Ensure ticket, branch, and checkpoint exist; record the mode in the
-   checkpoint. Prefer a valid v2 `bbs autopilot snapshot --json` packet for
-   these facts, otherwise use the legacy resolver. No `.babysit/git-flow.yaml`
-   is a valid `pet` policy from the resolver; never create or rewrite it while
-   executing. Record missing QA configuration or a landing document as a
-   handoff warning and point at `$bbs:setup-project` when it matters.
+> produces: verdict:builder + qa:checked + git:committed
+1. Ensure ticket and checkpoint exist; record the mode in the checkpoint.
+   Prefer a valid v2 `bbs autopilot snapshot --json` packet for these facts,
+   otherwise use the legacy resolver. Work happens on the current checkout —
+   autopilot never cuts a branch or worktree (a foreman that dispatched you
+   already placed you in one; work in place). No `.babysit/git-flow.yaml` is
+   a valid `pet` policy from the resolver; never create or rewrite it while
+   executing. Record missing QA configuration as a handoff warning and point
+   at `$bbs:setup-project` when it matters.
 2. **build mode only (skip when init already seeded `plan.md`):** run
    `plan-draft` (user-facing work routes through `design-ui`, so the plan
    carries the UI spec + prototype). Write `plan.md` unless the task is XS.
@@ -36,73 +38,42 @@ If none match and there is no ticket/requirement, stop with `NEEDS_CONTEXT`.
 3. **build / implement / child modes:** run `implement` against the
    requirement, plan, and (child mode) only the child scope. `implement`
    leaves the working tree dirty by design — commit its output here. Skills
-   are infra-isolated: every branch, commit, land, and push in this workflow
-   is autopilot's own step, never a skill's.
+   are infra-isolated: they edit files; every commit in this workflow is
+   autopilot's own step.
 4. **orchestrate mode:** run each child in manifest order via `builder`,
    checkpoint each merged child, then merge completed children into the parent.
+   This mode is the one place autopilot creates branches — the decomposition
+   shape requires it (see § Sub-ticket branch shape).
 5. Run `review-pr --fix` via SKILL.md's **Automatic review / QA subagents**
    policy (applies fixes to the working tree), then persist and read back the
    verdict with `bbs ticket set-verdict --skill review-pr` and
-   `bbs ticket verdict-status --skill review-pr` — the push gate reads it.
+   `bbs ticket verdict-status --skill review-pr` — the pre-push hook reads it
+   when the human (or foreman) pushes.
    Verify mode may reuse review only if its persisted DONE covers the current
    change; otherwise run it too.
-   **Under `--verify`** (the flag, or `bbs ticket get-pointer verify` reading
-   true in any casing — it prints `True`),
-   steps 5 and 6 are not run here at all. Commit the implementation first, then
-   `bbs autopilot spawn-verify --ticket "$TICKET" --workflow builder` and wait:
-   a process that never saw this diff being written re-runs both gates, commits
-   its own fixes, and persists both verdicts. Read them back with
-   `bbs ticket verdict-status --skill review-pr` / `--skill qa` and continue at
-   step 7. Do not also run them here — `set-verdict` is last-writer-wins, so a
-   second in-session pass replaces the independent verdict with the biased one.
-   No fresh verdict means the verifier died: `BLOCKED` naming its returned
-   `ORCA=` tab or `LOG=` path, not an assumed log file.
 6. Run `qa` via the same automatic subagent policy, after review fixes are
    integrated, against the requirement's acceptance criteria, the plan's
    `**Verify:**` line, and the implement handoff — not just the diff. The
-   parent owns the following surface preparation and git operations before
-   dispatch, and keeps any lease until the worker finishes. Default
-   (no `--mode`): the change is on the branch this checkout already serves, so
-   QA runs directly — nothing to land, no lease. A worktree run lands first:
-   `bbs ticket merge-base` before QA. When other tickets are in flight on the
-   same repo (or `qa-lease status` isn't FREE), hold the surface for the whole
-   QA session:
-   `bbs ticket qa-lease acquire` → `bbs ticket switch $TICKET` (surface =
-   base + exactly this ticket) → QA → `qa-lease release`. If
-   `merge-base` BLOCKs because a diverted primary isn't on base, QA in the
-   worktree itself (it holds the complete change); a merge-conflict BLOCK is
-   instead resolved in the worktree, committed, and `merge-base` re-run. QA
-   fixes land the same way: the `qa` skill only edits files — commit its
-   fixes in the worktree yourself, then re-run `merge-base` before
-   re-testing. No runnable target → record the blocker and run the strongest
-   fallback (`browse` for UI, else a narrow local check). Persist the verdict
-   with `bbs ticket set-verdict --skill qa`.
-7. Commit and push when policy allows.
-8. **Close out per the repo's policy** — only once `qa` and `review-pr` are
-   both persisted DONE, and never on your own initiative:
-   ```bash
-   eval "$(bbs autopilot git-flow)"   # → BBS_FINISH: review | land | pr
-   ```
-   `land` → `bbs ticket land "$TICKET"`; `pr` → run the `create-pr` skill
-   (through the harness's skill mechanism); `review` (the default, and
-   every repo that never opted in) → stop here, the human owns it. The repo's
-   standing authorization is the only thing that decides this. A missing
-   verdict is not a case to work around: `land` refuses outright, and the PR
-   hook *asks* — which with nobody at the pane is a stall, not a safe stop.
-9. Write a handoff: mode, branch, changed files, deviations from the plan
+   `qa` skill owns the test surface: on a normal checkout it tests the
+   running dev server directly; inside a ticket worktree it runs the
+   merge-base/lease protocol itself (see `qa` SKILL.md § Flow step 2 and
+   `../references/worktrees.md`). No runnable target → record the blocker
+   and run the strongest fallback (`browse` for UI, else a narrow local
+   check). Commit any QA fixes, then persist the verdict with
+   `bbs ticket set-verdict --skill qa`.
+7. Commit everything. Autopilot stops here: never push, land, or open a PR —
+   close-out is the human's `create-pr`, or the dispatching foreman's finish
+   policy.
+8. Write a handoff: mode, branch, changed files, deviations from the plan
    (the implement handoff's `## Deviations`), prototype path when `design-ui`
    produced one, QA evidence, concerns, next action — and, when a signal
    warrants, the forward lifecycle edge after `create-pr` (leftover cruft →
    `sweeper`; surface now live and measurable → `grower`). Child mode targets
    the parent orchestrate run. Cross-repo: list every touched repo with its
    branch. Write it so a non-technical owner can act: lead with what was
-   built and where to see it (URL), and give the next action as a
-   copy-paste command — in worktree mode that is
-   `bbs ticket serve <ticket>` (puts the ticket, and its siblings
-   cross-repo, on the served surface for human browser review; see
-   worktrees.md § Attended parallel review), then `create-pr` per repo
-   after approval. Confirm clean state first: no debug leftovers,
-   nothing uncommitted, checkpoint current.
+   built and where to see it (URL), and give the next action as a copy-paste
+   command. Confirm clean state first: no debug leftovers, nothing
+   uncommitted, checkpoint current.
 ### Sub-ticket branch shape
 Child branches are slash-namespaced under the parent so they never collide
 with the parent's own underscore branch. Load-bearing — keep both
@@ -125,22 +96,26 @@ is the authority; `RELATED_*_REPO` in `.babysit/.env` is the fallback for
 repos outside a workspace. **Prefer the
 current repo** — cross into a sibling only for the slice that genuinely
 cannot be done here, and do the minimum there. Steps 5–6 are repo-relative:
-land and QA each repo's change against *its own* base, once per repo touched.
+review and QA each repo's change against *its own* base, once per repo touched.
 1. Resolve the path (`bbs config workspace show`, else `grep '^RELATED_'
    .babysit/.env`). Unset path, or
    sibling has no `.babysit/git-flow.yaml` → don't guess: `NEEDS_CONTEXT`
    naming the repo and its slice of the requirement.
-2. `cd` there, `bbs ticket ensure` (safe-cut gate applies), implement, then
-   link both sides:
+2. Work the sibling inside one subshell so its identity never leaks back
+   into the parent repo (autopilot never cuts, even in a sibling):
+   ```bash
+   (
+     cd "$sibling"
+     ENSURE_OUT=$(bbs ticket ensure --no-branch)
+     export BABYSIT_TICKET=$(printf '%s\n' "$ENSURE_OUT" | sed -n 's/^TICKET=//p')
+     # … all sibling-side implement / bbs ticket / qa calls run here …
+   )
+   ```
+   Then link both sides:
    `bbs ticket set-sibling --role <fe|be|shared> --repo <name> --ticket <id>`.
-3. Before QA, run `bbs ticket merge-base` from inside the sibling worktree —
-   skipping it means QA tests a stale base there. Fixes commit in the sibling
-   worktree; re-run `merge-base` before re-testing. Leases are per repo: when
-   other tickets are in flight, hold a qa-lease in *every* repo you QA on for
-   the same session (acquire in the sibling worktree too), and persist that
-   repo's result on the sibling ticket
-   (`BBS_TICKET=<sibling> bbs ticket set-verdict --skill qa`); release all
-   leases when QA ends.
+3. Run `qa` in each repo you touched; the `qa` skill owns that repo's
+   surface protocol. Persist that repo's result on the sibling ticket
+   (`BBS_TICKET=<sibling> bbs ticket set-verdict --skill qa`).
 4. The handoff lists every touched repo with its branch.
 **Stop conditions**
 
@@ -153,5 +128,5 @@ land and QA each repo's change against *its own* base, once per repo touched.
 STATUS: DONE | DONE_WITH_CONCERNS | NEEDS_CONTEXT | BLOCKED
 VERDICT: BUILT
 SUMMARY: <mode, branch, files, QA evidence>
-NEXT: per the repo's finish policy — by default, human review then /bbs:create-pr
+NEXT: human review, then /bbs:create-pr
 ```

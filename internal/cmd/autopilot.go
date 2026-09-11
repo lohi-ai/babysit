@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/reallongnguyen/babysit/internal/config"
-	"github.com/reallongnguyen/babysit/internal/slug"
 	"github.com/spf13/cobra"
 )
 
@@ -22,7 +21,7 @@ import (
 // bash script (unknown flags/args are ignored, not rejected by cobra).
 func newAutopilotCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:                "autopilot {checkpoint|read|clear|current|set-current|timeline|recover|snapshot|context|attempt|base-branch|git-flow|lint-workflow|probe|explain|check-skill-deps|spawn-goal|spawn-review|spawn-verify|review-gate} ...",
+		Use:                "autopilot {checkpoint|read|clear|current|set-current|timeline|recover|snapshot|context|attempt|base-branch|git-flow|lint-workflow|probe|explain|check-skill-deps} ...",
 		Short:              "autopilot state helper (checkpoints, timeline, probe/explain)",
 		DisableFlagParsing: true,
 		RunE: func(_ *cobra.Command, args []string) error {
@@ -32,7 +31,7 @@ func newAutopilotCmd() *cobra.Command {
 	}
 }
 
-const autopilotUsage = "usage: bbs-autopilot {checkpoint|read|clear|current|set-current|timeline|recover|snapshot|context|attempt|base-branch|git-flow|lint-workflow|probe|explain|check-skill-deps|spawn-goal|spawn-review|spawn-verify|review-gate} ..."
+const autopilotUsage = "usage: bbs-autopilot {checkpoint|read|clear|current|set-current|timeline|recover|snapshot|context|attempt|base-branch|git-flow|lint-workflow|probe|explain|check-skill-deps} ..."
 
 // apState is the identity + state-root resolved once per invocation, mirroring
 // the top-of-script derivation in bin/bbs-autopilot.
@@ -50,77 +49,163 @@ func runAutopilot(args []string) {
 	}
 	sub := args[0]
 	rest := args[1:]
-	a := resolveAP()
+
+	// Resolve lazily. Verbs that never infer a ticket — or take one
+	// explicitly — get project scope only: an unrelated manifest ambiguity
+	// in the cwd must not block `current`, `clear <t>`, `lint-workflow`,
+	// or `probe --ticket t`. Verbs that infer the ticket from the checkout
+	// run the full ladder.
+	var a *apState
+	project := func() *apState {
+		if a == nil {
+			a = resolveAPProject()
+		}
+		return a
+	}
+	ladder := func() *apState {
+		if a == nil {
+			a = resolveAP()
+		}
+		return a
+	}
+	explicit := hasArg(rest, "--ticket")
 
 	switch sub {
 	case "checkpoint":
-		a.checkpoint(rest)
+		// Normal checkpoint requires explicit --ticket — project scope only.
+		// Only bare --refresh infers the ticket from the checkout.
+		if hasArg(rest, "--refresh") && !explicit {
+			ladder().checkpoint(rest)
+		} else {
+			project().checkpoint(rest)
+		}
 	case "read":
-		a.read(rest)
+		if arg0(rest, "") != "" {
+			project().read(rest)
+		} else {
+			ladder().read(rest)
+		}
 	case "clear":
-		a.clear(rest)
+		project().clear(rest) // requires an explicit ticket
 	case "current":
-		a.current()
+		project().current()
 	case "set-current":
-		a.setCurrent(rest)
+		project().setCurrent(rest)
 	case "timeline":
-		a.timeline(rest)
+		if explicit {
+			project().timeline(rest)
+		} else {
+			ladder().timeline(rest)
+		}
 	case "recover":
-		a.recover(rest)
+		project().recover(rest) // hydrates a.ticket from current.txt when unset
 	case "snapshot":
-		a.snapshotV2(rest)
+		if explicit {
+			project().snapshotV2(rest)
+		} else {
+			ladder().snapshotV2(rest)
+		}
 	case "context":
-		a.contextV2(rest)
+		if explicit {
+			project().contextV2(rest)
+		} else {
+			ladder().contextV2(rest)
+		}
 	case "attempt":
-		a.attemptV2(rest)
+		if explicit {
+			project().attemptV2(rest)
+		} else {
+			ladder().attemptV2(rest)
+		}
 	case "base-branch":
-		fmt.Println(a.baseBranch())
+		fmt.Println(project().baseBranch())
 	case "git-flow":
 		printGitFlow(rest)
 	case "lint-workflow":
-		a.lintWorkflow(rest)
+		project().lintWorkflow(rest)
 	case "probe":
-		a.probe(rest)
+		if explicit {
+			project().probe(rest)
+		} else {
+			ladder().probe(rest)
+		}
 	case "explain":
-		a.explain(rest)
+		explicitPos := false
+		for _, x := range rest {
+			if x != "--details" {
+				explicitPos = true
+			}
+		}
+		if explicitPos {
+			project().explain(rest)
+		} else {
+			ladder().explain(rest)
+		}
 	case "check-skill-deps":
-		a.checkSkillDeps(rest)
-	case "spawn-goal":
-		a.spawnGoal(rest)
-	case "review-gate":
-		a.reviewGate(rest)
-	case "spawn-review":
-		a.spawnReview(rest)
-	case "spawn-verify":
-		a.spawnVerify(rest)
+		project().checkSkillDeps(rest)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown subcommand: %s\n", sub)
 		os.Exit(2)
 	}
 }
 
-// resolveAP mirrors lines 58-82 of bin/bbs-autopilot: eval `bbs-slug env` (via
-// slug.Resolve), then derive ticket + project home with the bash fallbacks.
+// resolveAP resolves the full identity through the canonical ladder —
+// env → manifest.yaml cwd match → branch regex — so an isolated worktree
+// on a non-ticket branch still resolves. Trunk tickets share the checkout
+// (manifest worktree "." is skipped by design) and always need
+// BABYSIT_TICKET per command. A typed failure (env conflict, ambiguous
+// manifest) is a loud abort: continuing would run autopilot against the
+// wrong or no ticket.
 func resolveAP() *apState {
-	slugv, branch, ticket, projectHome := "unknown", "unknown", "", ""
-	if info, err := slug.Resolve(); err == nil {
-		slugv, branch, ticket, projectHome = info.Slug, info.Branch, info.Ticket, info.ProjectHome
+	env := resolveEnv()
+	return &apState{slug: env.Slug, branch: env.Branch, ticket: env.Ticket, stateRoot: env.ProjectHome}
+}
+
+// resolveAPProject is resolveAP without the manifest cwd rung — for verbs
+// that never infer a ticket (current, set-current, clear, lint-workflow,
+// check-skill-deps) or take one explicitly. An ambiguous cwd must not
+// block them; the env-conflict abort still applies.
+func resolveAPProject() *apState {
+	env := resolveProject()
+	return &apState{slug: env.Slug, branch: env.Branch, ticket: env.Ticket, stateRoot: env.ProjectHome}
+}
+
+// currentPair parses and validates the active pair in current.txt —
+// exactly "<workflow> <ticket>", the id stable under safeTicket, the
+// ticket dir present, and a checkpoint naming that ticket. One read, one
+// validation: callers get both fields or nothing.
+func (a *apState) currentPair() (workflow, ticketID string, ok bool) {
+	b, err := os.ReadFile(filepath.Join(a.stateRoot, "current.txt"))
+	if err != nil {
+		return "", "", false
 	}
-	// DERIVED_TICKET = ${BBS_TICKET:-${TICKET:-}}
-	derived := os.Getenv("BBS_TICKET")
-	if derived == "" {
-		derived = ticket
+	f := strings.Fields(strings.TrimSpace(string(b)))
+	if len(f) != 2 || safeTicket(f[1]) != f[1] {
+		return "", "", false
 	}
-	// PROJECT_HOME: slug.Resolve already honored $BABYSIT_PROJECT_HOME on the
-	// success path. On the failure path projectHome is empty, so fall back
-	// through the env then the $BABYSIT_HOME default, matching the bash.
-	ph := projectHome
-	if ph == "" {
-		if ph = os.Getenv("BABYSIT_PROJECT_HOME"); ph == "" {
-			ph = filepath.Join(babysitHome(), "projects", slugv)
-		}
+	dir, okDir := a.ticketDir(f[1])
+	if !okDir {
+		return "", "", false
 	}
-	return &apState{slug: slugv, branch: branch, ticket: derived, stateRoot: ph}
+	fi, err := os.Stat(dir)
+	if err != nil || !fi.IsDir() {
+		return "", "", false
+	}
+	cp := readJSONObject(filepath.Join(dir, "checkpoint.json"))
+	if cp == nil || stringValue(cp["ticket"]) != f[1] {
+		return "", "", false
+	}
+	return f[0], f[1], true
+}
+
+// currentTicket returns the ticket half of the validated active pair —
+// the durable Resume contract for a bare invocation on a shared checkout.
+func (a *apState) currentTicket() string {
+	_, t, ok := a.currentPair()
+	if !ok {
+		return ""
+	}
+	return t
 }
 
 func babysitHome() string {
@@ -210,7 +295,7 @@ func gitOutIn(dir string, args ...string) string {
 	return strings.TrimRight(string(out), "\n")
 }
 
-// gitOK reports whether git exited 0 (for --verify probes).
+// gitOK reports whether git exited 0 (for read-only probes).
 func gitOK(args ...string) bool { return gitOKIn("", args...) }
 
 // gitOKIn is gitOK scoped to dir ("" = process cwd).
@@ -489,7 +574,9 @@ func (a *apState) checkpointRefresh(ticket string) {
 		os.Exit(2)
 	}
 	cp := filepath.Join(dir, "checkpoint.json")
-	if int64Value(readJSONObject(cp)["schema_version"]) == 2 {
+	// schema_version 2 checkpoints refresh through the typed writer; legacy
+	// checkpoints keep the field-preserving rewrite below.
+	if cpObj := readJSONObject(cp); cpObj != nil && int64Value(cpObj["schema_version"]) == 2 {
 		if err := a.refreshCheckpointV2(ticket); err != nil {
 			fmt.Fprintln(os.Stderr, "checkpoint --refresh:", err)
 			os.Exit(1)
@@ -586,9 +673,11 @@ func (a *apState) clear(args []string) {
 }
 
 func (a *apState) current() {
-	cur := filepath.Join(a.stateRoot, "current.txt")
-	if b, err := os.ReadFile(cur); err == nil {
-		os.Stdout.Write(b)
+	// Print the active pair only when it survives the same validation
+	// Resume uses — a stale or malformed current.txt is not handed to the
+	// skill as if it were live state.
+	if w, t, ok := a.currentPair(); ok {
+		fmt.Printf("%s %s\n", w, t)
 	}
 }
 
@@ -633,6 +722,16 @@ func (a *apState) timeline(args []string) {
 // ─── recover ─────────────────────────────────────────────────────────────────
 
 func (a *apState) recover(args []string) {
+	// Bare resume on a shared checkout (trunk): the ladder cannot infer the
+	// ticket, so hydrate it from the active pair — the durable Resume
+	// contract — validating that the ticket dir still exists.
+	ticketSource := "identity ladder"
+	if a.ticket == "" {
+		if t := a.currentTicket(); t != "" {
+			a.ticket = t
+			ticketSource = "current.txt"
+		}
+	}
 	if hasArg(args, "--json") {
 		a.recoverV2(args)
 		return
@@ -641,7 +740,7 @@ func (a *apState) recover(args []string) {
 	fmt.Printf("SLUG: %s\n", a.slug)
 	fmt.Printf("BRANCH: %s\n", a.branch)
 	if a.ticket != "" {
-		fmt.Printf("CURRENT_TICKET: %s (derived from branch)\n", a.ticket)
+		fmt.Printf("CURRENT_TICKET: %s (resolved by %s)\n", a.ticket, ticketSource)
 		cp := filepath.Join(a.stateRoot, "tickets", a.ticket, "checkpoint.json")
 		if b, err := os.ReadFile(cp); err == nil {
 			fmt.Printf("LATEST_CHECKPOINT: %s\n", cp)
@@ -675,10 +774,10 @@ func (a *apState) recover(args []string) {
 			}
 		}
 	} else {
-		fmt.Println("CURRENT_TICKET: (branch does not encode a ticket)")
+		fmt.Println("CURRENT_TICKET: (no ticket identity resolved)")
 	}
-	if b, err := os.ReadFile(filepath.Join(a.stateRoot, "current.txt")); err == nil {
-		fmt.Printf("ACTIVE_PAIR: %s\n", strings.TrimRight(string(b), "\n"))
+	if w, t, ok := a.currentPair(); ok {
+		fmt.Printf("ACTIVE_PAIR: %s %s\n", w, t)
 	}
 	tl := filepath.Join(a.stateRoot, "timeline.jsonl")
 	if b, err := os.ReadFile(tl); err == nil {
@@ -906,7 +1005,7 @@ func (a *apState) explain(args []string) {
 	fmt.Println("=== autopilot state ===")
 	ticketDisp := r.ticket
 	if ticketDisp == "" {
-		ticketDisp = "<none — branch does not encode one>"
+		ticketDisp = "<none — no ticket identity resolved>"
 	}
 	fmt.Printf("ticket:          %s\n", ticketDisp)
 	fmt.Printf("branch:          %s\n", r.branch)

@@ -6,7 +6,6 @@ import (
 	"os"
 	"time"
 
-	"github.com/reallongnguyen/babysit/internal/identity"
 	"github.com/reallongnguyen/babysit/internal/ticket"
 )
 
@@ -67,7 +66,7 @@ func controlApply(st *ticket.Store, state, note, actor string) (status, conflict
 // applyControl sets control to the given state, recording where the ticket was
 // so the UI can name the undo ("Restore to planned") without re-deriving it.
 func applyControl(state string, args []string) {
-	env := identity.Resolve()
+	env := resolveEnv()
 	needTicket(env)
 	note := ""
 	for i := 0; i < len(args); i++ {
@@ -124,7 +123,7 @@ func controlClear(st *ticket.Store, want, actor string) (cur, status string, err
 // clearControl reverses pause/cancel. want names which state this verb undoes,
 // so `resume` cannot silently un-cancel a ticket a human deliberately dropped.
 func clearControl(want string) {
-	env := identity.Resolve()
+	env := resolveEnv()
 	needTicket(env)
 
 	cur, status, err := controlClear(ticket.New(env), want, actorRole())
@@ -183,7 +182,7 @@ func assignSet(st *ticket.Store, foreman, actor string) error {
 // foreman's inbox is derived by scanning tickets — there is no second queue that
 // can disagree with this field.
 func runAssign(args []string) {
-	env := identity.Resolve()
+	env := resolveEnv()
 	needTicket(env)
 	foreman := ""
 	if len(args) > 0 {

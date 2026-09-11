@@ -114,9 +114,9 @@ _orca_ready || { "$ORCA" open --json >/dev/null 2>&1 || true; _orca_ready; } || 
 
 Workers are **Orca terminals** in the repo's existing Orca worktree (the
 primary checkout, selected as `path:$REPO`). Do **not** `orca worktree create`
-per ticket — that mints a second git worktree on top of babysit's
-`--mode=worktree` pool. Babysit still owns isolation; Orca is the visibility
-layer.
+per ticket — that mints a second git worktree on top of babysit's worktree
+pool. Foreman owns isolation (it runs `bbs ticket ensure --mode=worktree`
+before dispatch); Orca is the visibility layer.
 
 `$T` is the runtime handle (`term_…`). Handles churn across an app restart —
 on resume re-derive `$T` from the terminal **title** via
@@ -228,8 +228,25 @@ is the terminal title plus `worktree set --comment`.
 # means the agent is not installed — report it, do not fall back to another CLI.
 # --skill, not a hand-written invocation: the sigil and prefix are the agent's
 # business and belong in exactly one place.
-CMD=$(bbs foreman worker-command --skill autopilot --prompt "--mode=worktree <requirement>") || {
+# Foreman owns the worktree: create it here, then start the worker inside it.
+# Autopilot never cuts branches or worktrees itself — it works on the
+# checkout it is given.
+# Re-dispatch of an existing ticket reuses its recorded worktree — `ensure`
+# would mint a *new* ticket, so only call it for a fresh dispatch.
+# Parse, don't eval — WORKTREE/TICKET_HOME are unquoted paths.
+if [ -n "<existing ticket id>" ]; then
+  TICKET=<existing ticket id>
+  WORKTREE=$(bbs ticket get-manifest "$TICKET" | python3 -c 'import json,sys; print(json.load(sys.stdin)["repos"][0].get("worktree") or "")')
+else
+  ENSURE_OUT=$(bbs ticket ensure --mode=worktree --slug-hint '<slug>' --from-input '<requirement>')
+  TICKET=$(printf '%s\n' "$ENSURE_OUT" | sed -n 's/^TICKET=//p')
+  WORKTREE=$(printf '%s\n' "$ENSURE_OUT" | sed -n 's/^WORKTREE=//p')
+fi
+[ -n "$TICKET" ] && [ -n "$WORKTREE" ] && [ "$WORKTREE" != "." ] || { echo "BLOCKED: no worktree for $TICKET" >&2; exit 1; }
+
+CMD=$(bbs foreman worker-command --skill autopilot --prompt "builder $TICKET") || {
   echo "BLOCKED: $CMD" >&2; exit 1; }
+CMD="cd $(printf '%q' "$WORKTREE") && $CMD"
 
 # On the mailbox path the worker escalates back over the bus instead of into a
 # pane nobody is reading. AGENT_ROLE is the skills' delivery-channel switch
@@ -240,24 +257,16 @@ CMD=$(bbs foreman worker-command --skill autopilot --prompt "--mode=worktree <re
 
 T=$("$ORCA" terminal create --worktree path:"$REPO" --title "bbs <slug>" --command "$CMD" --json \
   | python3 -c 'import json,sys; d=json.load(sys.stdin); r=d.get("result") or d; t=r.get("terminal") or r; print(t.get("handle") or "")')
-[ -n "$T" ] || { echo "BLOCKED: orca terminal create returned no handle" >&2; exit 1; }
-```
+Workers always run autopilot: foreman creates the ticket + worktree (the
+`ensure` above), the worker seeds requirement/design/plan, and **stops at
+the copy-paste `/goal` handoff** — that stop is your review gate. Resuming a
+crashed ticket: same spawn with `--skill autopilot --prompt "builder <ticket>"`.
 
-On resume, re-derive `$T` by title from `"$ORCA" terminal list --json`
-(`result.terminals[].title` / `.handle`). Do not `orca worktree create` for
-a worker — see [Terminal backend](#terminal-backend--orca-required).
-
-Workers always run autopilot: it creates the ticket + worktree, seeds
-requirement/design/plan, and **stops at the copy-paste `/goal` handoff** —
-that stop is your review gate. Resuming a crashed ticket: same spawn with
-`--skill autopilot --prompt "builder <ticket>"`.
-
-Dispatch with `--mode=worktree` on the autopilot invocation. No git-flow
-profile defaults to worktrees — they cost a commit + `merge-base` per test
-iteration and buy only parallelism, which is exactly what a batch needs and a
-serial ticket doesn't. Parallelism is foreman's to request, per dispatch;
-rigor stays whatever the repo's profile says. The machinery that shape brings
-with it — `merge-base`, the qa-lease, `switch`/`serve`, `finish` — is
+Worktrees are foreman's to request, per dispatch — autopilot never creates
+them. No git-flow profile defaults to worktrees: they cost a commit +
+`merge-base` per test iteration and buy only parallelism, which is exactly
+what a batch needs and a serial ticket doesn't. The machinery that shape
+brings with it — `merge-base`, the qa-lease, `switch`/`serve`, `finish` — is
 [references/worktrees.md](../references/worktrees.md).
 
 **Every worker is a todo** — the task list is the user's live board and must

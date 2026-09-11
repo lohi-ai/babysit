@@ -569,7 +569,7 @@ func mergeBase(args []string) int {
 		fmt.Fprintf(os.Stderr, "merge-base: worktree is on the base branch '%s' — nothing to land\n", base)
 		return 2
 	}
-	env := identity.Resolve()
+	env := resolveEnv()
 	gitdir := gitCOut(primary, "rev-parse", "--absolute-git-dir")
 	release, ok := surfaceAcquire(gitdir, "merge-base", env.Ticket)
 	if !ok {
@@ -692,7 +692,7 @@ func runRefresh(args []string) {
 		fmt.Fprintf(os.Stderr, "RECOMMENDATION: run 'git merge origin/%s' here, resolve, commit; then re-run merge-base/switch if this ticket is on the test surface.\n", base)
 		os.Exit(2)
 	}
-	env := identity.Resolve()
+	env := resolveEnv()
 	head := gitOut("rev-parse", "HEAD")
 	if env.Ticket != "" {
 		ticket.New(env).HistoryAppendExtra("refresh", actorRole(),
@@ -739,7 +739,7 @@ func resetBase(args []string) int {
 	if base == "" {
 		base = baseBranchIn(primary)
 	}
-	env := identity.Resolve()
+	env := resolveEnv()
 	gitdir := gitCOut(primary, "rev-parse", "--absolute-git-dir")
 	release, ok := surfaceAcquire(gitdir, "reset-base", env.Ticket)
 	if !ok {
@@ -831,7 +831,7 @@ func switchSurface(args []string) int {
 	if primary == "" {
 		return 2
 	}
-	env := identity.Resolve()
+	env := resolveProject() // tickets are explicit args; env.Ticket is only the lease actor
 	gitdir := gitCOut(primary, "rev-parse", "--absolute-git-dir")
 	// Resolve every ticket to a branch before touching anything.
 	var branches []string
@@ -911,7 +911,15 @@ func runServe(args []string) {
 	}
 	repo := filepath.Base(primary)
 	gitdir := gitCOut(primary, "rev-parse", "--absolute-git-dir")
-	env := identity.Resolve()
+	var env identity.Env
+	if len(tickets) > 0 || release {
+		// Explicit tickets, or --release reading targets from the serving
+		// marker — neither needs inferred identity; cwd ambiguity must not
+		// block releasing the shared surface.
+		env = resolveProject()
+	} else {
+		env = resolveEnv()
+	}
 
 	leaseOwner := func(gd string) string {
 		return leaseRead(filepath.Join(gd, "bbs-qa-lease"), "owner")
@@ -1172,7 +1180,12 @@ func landTickets(args []string) int {
 	if primary == "" {
 		return 2
 	}
-	env := identity.Resolve()
+	var env identity.Env
+	if len(tickets) > 0 {
+		env = resolveProject() // explicit tickets — cwd ambiguity must not block
+	} else {
+		env = resolveEnv()
+	}
 	if len(tickets) == 0 {
 		if env.Ticket == "" {
 			fmt.Fprintln(os.Stderr, retarget("usage: bbs-ticket land <ticket> [<ticket>...] [--base BRANCH]"))
@@ -1320,7 +1333,15 @@ func runQALease(args []string) {
 			os.Exit(2)
 		}
 	}
-	env := identity.Resolve()
+	var env identity.Env
+	// status never needs a ticket; release --force overrides ownership;
+	// explicit --ticket supplies its own. Only acquire/release paths that
+	// use the current ticket as owner need the ladder.
+	if qlTicket != "" || verb == "status" || (verb == "release" && force) {
+		env = resolveProject()
+	} else {
+		env = resolveEnv()
+	}
 	if qlTicket == "" {
 		qlTicket = env.Ticket
 	}

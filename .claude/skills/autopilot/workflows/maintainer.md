@@ -27,7 +27,8 @@ production system safe as it scales. Two modes, chosen from the invocation:
    QA subagent policy (applies fixes to the working tree).
 4. Run `qa` through the same policy (or the strongest fallback) to confirm no regression. Persist the
    verdict with `bbs ticket set-verdict --skill qa`.
-5. Commit and push any fix when policy allows.
+5. Commit any fix locally. Autopilot never pushes, lands, or opens a PR —
+   close-out is the human's `create-pr` (or the dispatching foreman's).
 6. Write a handoff: mode + lens/root-cause, fix, verification, and the remaining
    prioritized backlog. When the audit surfaced structural cruft (not a scale
    fix), name a `sweeper` pass as the follow-up — don't fold it into this run.
@@ -42,5 +43,5 @@ production system safe as it scales. Two modes, chosen from the invocation:
 STATUS: DONE | DONE_WITH_CONCERNS | NEEDS_CONTEXT | BLOCKED
 VERDICT: AUDITED | HARDENED | FIXED
 SUMMARY: <mode + top finding/root-cause + fix/verification + backlog size>
-NEXT: triage backlog; then the repo's finish policy — by default, human review then /bbs:create-pr
+NEXT: triage backlog; human review, then /bbs:create-pr
 ```

@@ -11,7 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"time"
+	"syscall"
 
 	"github.com/reallongnguyen/babysit/internal/identity"
 	"github.com/reallongnguyen/babysit/internal/ticket"
@@ -372,6 +372,14 @@ func attemptLiveness(rec *attemptRecord) string {
 	return "unknown"
 }
 
+func processAlive(pid int) bool {
+	p, err := os.FindProcess(pid)
+	if err != nil {
+		return false
+	}
+	return p.Signal(syscall.Signal(0)) == nil
+}
+
 func processStartIdentity(pid int) (string, bool) {
 	if pid <= 0 || !processAlive(pid) {
 		return "", false
@@ -485,8 +493,8 @@ func (a *apState) checkpointV2(input checkpointV2Input) error {
 		if input.ExpectedRevision != nil && int64Value(cp["revision"]) != *input.ExpectedRevision {
 			return fmt.Errorf("checkpoint revision changed: expected %d, current %d", *input.ExpectedRevision, int64Value(cp["revision"]))
 		}
-		if branch := stringValue(cp["branch"]); branch != "" && branch != a.branch {
-			return fmt.Errorf("branch/checkpoint divergence: branch=%q checkpoint=%q", a.branch, branch)
+		if tk := stringValue(cp["ticket"]); tk != "" && tk != input.Ticket {
+			return fmt.Errorf("ticket/checkpoint divergence: ticket=%q checkpoint=%q", input.Ticket, tk)
 		}
 		if !input.Force {
 			if workflowPath, ok := resolveWorkflowPath(input.Workflow); ok {
@@ -579,8 +587,8 @@ func (a *apState) refreshCheckpointV2(ticketID string) error {
 		if contractVersion(cp) != 2 {
 			return fmt.Errorf("checkpoint is not schema_version 2")
 		}
-		if branch := stringValue(cp["branch"]); branch != "" && branch != a.branch {
-			return fmt.Errorf("branch/checkpoint divergence: branch=%q checkpoint=%q", a.branch, branch)
+		if tk := stringValue(cp["ticket"]); tk != "" && tk != ticketID {
+			return fmt.Errorf("ticket/checkpoint divergence: ticket=%q checkpoint=%q", ticketID, tk)
 		}
 		cp["revision"] = int64Value(cp["revision"]) + 1
 		cp["branch"] = a.branch
@@ -588,25 +596,4 @@ func (a *apState) refreshCheckpointV2(ticketID string) error {
 		cp["updated_at"] = isoNow()
 		return writeJSONAtomic(path, cp)
 	})
-}
-
-func processIdentityPath(pidPath string) string { return pidPath + ".identity.json" }
-
-func writeProcessIdentity(pidPath string, pid int) {
-	start, alive := processStartIdentity(pid)
-	if !alive {
-		return
-	}
-	_ = writeJSONAtomic(processIdentityPath(pidPath), map[string]interface{}{
-		"schema_version": 2, "pid": pid, "process_start": start, "recorded_at": time.Now().UTC().Format(time.RFC3339),
-	})
-}
-
-func readMatchingProcessIdentity(pidPath string, pid int) (known, matches bool) {
-	rec := readJSONObject(processIdentityPath(pidPath))
-	if rec == nil {
-		return false, false
-	}
-	actual, alive := processStartIdentity(pid)
-	return true, alive && int(int64Value(rec["pid"])) == pid && stringValue(rec["process_start"]) == actual
 }

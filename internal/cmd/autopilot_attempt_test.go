@@ -63,6 +63,33 @@ func TestCheckpointV2RejectsStaleWriterAndUnsupportedVersion(t *testing.T) {
 		t.Fatal("unsupported checkpoint writer was accepted")
 	}
 }
+func TestCheckpointV2TicketInvariantNotBranch(t *testing.T) {
+	repo := initSnapshotRepo(t)
+	t.Chdir(repo)
+	project := filepath.Join(t.TempDir(), "project")
+	home := filepath.Join(project, "tickets", "ap-04")
+	mustMkdirAll(t, home)
+	mustWrite(t, filepath.Join(home, "checkpoint.json"), `{"schema_version":2,"revision":4,"ticket":"ap-04","branch":"feat/ap-04_old"}`)
+
+	// Same ticket on a different branch (trunk mode shares branches): both
+	// write paths must succeed — branch is not identity.
+	a := &apState{slug: "project", branch: "main", ticket: "ap-04", stateRoot: project}
+	if err := a.refreshCheckpointV2("ap-04"); err != nil {
+		t.Fatalf("refresh rejected same ticket on a different branch: %v", err)
+	}
+	if err := a.checkpointV2(checkpointV2Input{Ticket: "ap-04", Workflow: "builder", Step: "implement", Status: "in_progress", Force: true}); err != nil {
+		t.Fatalf("checkpoint rejected same ticket on a different branch: %v", err)
+	}
+
+	// A checkpoint file naming a different ticket is still refused.
+	mustWrite(t, filepath.Join(home, "checkpoint.json"), `{"schema_version":2,"revision":4,"ticket":"ap-99","branch":"main"}`)
+	if err := a.refreshCheckpointV2("ap-04"); err == nil {
+		t.Fatal("refresh accepted a checkpoint belonging to another ticket")
+	}
+	if err := a.checkpointV2(checkpointV2Input{Ticket: "ap-04", Workflow: "builder", Step: "implement", Status: "in_progress", Force: true}); err == nil {
+		t.Fatal("checkpoint accepted a checkpoint belonging to another ticket")
+	}
+}
 
 func TestAttemptLifecycleIsIdempotentCASCheckedAndTerminal(t *testing.T) {
 	repo := initSnapshotRepo(t)
@@ -183,21 +210,6 @@ func TestAttemptLivenessUsesProcessIncarnationAndCancellationConfirmation(t *tes
 	}
 	if _, err := mutateAttempt(a, env.Ticket, rec.ID, running.Revision, map[string]interface{}{"state": "cancelled", "termination_confirmed": true}); err != nil {
 		t.Fatal(err)
-	}
-}
-
-func TestReadAlivePIDRejectsRecordedIncarnationMismatch(t *testing.T) {
-	pidPath := filepath.Join(t.TempDir(), "worker.pid")
-	mustWrite(t, pidPath, jsonNumber(os.Getpid()))
-	mustWrite(t, processIdentityPath(pidPath), `{"schema_version":2,"pid":`+jsonNumber(os.Getpid())+`,"process_start":"not this process"}`)
-	if _, alive := readAlivePID(pidPath); alive {
-		t.Fatal("PID with a mismatched process-start identity was treated as live")
-	}
-	if err := os.Remove(processIdentityPath(pidPath)); err != nil {
-		t.Fatal(err)
-	}
-	if _, alive := readAlivePID(pidPath); !alive {
-		t.Fatal("legacy PID file without companion lost compatibility")
 	}
 }
 

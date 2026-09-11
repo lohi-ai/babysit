@@ -7,7 +7,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/reallongnguyen/babysit/internal/identity"
 	"github.com/reallongnguyen/babysit/internal/ticket"
 )
 
@@ -100,7 +99,7 @@ func printJSONRead(st *ticket.Store, path string) {
 // is still valid, and the preamble runs everywhere. The two ticket-scoped paths
 // are simply omitted, so an eval'ing caller can test for an empty $TICKET.
 func runTicketEnv() {
-	env := identity.Resolve()
+	env := resolveEnv()
 	fmt.Printf("SLUG=%s\n", env.Slug)
 	fmt.Printf("BRANCH=%s\n", env.Branch)
 	fmt.Printf("TICKET=%s\n", env.Ticket)
@@ -114,7 +113,7 @@ func runTicketEnv() {
 }
 
 func runGet(args []string) {
-	env := identity.Resolve()
+	env := resolveEnv()
 	needTicket(env)
 	if len(args) == 0 || args[0] == "" {
 		fmt.Fprintln(os.Stderr, "get: field path required")
@@ -152,7 +151,7 @@ func statusSet(st *ticket.Store, status, actor string) error {
 }
 
 func runSetStatus(args []string) {
-	env := identity.Resolve()
+	env := resolveEnv()
 	needTicket(env)
 	status := ""
 	if len(args) > 0 {
@@ -172,7 +171,7 @@ func runSetStatus(args []string) {
 }
 
 func runSetPhase(args []string) {
-	env := identity.Resolve()
+	env := resolveEnv()
 	needTicket(env)
 	phase := ""
 	if len(args) > 0 {
@@ -196,7 +195,7 @@ func runSetPhase(args []string) {
 }
 
 func runSetParent(args []string) {
-	env := identity.Resolve()
+	env := resolveEnv()
 	needTicket(env)
 	parent := ""
 	if len(args) > 0 {
@@ -221,7 +220,7 @@ func runSetParent(args []string) {
 }
 
 func runAddChild(args []string) {
-	env := identity.Resolve()
+	env := resolveEnv()
 	needTicket(env)
 	child := ""
 	if len(args) > 0 {
@@ -249,7 +248,7 @@ func runAddChild(args []string) {
 var relationTypes = map[string]bool{"blocks": true, "blocked_by": true, "duplicate_of": true, "related": true}
 
 func runAddRelation(args []string) {
-	env := identity.Resolve()
+	env := resolveEnv()
 	needTicket(env)
 	typ, target := "", ""
 	if len(args) > 0 {
@@ -285,7 +284,7 @@ func runAddRelation(args []string) {
 }
 
 func runSetSibling(args []string) {
-	env := identity.Resolve()
+	env := resolveEnv()
 	needTicket(env)
 	var role, repo, sticket string
 	for i := 0; i < len(args); i++ {
@@ -319,7 +318,7 @@ func runSetSibling(args []string) {
 }
 
 func runAddLabel(args []string) {
-	env := identity.Resolve()
+	env := resolveEnv()
 	needTicket(env)
 	label := ""
 	if len(args) > 0 {
@@ -341,7 +340,7 @@ func runAddLabel(args []string) {
 }
 
 func runSetPointer(args []string) {
-	env := identity.Resolve()
+	env := resolveEnv()
 	needTicket(env)
 	key, value := "", ""
 	if len(args) > 0 {
@@ -364,7 +363,7 @@ func runSetPointer(args []string) {
 }
 
 func runGetPointer(args []string) {
-	env := identity.Resolve()
+	env := resolveEnv()
 	needTicket(env)
 	key := ""
 	if len(args) > 0 {
@@ -379,7 +378,7 @@ func runGetPointer(args []string) {
 }
 
 func runAppendHistory(args []string) {
-	env := identity.Resolve()
+	env := resolveEnv()
 	needTicket(env)
 	var event, actor, extra string
 	for i := 0; i < len(args); i++ {
@@ -411,7 +410,7 @@ var (
 // if set, else estimate from the PR diff (rubric in
 // .claude/skills/references/ticket-size-rubric.md) and persist it.
 func runEnsureSize() {
-	env := identity.Resolve()
+	env := resolveEnv()
 	needTicket(env)
 	st := ticket.New(env)
 

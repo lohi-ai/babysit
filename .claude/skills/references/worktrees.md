@@ -1,9 +1,11 @@
 # Worktrees — the opt-in parallel shape
-Read this only when a run asked for `--mode=worktree` (a `foreman` batch, or a
-human who wants one ticket isolated). The default shape is
-[git-flow.md](git-flow.md): work on the current branch, none of this applies.
+Read this when a run is inside a ticket worktree — a `foreman` batch (foreman
+creates it, then starts autopilot there) or a human who ran
+`bbs ticket ensure --mode=worktree` to isolate one ticket. The default shape
+is [git-flow.md](git-flow.md): work on the current checkout, none of this
+applies.
 
-`--mode=worktree` makes `ensure` always divert: the ticket gets
+`bbs ticket ensure --mode=worktree` always diverts: the ticket gets
 `<repo>/.babysit/worktrees/<ticket>_<slug>/`, `ensure` prints `WORKTREE=<path>`
 and `manifest.yaml` records it — cd there, and every later step runs there.
 

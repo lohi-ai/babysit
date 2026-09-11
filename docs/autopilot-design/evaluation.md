@@ -43,7 +43,7 @@ Start with deterministic fixtures and stub adapters in CI. Live harness evaluati
 | Concurrency | Two parents; stale CAS writer; delayed old child; QA lease contention | One accepted owner, no overlapping mutating workers, no overwritten current failure |
 | Crashes | Before spawn; after spawn before handle; after evidence before pointer; after pointer before projection; parent lost | Recover accepted truth; reconcile unknown spawn; no duplicate writer or forged PASS |
 | Waiting/control | Long-running check; approval wait; pause; cancel with live worker; PID reuse | No false failure counter; preserve pending approval; confirm termination before lease reuse |
-| Isolation | Native child; process `--verify`; unavailable model; missing tools; explicit user model | Actual capability routing; no duplicate verification or prohibited in-session fallback |
+| Isolation | Native child; unavailable model; missing tools; explicit user model | Actual capability routing; no duplicate verification or prohibited in-session fallback |
 | Boundaries | Push/land/PR through hook and direct CLI; remote moves after observation; current control changes | Recheck exact target/readiness/authorization at execution |
 | Compatibility | Old state; old CLI/new plugin; unsupported schema; corrupt artifact; rollback | No silent state loss, no stale historical pass promoted to readiness |
 | Packaging | Claude/Codex/OMP supported install layouts and shared references | Correct references and capability negotiation without inferred tool support |

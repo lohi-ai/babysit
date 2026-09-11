@@ -22,7 +22,7 @@ Claude Code `/bbs:` spelling unless a command is Codex-specific.
 /bbs:foreman rebuild the novel request flow
 ```
 
-One visible worker per request, each in its own Orca terminal (each running autopilot end-to-end — plan, code, review, QA, push), a design review before any code is written, and every finished ticket merged onto your local base so you review the whole batch running in one browser — then you create the PRs. It's the advanced flow: it needs [Orca](https://www.onorca.dev), and it earns its keep only when you have several independent tickets to hand off at once.
+One visible worker per request, each in its own Orca terminal (each running autopilot end-to-end — plan, code, review, QA — inside a worktree foreman created), a design review before any code is written, and every finished ticket merged onto your local base so you review the whole batch running in one browser — then you create the PRs. It's the advanced flow: it needs [Orca](https://www.onorca.dev), and it earns its keep only when you have several independent tickets to hand off at once.
 
 *babysit is what you do when you don't need a babysitter.* It prefers decisions the agent can make and verify alone over decisions that need a human in the loop — built for scheduled runs, orchestrated pipelines, and anything you want to walk away from.
 
@@ -34,14 +34,14 @@ If you're the main dev on a small team, this is the whole loop — it does the g
 /bbs:setup-project                        # once per repo — profile + QA defaults
 /bbs:autopilot "add dark-mode toggle"     # any change: it plans → codes → reviews → QAs
 #   → read tickets/<id>/plan.md, then paste the printed /goal block and walk away
-#   → autopilot writes the code, reviews it, runs QA, pushes the branch
+#   → autopilot writes the code, reviews it, runs QA, commits on your branch
 #   → you review the evidence, then:
-bbs ticket serve bs-ab123                 # on startup/enterprise: put it on the dev server
+bbs ticket serve bs-ab123                 # only when the ticket ran in its own worktree (foreman / --mode=worktree)
 #   → look at it running in the browser; ask its session for changes and re-run serve
 /bbs:create-pr                            # you open the PR — autopilot never does
 ```
 
-The ticket's code is on the branch you're already standing on, so it's in front of you as soon as your dev server reloads. `bbs ticket serve` is for the other shape — a ticket you ran in its own worktree (`--mode=worktree`, or a `/bbs:foreman` batch), whose code isn't in this checkout.
+The ticket's code is on the branch you're already standing on, so it's in front of you as soon as your dev server reloads. `bbs ticket serve` is for the other shape — a ticket that ran in its own worktree (`bbs ticket ensure --mode=worktree`, or a `/bbs:foreman` batch), whose code isn't in this checkout.
 
 Step by step:
 
@@ -56,9 +56,6 @@ Step by step:
   either value to let autopilot select it from task difficulty and the models
   the current harness actually advertises. On OMP, `default` and `slow` select
   its configured model roles; normal work defaults to `slow`.
-- `--auto` — skip the paste; spawn `/goal` on the agent you started in (Grok stays Grok, Claude stays Claude).
-- `--reviewer <agent>` — spawn that agent to review the plan and prototype. Any registered agent — `claude`, `omp`, `grok`, `codex` — and never the one building. Omit it: no agent review. With `--auto`, approve starts `/goal` on the start agent.
-- `--verify` — grade the finished code in a fresh context: once the work is committed, review and QA run in a separate process that never saw the diff being written, and only its verdict files come back. Same agent by default — forgetting *why* the code looks like that is the point; add `--agent` to grade on a different model too.
 - *default* — stops QA-ready, you review the evidence.
 - **`/bbs:create-pr`** — you invoke it; autopilot never opens PRs itself.
 
@@ -243,9 +240,9 @@ Setting `mode:`, `land:`, or `push:` by hand overrides the profile's preset. Tha
 
 Isolation is asked for per run, when you actually want it:
 
-- `/bbs:foreman` — a batch: one worktree per ticket, in any repo, whatever the config says.
-- `/bbs:autopilot --mode=worktree "<requirement>"` — this one ticket in its own worktree.
-- `/bbs:autopilot --mode=branch "<requirement>"` — cut `feat/<id>_<slug>` in place.
+- `/bbs:foreman` — a batch: foreman creates one worktree per ticket, in any repo, whatever the config says.
+- `bbs ticket ensure --slug-hint <slug> --mode=worktree` — this one ticket in its own worktree; then run autopilot inside it.
+- `bbs ticket ensure --slug-hint <slug> --mode=branch` — cut `feat/<id>_<slug>` in place.
 
 **Worktrees cost something, so know what you bought.** The inner loop is no longer 0-step: because the code lives in a worktree and the dev server serves the primary checkout, every test iteration is a commit plus `bbs ticket merge-base` instead of edit-and-refresh. What it buys is separable tickets — you can review one in isolation, drop a bad one, and land each as its own clean PR. A repo that wants that shape every time can write `mode: worktree` + `land: local` by hand; nothing writes it for you.
 
@@ -259,7 +256,7 @@ The commands that move work between a worktree and the shared surface — `merge
 /bbs:autopilot "add a settings page with dark mode toggle"
 ```
 
-Autopilot inits the ticket — requirement, plan, branch — then stops and prints a `/goal` block as its **last message**. That block is the one thing you do next: **copy it, paste it back into the same agent, and walk away.** The goal session then writes the code, reviews it, runs QA, and pushes the branch. Open the PR yourself after review. Pass `--planner gpt-5.6-sol --planner-effort high` to choose the native model that creates the plan and UI prototype; omit those flags and autopilot selects from task difficulty and the current harness's advertised capabilities. Pass `--auto` to skip the paste: `/goal` runs on the same agent you started in. Pass `--reviewer codex` (or any other registered agent) if you want a second agent to review the completed plan — it has to be a different agent than the one building, so the read is actually independent.
+Autopilot inits the ticket — requirement, plan — then stops and prints a `/goal` block as its **last message**. That block is the one thing you do next: **copy it, paste it back into the same agent, and walk away.** The goal session then writes the code, reviews it, runs QA, and commits the work on the branch you're on — autopilot never cuts branches, pushes, or opens PRs. Open the PR yourself after review. Pass `--planner gpt-5.6-sol --planner-effort high` to choose the native model that creates the plan and UI prototype; omit those flags and autopilot selects from task difficulty and the current harness's advertised capabilities.
 
 > **The handoff looks like this** — autopilot ends with a plain-language preamble, then the block to copy:
 >
@@ -271,8 +268,8 @@ Autopilot inits the ticket — requirement, plan, branch — then stops and prin
 >
 > 👉 Copy the block below and paste it into your agent to build it:
 >
-> /goal bs-ab123 is done: qa verdict PASS/FIXED persisted via bbs ticket set-verdict,
-> review-pr verdict persisted, branch pushed, handoff note written — or a
+> /goal bs-ab123 is done: work committed locally, qa verdict PASS/FIXED persisted
+> via bbs ticket set-verdict, review-pr verdict persisted, handoff note written — or a
 > NEEDS_CONTEXT / BLOCKED status block printed verbatim.
 > Work it: /bbs:autopilot builder bs-ab123
 > ```
@@ -306,7 +303,7 @@ Babysit is a small assembly line for shipping a change. You drop an idea at one 
 
 1. **"Is this the right thing to build?"** — `requirement.md` ready. You read and accept.
 2. **"Is this the right way to build it?"** — `plan.md` ready. You read, tweak, accept.
-3. **"Does it actually work?"** — code written, reviewed, QA checked, pushed.
+3. **"Does it actually work?"** — code written, reviewed, QA checked, committed.
 4. **"Should this become a PR?"** — you review the handoff and run `/bbs:create-pr`; when reviewer comments land, `/bbs:fix-pr` works through them.
 
 ### Pick where it stops
@@ -323,19 +320,18 @@ When a stage finishes, the ticket gets a `Next:` line — literally what to do n
 ### Three input shapes
 
 ```
-/bbs:autopilot "<one-line idea>"     # new feature — creates ticket + branch, runs end-to-end
+/bbs:autopilot "<one-line idea>"     # new feature — creates the ticket, runs end-to-end
 /bbs:autopilot bs-ab123              # existing ticket — state-routes to the next stage
-/bbs:autopilot                       # resume — picks up from the current branch's checkpoint
+/bbs:autopilot                       # resume — picks up from the resolved ticket's checkpoint
 ```
 
-That's the whole surface. Seven flags extend it — `--stop-after=requirement|plan` to stop at an earlier checkpoint, `--planner <model>` and `--planner-effort <effort>` to route plan/prototype creation, `--auto` to spawn `/goal` on the agent you started in, `--reviewer <agent>` to add an independent agent review of the plan, `--verify` to move review and QA into a fresh-context process that never saw the code being written, and `--mode=worktree` (or `--mode=branch`) to isolate this one ticket, which no profile does for you. Verb tokens don't exist.
+That's the whole surface. Three flags extend it — `--stop-after=requirement|plan` to stop at an earlier checkpoint, and `--planner <model>` / `--planner-effort <effort>` to route plan/prototype creation. Autopilot always works on the checkout you start it in; isolation is `bbs ticket ensure --mode=…` or `/bbs:foreman`, never an autopilot flag. Verb tokens don't exist.
 
 ### Working tickets in parallel (worktree mode)
 
-**This is the shape you get after `--mode=worktree`** — the commands such a run hands you. `/bbs:foreman` drives the same section for a whole batch — dispatch, design gates, verdict checks, composed surface — but you don't need it to work here.
+**This is the shape a foreman batch (or a manual `bbs ticket ensure --mode=worktree`) gives you** — the commands such a run hands you. `/bbs:foreman` drives the same section for a whole batch — dispatch, design gates, verdict checks, composed surface — but you don't need it to work here.
 
 One heavy checkout per repo runs the dev server; every ticket lives in its own lightweight worktree. That makes everything parallel *except* the moment someone needs to see a ticket actually running — and that moment gets three commands:
-
 ```bash
 bbs ticket board            # every ticket at a glance: status, verdicts, live session, PR, who holds the surface
 bbs ticket serve bs-ab123   # put this ticket on the running dev server for human review
@@ -386,7 +382,7 @@ Full skill table (with autonomous-ready / interactive-only classification) in [`
 
 ## Companion CLI
 
-Everything is one binary reached as `bbs <sub>` — `bbs autopilot` (the runner), `bbs ticket env` (branch-as-anchor resolver), plus helpers for env, config, db snapshots, and upgrade checks. `brew install lohi-ai/babysit/bbs` puts it on your `PATH`; from a checkout, `setup-skills` builds it and symlinks `~/.local/bin/bbs` instead, plus the `bbs-*` argv0 aliases into `~/.claude/` for legacy callers. Full table and purposes in [`docs/companion-cli.md`](docs/companion-cli.md). Run `bbs <sub> --help` for usage on any of them.
+Everything is one binary reached as `bbs <sub>` — `bbs autopilot` (the runner), `bbs ticket env` (the identity resolver: `BABYSIT_TICKET` → manifest → branch), plus helpers for env, config, db snapshots, and upgrade checks. `brew install lohi-ai/babysit/bbs` puts it on your `PATH`; from a checkout, `setup-skills` builds it and symlinks `~/.local/bin/bbs` instead, plus the `bbs-*` argv0 aliases into `~/.claude/` for legacy callers. Full table and purposes in [`docs/companion-cli.md`](docs/companion-cli.md). Run `bbs <sub> --help` for usage on any of them.
 
 ## Operations
 

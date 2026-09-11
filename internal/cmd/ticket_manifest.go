@@ -18,9 +18,12 @@ import (
 // mismatch prints the BLOCK line to stderr but still exits 0 (the trailing
 // `echo` resets the status).
 func runGetManifest(args []string) {
-	env := identity.Resolve()
+	var env identity.Env
 	if len(args) > 0 && args[0] != "" {
-		env.Ticket = args[0] // EXPLICIT_TICKET override
+		env = resolveProject() // explicit ticket — cwd ambiguity must not block
+		env.Ticket = args[0]
+	} else {
+		env = resolveEnv()
 	}
 	needTicket(env)
 	st := ticket.New(env)
@@ -48,7 +51,7 @@ func runSetBranch(args []string) {
 		os.Exit(2)
 	}
 	sticket, srepo, sbranch := args[0], args[1], args[2]
-	env := identity.Resolve()
+	env := resolveProject() // explicit ticket — cwd ambiguity must not block
 	env.Ticket = sticket
 	st := ticket.New(env)
 	m := st.ManifestPath()
@@ -91,7 +94,7 @@ func runSetBranch(args []string) {
 // row on a fresh ticket, and seed manifest.yaml when one doesn't exist. No git:
 // branch-cutting is `ensure`'s job.
 func runInit(args []string) {
-	env := identity.Resolve()
+	env := resolveEnv()
 	needTicket(env)
 
 	var parent, otype, seed, pplan, ddoc, pos, repo, worktree string

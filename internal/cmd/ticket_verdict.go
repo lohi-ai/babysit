@@ -8,7 +8,6 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/reallongnguyen/babysit/internal/identity"
 	"github.com/reallongnguyen/babysit/internal/ticket"
 )
 
@@ -22,7 +21,7 @@ var statusRe = regexp.MustCompile(`^STATUS:[[:space:]]*(DONE|DONE_WITH_CONCERNS|
 // `--verdict PASS --note ...` and persist a `<no verdict>` body that
 // verdict-status reads as none — a hollow verdict downstream gates re-ask about.
 func runSetVerdict(args []string) {
-	env := identity.Resolve()
+	env := resolveEnv()
 	needTicket(env)
 
 	var skill, body, bodyFile string
@@ -93,7 +92,7 @@ func runSetVerdict(args []string) {
 // runVerdictStatus ports bin/bbs-ticket.bash:1446-1473 — emit one of
 // {none|DONE|DONE_WITH_CONCERNS|BLOCKED|NEEDS_CONTEXT}.
 func runVerdictStatus(args []string) {
-	env := identity.Resolve()
+	env := resolveEnv()
 	needTicket(env)
 
 	var skill string

@@ -44,7 +44,7 @@ func runReadiness(args []string) {
 	if action != "push" && action != "land" && action != "pr" {
 		failV2("INVALID_ACTION", "readiness needs --action push|land|pr", false, nil, 2)
 	}
-	env := identity.Resolve()
+	env := resolveEnv()
 	if env.Ticket == "" {
 		failV2("TICKET_REQUIRED", "readiness requires a resolved ticket", false, nil, 3)
 	}

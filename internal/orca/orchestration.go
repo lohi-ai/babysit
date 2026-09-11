@@ -18,8 +18,8 @@ import (
 //
 //   - worker-start / --agent — wants Orca's opaque agent-id registry and
 //     rejects custom argv. babysit launches from its own agent registry.
-//   - --worktree new-* — babysit owns git isolation (--mode=worktree,
-//     merge-base, qa-lease).
+//   - --worktree new-* — babysit owns git isolation (foreman-created
+//     worktrees, merge-base, qa-lease).
 //   - gate-create / gate-resolve — duplicates `bbs ticket approval`, which is
 //     richer (rubric, non-delegable floor, decisions.jsonl, dashboard UI). Two
 //     approval mechanisms means two places for the floor to be wrong.

@@ -1,13 +1,21 @@
 ---
 name: autopilot
-description: "Run a checkpointed babysit workflow from a short requirement or existing ticket. Use for multi-step autonomous work that should survive context loss: plan, implement, verify, and hand off."
+description: "Run a checkpointed babysit workflow from a short requirement or existing ticket. Use for multi-step work that should survive context loss: plan, implement, verify, and hand off."
 ---
 # autopilot
-A **goal proxy**: the skill owns init — durable ticket state, branch,
-requirement, plan — and the harness's work loop owns execution (`/goal` where
-supported), with persisted `review-pr`/`qa` verdicts as
-the terminal condition. Keep state on disk; safe to re-enter until a terminal
-status prints.
+A **goal proxy**: the skill owns init — durable ticket state, requirement,
+plan — and the harness's work loop owns execution (`/goal` where supported),
+with persisted `review-pr`/`qa` verdicts as the terminal condition. Keep
+state on disk; safe to re-enter until a terminal status prints.
+**Autopilot is an assistant, not an orchestrator.** It works on the checkout
+it was started in and never manages its own git topology: no branch cutting,
+no worktrees, no push, no land, no PR. It commits its own work locally — the
+verdict gates and crash-resume need durable commits — and the human closes
+out. When a run needs isolation or autonomy (parallel tickets, worktrees,
+landing, PRs), that is `foreman`'s job: foreman creates the worktree, starts
+autopilot inside it, and owns the finish policy. The one exception is
+builder's `orchestrate` mode, where a decomposed parent cuts its children's
+branches — that is dispatching sub-tickets, not relocating itself.
 ## Harness and terminal portability
 - Follow [the preamble](../references/preamble.md) and
   [Auto-Decision Framework](../references/auto-decision-framework.md).
@@ -34,19 +42,25 @@ status prints.
 1. Resolve the invocation: inline requirement, ticket id, named workflow, or
    resume. A checkpoint with work in flight means loop re-entry (below), not
    init.
-2. Not a git repo yet → `git init -b main` plus an initial commit first;
-   autopilot owns every git operation (repo init, branch, commit, land,
-   push) — never bounce one to the user or a step skill.
-   Then ensure a ticket dir with `requirement.md` and `checkpoint.json`
-   (`bbs ticket ensure`). Work rides the branch the user is on: pass
-   `--mode=<branch|worktree>` through **only** when the invocation asked for
-   it (`foreman` passes `--mode=worktree` per worker) — never cut or divert on
-   your own initiative. See [references/git-flow.md](../references/git-flow.md).
-   When seeding `requirement.md` from free text, list open decisions
-   explicitly instead of papering over them
-   ([references/finding-unknowns.md](../references/finding-unknowns.md)).
-   If `ensure` printed `WORKTREE=<path>`, cd there — every later step runs in
-   the worktree, and QA lands the branch via `bbs ticket merge-base`.
+2. Not a git repo yet → `git init -b main` plus an initial commit first.
+   Then ensure a ticket dir with `requirement.md` and `checkpoint.json`:
+   ```bash
+   ENSURE_OUT=$(bbs ticket ensure --no-branch)
+   TICKET=$(printf '%s\n' "$ENSURE_OUT" | sed -n 's/^TICKET=//p')
+   ```
+   Parse, never eval — `TICKET_HOME` is an unquoted path. Then carry the id
+   explicitly: an `export` here does not survive into the next tool call on
+   harnesses with per-call shells, so every later `bbs ticket` /
+   `bbs autopilot` invocation runs as `BABYSIT_TICKET="$TICKET" <cmd>` (or
+   exports it inside the same shell invocation). `--no-branch` is
+   load-bearing too: a repo
+   with a handwritten `mode:` key would otherwise divert the cut — autopilot
+   always works on the checkout it was started in, never cuts a branch for
+   itself, never diverts to a worktree. If the current checkout is already a ticket
+   worktree (a foreman put you here), that is fine: work in place; the `qa`
+   skill owns the shared-surface protocol. When seeding `requirement.md`
+   from free text, list open decisions explicitly instead of papering over
+   them ([references/finding-unknowns.md](../references/finding-unknowns.md)).
    Stop here on `--stop-after=requirement`.
 3. Pick the archetype workflow ([references/archetypes.md](../references/archetypes.md)):
    named one wins; else route by the shape of the work; ambiguous or ordinary
@@ -62,18 +76,14 @@ status prints.
    `design-ui` inside `plan-draft`; make sure that ran, so the spec and
    prototype exist *before* the `/goal` handoff — design is reviewed before
    implementation, not discovered after it. Stop here on `--stop-after=plan`.
-   Size relaxes *only this step*: an XS change still gets the step-2 ticket and
-   the verdict gates — there is no inline path, and in a worktree run nothing
-   is ever committed in the primary checkout (code reaches it only via
-   `bbs ticket merge-base`/`switch`).
+   Size relaxes *only this step*: an XS change still gets the step-2 ticket
+   and the verdict gates — there is no inline path.
 5. Hand the work to the harness's work loop (below). Init never executes
    workflow steps; without `/goal`, transition directly to execution.
 
 ### Planner subagent (`--planner`, `--planner-effort`)
 Planning is a fresh-context job when native delegation is available. These
-flags select a native model/profile and its reasoning effort; they do **not**
-select an external harness (`--agent` on `bbs autopilot spawn-*` still means
-`claude`, `codex`, `grok`, or `omp`).
+flags select a native model/profile and its reasoning effort.
 - `--planner <model>` — use that exact advertised model or profile for
   `plan-draft` and its nested `design-ui` prototype work.
 - `--planner-effort <effort>` — use that exact advertised reasoning effort.
@@ -129,8 +139,8 @@ explicit value, report `BLOCKED`.
 Before dispatch, persist the resolved values so cold resume cannot choose a
 different planner:
 ```bash
-bbs ticket set-pointer planner_model "<resolved-model-or-profile>"
-bbs ticket set-pointer planner_effort "<resolved-effort-or-unsupported>"
+BABYSIT_TICKET="$TICKET" bbs ticket set-pointer planner_model "<resolved-model-or-profile>"
+BABYSIT_TICKET="$TICKET" bbs ticket set-pointer planner_effort "<resolved-effort-or-unsupported>"
 ```
 On resume, those pointers win unless the new invocation explicitly supplies a
 planner flag; an explicit change overwrites the affected pointer and re-plans
@@ -153,8 +163,7 @@ attempt, and read `bbs ticket verdict-status --skill plan-draft`. Missing or
 inadequate output is not a plan: retry once with the next stronger advertised
 automatic option, or report `BLOCKED` for an explicit planner. Record the child
 handle, selected model/profile, effort, artifact paths, and result in the
-checkpoint/handoff. `--reviewer`, when supplied, runs only after this creation
-step and remains an independent review of the completed plan and prototype.
+checkpoint/handoff.
 ## The work loop (`/goal`)
 On a harness that supports `/goal`, `/goal <condition>` arms a Stop hook
 that blocks stopping until the condition holds. Autopilot cannot arm it
@@ -162,43 +171,7 @@ itself — after init, print the handoff and stop (`developer`: the human
 copy-pastes it; orchestrators put the block in the spawn prompt).
 Without `/goal` support, skip this paste/stop protocol and continue execution
 as specified above; `developer` alone never requires a `/goal` handoff.
-Two independent flags below replace that paste with a spawned process;
-`--stop-after` still wins. If `SPAWNED` is already true,
-you are that process: skip the handoff and work. Start-agent is the active
-harness resolved above; never default a known Codex or OMP session to Claude.
-A third flag, `--verify`, changes how the loop's gates run.
-- `--reviewer <agent>` (alias `--review`) — spawn that agent to review
-  the plan and prototype. Omit it: no agent review. From the worktree:
-  `bbs autopilot spawn-review --ticket "$TICKET" --workflow "$WF" --agent <name>`
-  plus `--builder <start-agent>` only when `--auto` is also set (approve
-  then spawn-goal). Print pid/log (or ORCA=) and stop.
-- `--auto` — spawn `/goal` on the start agent. If `--reviewer` ran, that
-  process does it on approve; otherwise
-  `bbs autopilot spawn-goal --ticket "$TICKET" --workflow "$WF"` (no
-  `--agent` — spawn-goal uses the start agent). Print pid/log and stop.
-  Never the copy-paste handoff.
-- `--verify` — grade the finished code in a fresh context. At init, record it
-  on the ticket (`bbs ticket set-pointer verify true`) so every later path
-  reads it back — the paste, `--auto`, a reviewer's greenlight, a cold resume;
-  the loop checks `bbs ticket get-pointer verify` as well as its own args. That
-  read prints `True`, not `true` — `set-pointer` coerces to a JSON bool and the
-  reader renders it Python-style for the bash oracle — so compare
-  case-insensitively. A case-sensitive `= "true"` silently drops the run back to
-  grading its own diff, which is the one outcome the flag exists to prevent.
-  `--auto` no longer depends on that read: spawn-goal appends the routing
-  instruction to the goal prompt whenever the pointer is set.
-  In the loop, once the implementation is committed, it **replaces** the
-  in-session `review-pr` + `qa` steps rather than adding a pass after them:
-  `bbs autopilot spawn-verify --ticket "$TICKET" --workflow "$WF"` (add
-  `--agent <name>` only to choose a different harness — it is not a model
-  selector; Sonnet/Terra are not agent names). Wait
-  for it, then read the result from disk with `bbs ticket verdict-status
-  --skill review-pr` and `--skill qa`; nothing the child prints is input.
-  Do **not** re-run the gates in-session afterwards — `set-verdict` is
-  last-writer-wins, so an added in-session pass overwrites the independent
-  verdict with the biased one. No verdict at all means the verifier died:
-  report `BLOCKED` naming the returned `ORCA=` tab or `LOG=` path, never
-  fall back to the in-session pass this replaced.
+If `SPAWNED` is already true, you are that process: skip the handoff and work.
 For a `developer` handoff **on a harness supporting `/goal`**, the handoff
 **is the whole final message and must be the very last thing on screen** —
 nothing after it. The template and mandatory copy-paste rules below apply
@@ -218,15 +191,14 @@ Redirect the design now if it's wrong — otherwise you're one paste from done.
 
 👉 Copy the block below and paste it into <the current agent> to build it:
 
-/goal <ticket> is done: qa verdict PASS/FIXED persisted via bbs ticket set-verdict,
-review-pr verdict persisted, branch pushed, closed out per the repo's finish
-policy, handoff note written — or a NEEDS_CONTEXT / BLOCKED status block
-printed verbatim.
+/goal <ticket> is done: work committed locally, qa verdict PASS/FIXED persisted
+via bbs ticket set-verdict, review-pr verdict persisted, handoff note written —
+or a NEEDS_CONTEXT / BLOCKED status block printed verbatim.
 Work it: <SKILL_REF>autopilot <workflow> <ticket>
 ```
 The preamble is mandatory whenever `plan-draft`/`design-ui` produced those
 artifacts — it is the design checkpoint, not decoration; keep it in plain
-words and never assume the human knows git or babysit internals. The
+words and never assume the human knows git or babysit internals.
 The preamble prints the current agent and `SKILL_REF`; substitute both values
 in this template and never print the angle-bracket placeholders. The
 `👉 Copy … paste it into <agent>` line is mandatory in every supported
@@ -259,16 +231,11 @@ inline. Use `SKILL_REF` in prompts: Claude Code `/bbs:<name>`, Codex
 `$bbs:<name>`, OMP `/<name>`. Use the installed skill name for tool calls.
 Planning: `plan-draft`. Coding: `implement`. Landing review: `review-pr`.
 QA: `qa` (no runnable target → record the fallback, use `browse` or a narrow
-local check). Debug: `investigate`. Closing out: `create-pr`, and only when the
-repo asked for it (below).
+local check). Debug: `investigate`. Closing out is the human's `create-pr`
+(or foreman's finish policy) — never autopilot's.
 ### Automatic review / QA subagents
 Applies to every workflow's `review-pr` and `qa` steps, without an opt-in
-flag. `--reviewer` remains plan/prototype review. Explicit `--verify` remains
-the process-isolated route above and takes precedence: run
-`bbs autopilot spawn-verify`, not a native subagent, even when Sonnet/Terra
-is available. That CLI's `--agent` selects a harness, not a smaller model;
-automatic native model selection below does not configure that process.
-Do not dispatch a second pair of native gate workers in the parent.
+flag.
 1. **Select from actual capabilities, automatically.** Inspect the native
    subagent tool schema and advertised models/agent profiles before dispatch:
    - **Claude Code:** prefer `sonnet` through the subagent tool's model
@@ -285,20 +252,19 @@ Do not dispatch a second pair of native gate workers in the parent.
    smaller capable option; if model selection is unavailable, use a native
    child with its inherited/default model and record that limitation.
    If native delegation is unavailable or forbidden, execute the real skill
-   in-session and record why. This fallback never overrides `--verify`.
+   in-session and record why.
    Capability routing is Mechanical; a judgment-based model escalation is
    Taste and is logged via the framework, without prompting.
 2. **Dispatch one gate at a time:** `review-pr --fix`, wait and integrate its
    fixes, then `qa` on the resulting change. Never run these mutating gates
    concurrently with each other or with implementation. The parent retains
-   ticket/branch/checkpoint ownership, commits, QA surface preparation and
-   leases, push, and finish policy. Step workers do not invoke autopilot or
-   recursively delegate these gates.
+   ticket/checkpoint ownership and commits. Step workers do not invoke
+   autopilot or recursively delegate these gates.
 3. **Give each child a complete, bounded assignment:** skill reference and
-   resolved file path; ticket id and absolute ticket/repo/worktree paths;
+   resolved file path; ticket id and absolute ticket/repo paths;
    requirement, plan and relevant handoff paths; exact review base/range;
-   acceptance criteria, available check commands, QA URL/surface and lease
-   ownership; permitted edits and no git/close-out authority. Use a fresh
+   acceptance criteria, available check commands, QA URL/surface;
+   permitted edits and no git/close-out authority. Use a fresh
    task context, not a copy of the implementation conversation. Require the
    actual skill, evidence paths, changed files, unresolved findings, and its
    status/verdict body. Require real runtime QA, including a relevant
@@ -311,8 +277,8 @@ Do not dispatch a second pair of native gate workers in the parent.
    tool; parent must not edit the shared checkout meanwhile. If the harness
    isolates child edits, integrate them before the next gate. Inspect the
    report and unresolved findings; persist each accepted body with
-   `bbs ticket set-verdict --skill <review-pr|qa> --body-file <path>` unless
-   the skill already persisted it, then read `bbs ticket verdict-status`.
+   `BABYSIT_TICKET="$TICKET" bbs ticket set-verdict --skill <review-pr|qa> --body-file <path>` unless
+   the skill already persisted it, then read `BABYSIT_TICKET="$TICKET" bbs ticket verdict-status`.
    Require evidence from this attempt and the current change, not an old
    DONE left on disk. A crash, missing report, or inadequate check is not a
    pass: retry on a capable model or record BLOCKED. Never overwrite a
@@ -329,37 +295,26 @@ Do not dispatch a second pair of native gate workers in the parent.
   reports findings, so persisting its verdict is yours: the body needs a
   first-column `STATUS: DONE` line (a `VERDICT: PASS` prose line is not a
   status; `set-verdict` refuses a body without one).
-- Git is autopilot's job end to end. Step skills are infra-isolated — they
-  edit the working tree and never branch, commit, or push; commit their
-  output yourself at each milestone.
+- Git scope is exactly: `git init` on an unborn repo, and committing the
+  work on the current branch. Never push, land, merge-base, or open a PR,
+  and never cut a branch for itself — close-out is the human's
+  (`create-pr`) or the dispatching foreman's (its finish policy). The sole
+  branch exception is builder `orchestrate` mode cutting its children's
+  branches. Step skills are infra-isolated — they edit the working
+  tree and never commit; commit their output yourself at each milestone.
 - `INVOKER=developer`: lead every stop — handoff, `NEEDS_CONTEXT`, final
   status — with one plain-language sentence saying what happened and the
   exact next command to paste; a non-technical user must be able to keep
   the build moving without knowing git.
 - Never force-push, drop data, or send external messages.
-- **Close out per the repo's policy**, as the last step before the handoff and
-  only once qa and review-pr are both persisted DONE:
-  ```bash
-  eval "$(bbs autopilot git-flow)"     # → BBS_FINISH: review | land | pr
-  ```
-  `land` → `bbs ticket land "$TICKET"` (merge into local `$BBS_BASE_BRANCH`).
-  `pr` → run `create-pr` through the harness's skill mechanism (push +
-  open the PR against base). `review` (default) → the human closes it out.
-  The key is the repo's standing authorization and the only thing that decides
-  this — never close out on your own initiative. Never with a verdict missing
-  either: `land` refuses unverified work outright, and the PR hook *asks* on a
-  missing verdict, which with nobody at the pane is a stall rather than a stop.
-  Report what happened on the `NEXT:` line: `LANDED: <branch> → <base>`,
-  `PR: <url>`, or the human's `/bbs:create-pr`.
 - Always run QA before final handoff and persist the verdict with
-  `bbs ticket set-verdict --skill qa` — under `--verify` the spawned verifier
-  writes it and the parent reads it back (real PASS/FIXED, or
+  `BABYSIT_TICKET="$TICKET" bbs ticket set-verdict --skill qa` (real PASS/FIXED, or
   DONE_WITH_CONCERNS naming the blocker). "Implemented but not QA'd" is
   incomplete; happy-path-only QA is incomplete — include at least one
   validation/error/empty/responsive case.
 - Leave a clean handoff: work committed, no debug leftovers in the diff,
   checkpoint current. When a commit lands after the step's checkpoint, run
-  `bbs autopilot checkpoint --refresh` or the Stop-time audit flags it stale.
+  `BABYSIT_TICKET="$TICKET" bbs autopilot checkpoint --refresh` or the Stop-time audit flags it stale.
 - Keep the final handoff short: branch, files changed, QA evidence, next
   human action. A truly human-only decision → `NEEDS_CONTEXT` naming the
   exact missing input.
@@ -368,6 +323,6 @@ Do not dispatch a second pair of native gate workers in the parent.
 STATUS: DONE | DONE_WITH_CONCERNS | NEEDS_CONTEXT | BLOCKED
 VERDICT: PLANNED | BUILT | FIXED | HANDOFF
 SUMMARY: <branch, QA evidence, concerns>
-NEXT: what the finish policy left for the human — review + /bbs:create-pr
-(`review`), review the landed base + push (`land`), or review the PR (`pr`)
+NEXT: human review, then /bbs:create-pr — or, under a foreman, whatever its
+finish policy does with the ticket
 ```

@@ -371,39 +371,6 @@ decided_at = 3
 	}
 }
 
-func TestCurrentReadsAgentSpecificEnvBeforeClaudeCodeEnv(t *testing.T) {
-	t.Setenv("CODEX_SESSION_ID", "")
-	t.Setenv("CODEX_THREAD_ID", "")
-	t.Setenv("GROK_AGENT", "")
-	t.Setenv("GROK_SESSION_ID", "")
-	t.Setenv("CLAUDE_CODE_SESSION_ID", "")
-	if got := Current(); got != "" {
-		t.Errorf("empty env: Current() = %q", got)
-	}
-
-	t.Setenv("CLAUDE_CODE_SESSION_ID", "cc-1")
-	if got := Current(); got != "claude" {
-		t.Errorf("claude session: Current() = %q", got)
-	}
-
-	t.Setenv("CODEX_SESSION_ID", "cx-1")
-	if got := Current(); got != "codex" {
-		t.Errorf("nested codex session: Current() = %q, want codex", got)
-	}
-	t.Setenv("CODEX_SESSION_ID", "")
-
-	t.Setenv("GROK_SESSION_ID", "gk-1")
-	if got := Current(); got != "grok" {
-		t.Errorf("both set: Current() = %q, want grok", got)
-	}
-
-	t.Setenv("GROK_SESSION_ID", "")
-	t.Setenv("GROK_AGENT", "1")
-	if got := Current(); got != "grok" {
-		t.Errorf("GROK_AGENT: Current() = %q", got)
-	}
-}
-
 func TestNamesListsEveryRegisteredAgent(t *testing.T) {
 	got := strings.Join(Names(), ",")
 	if got != "claude,codex,grok,omp" {
@@ -577,34 +544,5 @@ func TestOmpInstallHintDoesNotNameThePluginInstaller(t *testing.T) {
 	}
 	if strings.Contains(p.Install, "omp plugin install") {
 		t.Errorf("omp hint names the npm-shaped installer, which fails on a Claude plugin repo:\n%s", p.Install)
-	}
-}
-
-// Only agents that actually export a session marker may be detectable. omp
-// exports none; Codex exports both a session and thread id.
-func TestCurrentDetectsOnlyAgentsThatExportAMarker(t *testing.T) {
-	for _, v := range []string{"CODEX_SESSION_ID", "CODEX_THREAD_ID", "GROK_AGENT", "GROK_SESSION_ID", "CLAUDE_CODE_SESSION_ID"} {
-		t.Setenv(v, "")
-	}
-	if got := Current(); got != "" {
-		t.Errorf("Current() = %q with no markers set, want \"\"", got)
-	}
-
-	t.Setenv("CLAUDE_CODE_SESSION_ID", "abc")
-	if got := Current(); got != "claude" {
-		t.Errorf("Current() = %q, want claude", got)
-	}
-
-	t.Setenv("CODEX_THREAD_ID", "codex-1")
-	if got := Current(); got != "codex" {
-		t.Errorf("Current() = %q with Codex and inherited Claude markers, want codex", got)
-	}
-	t.Setenv("CODEX_THREAD_ID", "")
-
-	// An agent started from a Claude Code terminal can inherit
-	// CLAUDE_CODE_SESSION_ID wholesale, so its own marker has to win.
-	t.Setenv("GROK_SESSION_ID", "def")
-	if got := Current(); got != "grok" {
-		t.Errorf("Current() = %q with both markers set, want grok — a nested session inherits the parent's", got)
 	}
 }

@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/reallongnguyen/babysit/internal/identity"
 	"github.com/reallongnguyen/babysit/internal/ticket"
 )
 
@@ -71,7 +70,7 @@ func runEnsure(args []string) {
 		os.Exit(2)
 	}
 
-	env := identity.Resolve()
+	env := resolveEnv()
 
 	// Fast-path: branch already encodes a ticket.
 	if env.Ticket != "" {
@@ -201,7 +200,7 @@ func runEnsure(args []string) {
 				os.Exit(2)
 			}
 			// Re-derive identity now that we're on the new branch.
-			re := identity.Resolve()
+			re := resolveEnv()
 			ticketID = re.Ticket
 			if ticketID == "" {
 				ticketID = newTicket

@@ -392,14 +392,14 @@ func TestWorkerCommandRendersTheConfiguredAgent(t *testing.T) {
 func TestWorkerCommandNamesTheSkillTheWayEachAgentResolvesIt(t *testing.T) {
 	fakeOrcaFor(t)
 	for _, tc := range []struct{ agent, want string }{
-		{"claude", `claude --dangerously-skip-permissions '/bbs:autopilot --mode=worktree ship it'`},
-		{"grok", `grok --always-approve '/bbs:autopilot --mode=worktree ship it'`},
-		{"omp", `omp --auto-approve '/autopilot --mode=worktree ship it'`},
-		{"codex", `codex --dangerously-bypass-approvals-and-sandbox '$bbs:autopilot --mode=worktree ship it'`},
+		{"claude", `claude --dangerously-skip-permissions '/bbs:autopilot builder bs-t1'`},
+		{"grok", `grok --always-approve '/bbs:autopilot builder bs-t1'`},
+		{"omp", `omp --auto-approve '/autopilot builder bs-t1'`},
+		{"codex", `codex --dangerously-bypass-approvals-and-sandbox '$bbs:autopilot builder bs-t1'`},
 	} {
 		out := captureStdout(t, func() {
 			if err := foremanWorkerCommand([]string{
-				"--agent", tc.agent, "--skill", "autopilot", "--prompt", "--mode=worktree ship it",
+				"--agent", tc.agent, "--skill", "autopilot", "--prompt", "builder bs-t1",
 			}); err != nil {
 				t.Fatal(err)
 			}
