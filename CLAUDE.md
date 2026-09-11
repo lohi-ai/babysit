@@ -296,16 +296,16 @@ a crash.
 
 ## Releasing — version bumps
 
-When bumping the version (any change to `VERSION`), **always update `.claude-plugin/marketplace.json` and `.codex-plugin/plugin.json` in the same commit**. The plugin loaders use those files to detect upgrades — a stale version can leave users on old skills.
+When bumping the version (any change to `VERSION`), **always update both plugin manifests in the same commit: `.claude-plugin/marketplace.json` for Claude Code and `.codex-plugin/plugin.json` for Codex**. The plugin loaders use those files to detect upgrades — a stale version can leave users on old skills.
 
-Four fields must stay in sync:
+Four fields must stay in sync across both plugin ecosystems:
 
-| File | Field |
-|------|-------|
-| `VERSION` | bare version string, e.g. `1.4.2` |
-| `.claude-plugin/marketplace.json` | `metadata.version` |
-| `.claude-plugin/marketplace.json` | `plugins[0].version` |
-| `.codex-plugin/plugin.json` | `version` |
+| File | Field | Plugin |
+|------|-------|--------|
+| `VERSION` | bare version string, e.g. `1.4.2` | both |
+| `.claude-plugin/marketplace.json` | `metadata.version` | Claude Code |
+| `.claude-plugin/marketplace.json` | `plugins[0].version` | Claude Code |
+| `.codex-plugin/plugin.json` | `version` | Codex |
 
 Quick check: `grep -r "version" .claude-plugin/ .codex-plugin/ VERSION` — all four should show the same value. CI enforces this too: `.github/workflows/release.yml` fails the run when they disagree, rather than shipping a plugin that misreports its own version.
 
