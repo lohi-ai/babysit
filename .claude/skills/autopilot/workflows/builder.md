@@ -1,7 +1,7 @@
 ---
 workflow: builder
 version: 1
-description: Turn an idea, requirement, or accepted plan into a production-grade, QA-verified change on the current checkout. The default path for new product work; absorbs full-build, plan-only, implement, orchestrate, sub-ticket, and verify-only modes by reading state.
+description: Turn one ticket's idea, requirement, or accepted plan into a production-grade, QA-verified change on the current checkout. The default path for serial product work and foreman-dispatched child tickets; multi-ticket parent orchestration belongs to foreman.
 needs-state:
   requirement_md: optional
 ---
@@ -15,11 +15,12 @@ Re-read ticket state, checkpoint, and git status; choose the **first** match:
 | Mode | Condition | What it does |
 |------|-----------|--------------|
 | **child** | `origin_type = sub_ticket` | Implement + QA only this child's scope; hand off to the parent. |
-| **orchestrate** | `manifest.md` exists | Run each child ticket through `builder` (child mode), merge into the parent, QA the integrated parent. |
 | **implement** | `plan.md` exists, no manifest | Implement the accepted plan. |
 | **build** | `requirement.md` exists, `plan.md` absent | Plan first, then implement. |
 | **verify** | none of the above, but a non-base branch has commits | QA-only pass on existing work. |
-If none match and there is no ticket/requirement, stop with `NEEDS_CONTEXT`.
+A ticket with `manifest.md` is a multi-ticket project, not a builder mode:
+stop with `BLOCKED` and hand it to `foreman`. If no mode matches and there is
+no ticket/requirement, stop with `NEEDS_CONTEXT`.
 ## run
 > produces: verdict:builder + qa:checked + git:committed
 1. Ensure ticket and checkpoint exist; record the mode in the checkpoint.
@@ -40,18 +41,14 @@ If none match and there is no ticket/requirement, stop with `NEEDS_CONTEXT`.
    leaves the working tree dirty by design — commit its output here. Skills
    are infra-isolated: they edit files; every commit in this workflow is
    autopilot's own step.
-4. **orchestrate mode:** run each child in manifest order via `builder`,
-   checkpoint each merged child, then merge completed children into the parent.
-   This mode is the one place autopilot creates branches — the decomposition
-   shape requires it (see § Sub-ticket branch shape).
-5. Run `review-pr --fix` via SKILL.md's **Automatic review / QA subagents**
+4. Run `review-pr --fix` via SKILL.md's **Automatic review / QA subagents**
    policy (applies fixes to the working tree), then persist and read back the
    verdict with `bbs ticket set-verdict --skill review-pr` and
    `bbs ticket verdict-status --skill review-pr` — the pre-push hook reads it
    when the human (or foreman) pushes.
    Verify mode may reuse review only if its persisted DONE covers the current
    change; otherwise run it too.
-6. Run `qa` via the same automatic subagent policy, after review fixes are
+5. Run `qa` via the same automatic subagent policy, after review fixes are
    integrated, against the requirement's acceptance criteria, the plan's
    `**Verify:**` line, and the implement handoff — not just the diff. The
    `qa` skill owns the test surface: on a normal checkout it tests the
@@ -61,41 +58,31 @@ If none match and there is no ticket/requirement, stop with `NEEDS_CONTEXT`.
    and run the strongest fallback (`browse` for UI, else a narrow local
    check). Commit any QA fixes, then persist the verdict with
    `bbs ticket set-verdict --skill qa`.
-7. Commit everything. Autopilot stops here: never push, land, or open a PR —
+6. Commit everything. Autopilot stops here: never push, land, or open a PR —
    close-out is the human's `create-pr`, or the dispatching foreman's finish
    policy.
-8. Write a handoff: mode, branch, changed files, deviations from the plan
+7. Write a handoff: mode, branch, changed files, deviations from the plan
    (the implement handoff's `## Deviations`), prototype path when `design-ui`
    produced one, QA evidence, concerns, next action — and, when a signal
    warrants, the forward lifecycle edge after `create-pr` (leftover cruft →
    `sweeper`; surface now live and measurable → `grower`). Child mode targets
-   the parent orchestrate run. Cross-repo: list every touched repo with its
+   the parent foreman run. Cross-repo: list every touched repo with its
    branch. Write it so a non-technical owner can act: lead with what was
    built and where to see it (URL), and give the next action as a copy-paste
    command. Confirm clean state first: no debug leftovers, nothing
    uncommitted, checkpoint current.
-### Sub-ticket branch shape
-Child branches are slash-namespaced under the parent so they never collide
-with the parent's own underscore branch. Load-bearing — keep both
-constructions verbatim; fork the child from the parent `feat/` branch (not
-base), check it out if it already exists.
-```bash
-# orchestrate mode (dispatch side): build each child branch from the manifest.
-# $CHILD is the decomposition's child id; $POS is the 3-digit seed index.
-CHILD_BRANCH="feat/${TICKET}/${POS}_${CHILD}_${SLUG}"
-```
-```bash
-# child mode (worker side): re-derive this child's own branch from the parent.
-# $PARENT_ID is the parent ticket; $TICKET is this child's id.
-CHILD_BRANCH="feat/${PARENT_ID}/${POS}_${TICKET}_${SLUG}"
-```
+### Foreman-dispatched children
+`origin.type=sub_ticket` scopes child mode; the current checkout is already the
+branch/worktree foreman prepared. Never derive or check out a child branch in
+this workflow. The child handoff targets its parent and leaves dependency
+integration, project QA, and close-out to foreman.
 ### Cross-repo tasks (related repos)
 `setup-project` records siblings: meaning in `AGENTS.md` § Related Repos,
 machine-local paths in the workspace registry (`bbs config workspace show`), which
 is the authority; `RELATED_*_REPO` in `.babysit/.env` is the fallback for
 repos outside a workspace. **Prefer the
 current repo** — cross into a sibling only for the slice that genuinely
-cannot be done here, and do the minimum there. Steps 5–6 are repo-relative:
+cannot be done here, and do the minimum there. Steps 4–5 are repo-relative:
 review and QA each repo's change against *its own* base, once per repo touched.
 1. Resolve the path (`bbs config workspace show`, else `grep '^RELATED_'
    .babysit/.env`). Unset path, or

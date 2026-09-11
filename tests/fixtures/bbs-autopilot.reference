@@ -699,18 +699,18 @@ EOF
     echo "landing_doc:     $state_landing_doc  (CLAUDE.md or AGENTS.md present — Phase-1 readiness)"
     echo
 
-    # The pack runs five archetype workflows. State signals only ever route to
-    # `builder` (the production-work archetype, which selects its own mode from
-    # the same signals); prototyper/sweeper/grower/maintainer are intent-driven
-    # and invoked by name. So state-based auto-routing is builder-or-nothing.
+    # The pack runs five archetype workflows. State signals route one-ticket
+    # work to `builder` and decomposed parents to `foreman`;
+    # prototyper/sweeper/grower/maintainer are intent-driven and invoked by
+    # name. Autopilot never executes the parent's project orchestration.
     best_workflow=""
     best_reason=""
     if [ "$state_origin_type" = "sub_ticket" ]; then
       best_workflow="builder"
       best_reason="ticket origin is sub_ticket → builder (child mode)"
     elif [ "$state_manifest_md" = "1" ]; then
-      best_workflow="builder"
-      best_reason="manifest.md exists → builder (orchestrate mode)"
+      best_workflow="foreman"
+      best_reason="manifest.md exists → foreman (project orchestration)"
     elif [ -n "$state_ticket" ] && [ "$state_plan_md" = "1" ]; then
       best_workflow="builder"
       best_reason="ticket has plan.md → builder (implement mode)"

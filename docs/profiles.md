@@ -221,17 +221,18 @@ REASON: primary checkout … is on 'feat/…', not base 'main'.
 
 ### Option A — `foreman` dispatches for you
 
-Needs [Orca](https://www.onorca.dev) as a hard dependency. Hand it several independent
-requests; it opens one visible worker per ticket, each in its own Orca terminal
-running autopilot end to end, and creates the ticket worktree itself before
-each dispatch — so it works the same on any repo, configured or not:
+Needs [Orca](https://www.onorca.dev) with orchestration enabled. Hand it a large
+project; it decomposes a parent requirement into a Task DAG, creates each ticket
+worktree, and supervises plan then build/QA autopilot Dispatches — so it works
+the same on any repo, configured or not:
 
 ```
 /bbs:foreman
 ```
 
-It also gates each design before any code is written, and can merge finished
-tickets onto your local base so you review the batch together.
+It gates each design before code, serializes the shared QA surface, runs
+integration QA for interacting tickets, and applies the configured finish
+policy in dependency order.
 
 ### Option B — dispatch them yourself
 

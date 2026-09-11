@@ -1050,7 +1050,7 @@ func routeWorkflow(r probeResult) (string, string) {
 	case r.originType == "sub_ticket":
 		return "builder", "ticket origin is sub_ticket → builder (child mode)"
 	case r.manifestMD == 1:
-		return "builder", "manifest.md exists → builder (orchestrate mode)"
+		return "foreman", "manifest.md exists → foreman (project orchestration)"
 	case r.ticket != "" && r.planMD == 1:
 		return "builder", "ticket has plan.md → builder (implement mode)"
 	case r.requirementMD == 1 && r.planMD == 0:

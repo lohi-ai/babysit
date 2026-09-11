@@ -1,7 +1,7 @@
 ---
 name: foreman
 description: >-
-  Attended orchestrator for parallel feature work — one visible coding-agent worker per ticket in its own Orca terminal, workers run autopilot, pane monitoring, design-checkpoint review with feedback, greenlight-by-/goal or human escalation. Requires Orca (https://www.onorca.dev). Use when the user hands you product requests to run in parallel while staying able to watch and intervene.
+  Autonomous Orca orchestrator for large projects made of multiple tickets or dependent features. Decomposes the project, owns branches and worktrees, supervises autopilot workers, coordinates per-ticket and integration QA, and applies the configured finish policy. Requires Orca and its orchestration skill; use autopilot directly for one serial ticket.
 ---
 
 Load and follow [the canonical Babysit instructions](../../.claude/skills/foreman/SKILL.md) in full.

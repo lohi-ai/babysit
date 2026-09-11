@@ -15,14 +15,13 @@ viết `/bbs:` của Claude Code trừ khi lệnh dành riêng cho Codex.
 
 **Bắt đầu bằng `autopilot`.** Nó là cả sản phẩm gói trong một lệnh, chạy được trên terminal bất kỳ và repo kiểu gì cũng được, và cũng chính là thứ mà mỗi worker song song chạy — nên mọi thứ bạn học ở đây đều xài lại được.
 
-**Rồi khi làm từng ticket một không còn đủ — `foreman`:**
+**Rồi khi công việc lớn hơn một ticket — `foreman`:**
 
 ```
-/bbs:foreman product-wide search on the home page
-/bbs:foreman rebuild the novel request flow
+/bbs:foreman rebuild the novel request flow across web, API, and migrations
 ```
 
-Mỗi yêu cầu một worker hiện hình, nằm trong terminal Orca riêng ở sidebar (mỗi worker chạy autopilot trọn gói — plan, code, review, QA — trong worktree mà foreman tạo), design được duyệt trước khi viết dòng code nào, và mọi ticket xong đều được merge lên base local để bạn review cả lô đang chạy trong một trình duyệt — rồi mới tạo PR. Đây là luồng nâng cao: nó cần [Orca](https://www.onorca.dev), và chỉ đáng công khi bạn có vài ticket độc lập để giao cùng lúc.
+Foreman tách dự án thành đồ thị phụ thuộc, tạo branch và worktree cho từng ticket, rồi giám sát mỗi autopilot assistant bằng vòng đời Run/Task/Dispatch của Orca. Nó duyệt plan trước khi build, điều phối QA dùng chung và QA tích hợp, phục hồi từ state trên đĩa cộng với Orca, rồi áp dụng finish policy theo thứ tự phụ thuộc. Luồng này cần [Orca](https://www.onorca.dev); một ticket tuần tự thì gọi autopilot thẳng.
 
 *babysit là việc bạn làm khi khỏi cần ai trông.* Nó chuộng mấy quyết định Claude tự làm tự kiểm được, hơn là mấy quyết định phải có người ngồi kè kè — đẻ ra cho các lần chạy theo lịch, pipeline được điều phối, và bất cứ thứ gì bạn muốn giao rồi đi chơi.
 
@@ -57,7 +56,7 @@ Từng bước:
 **Thêm khi cần:**
 
 - **`/bbs:review-pr`** (tức `/code-review`) — một chốt trước khi merge, vì team nhỏ không có người review thứ hai. Đây là lưới an toàn của bạn.
-- **`/bbs:foreman`** — luồng nâng cao: một worker hiện hình cho mỗi ticket (terminal Orca), nhiều ticket độc lập cùng lúc. Đụng tới khi vòng lặp trên đã quen tay và bạn có nguyên một mẻ để giao; thừa thãi với việc solo, tuần tự.
+- **`/bbs:foreman`** — luồng dự án tự vận hành: tách một requirement lớn, xếp lịch các ticket phụ thuộc trong Orca, sở hữu worktree, rồi gác QA và finish của cả dự án. Thừa thãi với một ticket tuần tự.
 
 ## Vì sao nó chạy được
 
@@ -278,18 +277,18 @@ Nhờ điều khoản thoát, vòng lặp kết thúc khi cần leo thang, thay 
 
 Không có `/goal`, gọi lại `/bbs:autopilot bs-ab123` vẫn nối tiếp từ checkpoint — chỉ là bạn phải tự tay đẩy nó qua ranh giới giữa các session.
 
-#### Nâng cao — `foreman`, chạy song song có người trông
+#### Nâng cao — `foreman`, orchestrator tự vận hành cho cả dự án
 
-Khi vòng lặp một-ticket đã quen tay, `foreman` chạy cả một mẻ. Từng ticket vẫn y hệt — mỗi worker chỉ là con autopilot bạn đã biết:
+Khi một requirement trải qua nhiều ticket, `foreman` sở hữu cả dự án. Từng worker vẫn chạy autopilot quen thuộc, còn foreman cấp checkout và điều phối DAG:
 
 ```
-/bbs:foreman <yêu cầu một dòng>     # mỗi yêu cầu một worker; lặp lại để giao thêm
-/bbs:foreman                        # attach/resume: điểm danh worker đang sống + board
+/bbs:foreman <requirement dự án lớn>  # tách việc, xếp lịch, kiểm chứng, finish
+/bbs:foreman                          # attach/resume từ ticket + state Orca
 ```
 
-Foreman mở một worker cho mỗi ticket — một terminal Orca bạn bấm ở sidebar để xem hoặc tự lái — theo dõi các pane, và giữ chốt chặn giữa design và build: khi một worker dừng ở bản bàn giao plan/prototype, foreman review design, góp ý, rồi hoặc bật đèn xanh cho build hoặc hỏi bạn khi tiếng nói của bạn có thể đổi hướng kết quả. Nó tự trả lời các câu hỏi máy móc của worker, chuyển cho bạn những câu cần bạn, kiểm chứng mọi verdict QA/review trên đĩa, và khép từng ticket lại đúng như repo của bạn đã cấu hình: `finish: land` merge nó lên base local để bạn review sản phẩm gộp trên dev server, `finish: pr` mở PR, còn mặc định thì để checkpoint cuối lại cho bạn.
+Foreman tạo một parent project và các child ticket có biên rõ, ghi cạnh phụ thuộc, rồi khởi động worker được giám sát qua Orca orchestration. Mỗi child có một Dispatch chỉ-plan, một design gate tự xử lý, rồi một Dispatch build/QA. Foreman kiểm verdict trên đĩa, tuần tự hóa test surface dùng chung, chạy QA tích hợp khi các ticket tương tác, sau đó mới áp dụng `finish: land|pr|review` theo thứ tự phụ thuộc. Message và Dispatch id của Orca thay cho việc dò chữ trong pane, nên coordinator khởi động lại vẫn resume được mà không cần nhớ hội thoại.
 
-**Một thứ phải có trước, nên nó mới là bài học thứ hai:** [Orca](https://www.onorca.dev) — thiếu là foreman dừng ngay. Bạn không cần cấu hình lại repo: foreman tự tạo worktree cho mỗi ticket trước khi giao việc, profile nào cũng vậy, nên các ticket song song không bao giờ giành nhau một checkout. Profile của bạn vẫn là thứ quyết định độ gắt. Với một ticket lẻ chạy tuần tự, nó chẳng hơn `/bbs:autopilot` chỗ nào.
+**Một thứ phải có trước, nên nó mới là bài học thứ hai:** [Orca](https://www.onorca.dev) với orchestration được bật. Foreman nạp guide orchestration đúng phiên bản đang cài, dừng rõ ràng nếu runtime thiếu, và tạo worktree cho từng child bất kể profile. Profile vẫn quyết định độ gắt và finish policy. Với một ticket lẻ chạy tuần tự, nó chẳng hơn `/bbs:autopilot` chỗ nào.
 
 ## Cách dùng
 
@@ -360,7 +359,7 @@ bbs ticket serve            # để trống: gộp mọi ticket đã xong (qa + 
 | Tôi muốn… | Skill |
 |-----------|-------|
 | Ship một feature đầu-tới-cuối từ một ý tưởng một dòng | `/bbs:autopilot "<idea>"` |
-| Giao nhiều yêu cầu chạy song song mà vẫn nhìn thấy được | `/bbs:foreman "<ý tưởng>"` |
+| Hoàn thành dự án lớn gồm nhiều ticket hoặc feature | `/bbs:foreman "<dự án>"` |
 | Vặn thử một ý tưởng trước khi quyết định làm | `/bbs:office-hours` |
 | Thiết kế một feature trong hệ UI có sẵn | `/bbs:design-ui` |
 | Biến một requirement thành `plan.md` (chưa code) | `/bbs:plan-draft` |

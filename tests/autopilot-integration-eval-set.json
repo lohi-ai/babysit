@@ -341,7 +341,7 @@
     "assert_stdout": {"route": "sub_ticket → builder .child mode."}
   },
   {
-    "name": "P29-builder-orchestrate-route",
+    "name": "P29-foreman-project-route",
     "ticket": "bs-pipe-29",
     "fixture": {"cache_key": "babysit-autopilot-minimal", "cmd": ["mkdir", "-p", "$DEST"]},
     "skip_claude": true,
@@ -351,7 +351,7 @@
       ["set-pointer", "manifest", "manifest.md"]
     ],
     "seed_files": {"manifest.md": "# Manifest\n- 001-foo.md\n- 002-bar.md"},
-    "assert_stdout": {"route": "manifest.md exists → builder .orchestrate mode."}
+    "assert_stdout": {"route": "manifest.md exists → foreman .project orchestration."}
   },
   {
     "name": "P31-explain-archetype-hint",

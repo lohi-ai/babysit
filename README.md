@@ -15,14 +15,13 @@ Claude Code `/bbs:` spelling unless a command is Codex-specific.
 
 **Start with `autopilot`.** It's the whole product in one command, it works in any terminal and any repo layout, and it's exactly what every parallel worker runs — so nothing you learn here is throwaway.
 
-**Then, when one at a time stops being enough — `foreman`:**
+**Then, when the job is bigger than one ticket — `foreman`:**
 
 ```
-/bbs:foreman product-wide search on the home page
-/bbs:foreman rebuild the novel request flow
+/bbs:foreman rebuild the novel request flow across web, API, and migrations
 ```
 
-One visible worker per request, each in its own Orca terminal (each running autopilot end-to-end — plan, code, review, QA — inside a worktree foreman created), a design review before any code is written, and every finished ticket merged onto your local base so you review the whole batch running in one browser — then you create the PRs. It's the advanced flow: it needs [Orca](https://www.onorca.dev), and it earns its keep only when you have several independent tickets to hand off at once.
+Foreman decomposes the project into a dependency graph, creates a branch and worktree per ticket, and supervises each autopilot assistant through Orca's native Run/Task/Dispatch lifecycle. It reviews plans before build, coordinates shared-surface and integration QA, recovers from disk plus Orca state, and applies the repo's finish policy in dependency order. It needs [Orca](https://www.onorca.dev); use autopilot directly for one serial ticket.
 
 *babysit is what you do when you don't need a babysitter.* It prefers decisions the agent can make and verify alone over decisions that need a human in the loop — built for scheduled runs, orchestrated pipelines, and anything you want to walk away from.
 
@@ -62,7 +61,7 @@ Step by step:
 **Add as you need it:**
 
 - **`/bbs:review-pr`** (a.k.a. `/code-review`) — a gate before merge, since there's no second reviewer on a small team. Your safety net.
-- **`/bbs:foreman`** — the advanced flow: one visible worker per ticket (an Orca terminal), several independent tickets at once. Reach for it once the loop above feels familiar and you have a batch to hand off; overkill for solo, serial work.
+- **`/bbs:foreman`** — the autonomous project flow: it decomposes a large requirement, schedules dependent tickets in Orca, owns their worktrees, and gates project QA and finish. Overkill for one serial ticket.
 
 ## Why it works
 
@@ -282,18 +281,18 @@ The escape clause means the loop terminates on escalation instead of grinding ag
 
 Without `/goal`, re-invoking `/bbs:autopilot bs-ab123` still resumes from the checkpoint — you just nudge it past session boundaries by hand.
 
-#### Advanced — `foreman`, the attended parallel flow
+#### Advanced — `foreman`, the autonomous project orchestrator
 
-Once the single-ticket loop is familiar, `foreman` runs a batch of them. Same work per ticket — each worker just runs the autopilot you already know:
+Once a requirement spans multiple tickets, `foreman` owns the whole project. Each worker still runs the autopilot you already know, but foreman supplies the checkout and coordinates the DAG:
 
 ```
-/bbs:foreman <one-line requirement>     # one worker per request; repeat for more
-/bbs:foreman                            # attach/resume: reconcile live workers + board
+/bbs:foreman <large project requirement>  # decompose, schedule, verify, finish
+/bbs:foreman                              # attach/resume from ticket + Orca state
 ```
 
-Foreman spawns a visible worker per ticket — an Orca terminal you click in the sidebar to watch or take over — monitors the panes, and owns the checkpoint between design and build: when a worker stops at its plan/prototype handoff, foreman reviews the design, gives feedback, and either greenlights the build or escalates to you when your voice could change the outcome. It answers workers' mechanical questions itself, relays the ones that need you, verifies every QA/review verdict on disk, and closes each ticket out the way your repo asked: `finish: land` merges it onto your local base so you review the combined product on the dev server, `finish: pr` opens the PR, and the default leaves checkpoint 4 to you.
+Foreman creates one parent project and bounded child tickets, records their dependency edges, and starts supervised workers through Orca orchestration. Every child gets a plan-only Dispatch, an autonomous design gate, then a build/QA Dispatch. Foreman verifies verdicts from disk, serializes the shared test surface, runs composed integration QA when tickets interact, and only then applies `finish: land|pr|review` in dependency order. Orca messages and Dispatch ids replace pane-text polling, so a restarted coordinator can resume without conversation memory.
 
-**One hard prerequisite, which is why it's the second thing to learn:** [Orca](https://www.onorca.dev) — foreman fails fast without it. You don't need to reconfigure the repo: foreman requests a worktree per dispatch whatever the profile says, so parallel tickets never fight over one checkout. Your profile keeps deciding rigor either way. On a single serial ticket it buys you nothing over `/bbs:autopilot`.
+**One hard prerequisite, which is why it's the second thing to learn:** [Orca](https://www.onorca.dev) with orchestration enabled. Foreman loads Orca's installed, version-matched orchestration guide, fails fast without that runtime, and creates a worktree per child regardless of profile. Your profile still decides rigor and finish policy. On a single serial ticket it buys you nothing over `/bbs:autopilot`.
 
 ## How to use it
 
@@ -363,7 +362,7 @@ bbs ticket serve            # bare: compose every finished ticket (qa + review D
 | I want to… | Skill |
 |------------|-------|
 | Ship a feature end-to-end from a one-line idea | `/bbs:autopilot "<idea>"` |
-| Run several feature requests in parallel while staying able to watch | `/bbs:foreman "<idea>"` |
+| Complete a large project made of multiple tickets or features | `/bbs:foreman "<project>"` |
 | Stress-test an idea before I commit to building it | `/bbs:office-hours` |
 | Design a feature inside the existing UI system | `/bbs:design-ui` |
 | Turn a requirement into `plan.md` (without coding it) | `/bbs:plan-draft` |

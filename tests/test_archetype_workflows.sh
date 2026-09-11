@@ -7,8 +7,8 @@
 #   1. All five workflow files exist and pass `bbs-autopilot lint-workflow`.
 #   2. Each has a **Final status** block with a STATUS line, a VERDICT line
 #      carrying that archetype's verdict vocabulary, and a NEXT line.
-#   3. Builder keeps its mode table (child/orchestrate/implement/build/verify)
-#      and the two verbatim CHILD_BRANCH constructions.
+#   3. Builder keeps only one-ticket modes and leaves all branch/worktree and
+#      decomposed-parent ownership to foreman.
 #   4. Code-touching workflows (builder, sweeper, maintainer) persist the QA
 #      verdict with `bbs-ticket set-verdict --skill qa` — the PR gate reads it.
 #   5. `bbs-autopilot explain` routes a committed non-base branch to builder
@@ -64,7 +64,6 @@ check_workflow maintainer 'AUDITED | HARDENED | FIXED'
 
 B="$WF_DIR/builder.md"
 if grep -q '^| \*\*child\*\*' "$B" \
-   && grep -q '^| \*\*orchestrate\*\*' "$B" \
    && grep -q '^| \*\*implement\*\*' "$B" \
    && grep -q '^| \*\*build\*\*' "$B" \
    && grep -q '^| \*\*verify\*\*' "$B"; then
@@ -83,11 +82,11 @@ else
   fail "builder-cross-repo"
 fi
 
-if grep -qF 'CHILD_BRANCH="feat/${TICKET}/${POS}_${CHILD}_${SLUG}"' "$B" \
-   && grep -qF 'CHILD_BRANCH="feat/${PARENT_ID}/${POS}_${TICKET}_${SLUG}"' "$B"; then
-  ok "builder-child-branch-verbatim"
+if ! grep -q 'CHILD_BRANCH=' "$B" \
+   && grep -q 'branch/worktree foreman prepared' "$B"; then
+  ok "builder-has-no-topology"
 else
-  fail "builder-child-branch-verbatim"
+  fail "builder-has-no-topology"
 fi
 
 # ── code-touching workflows persist the qa verdict ──────────────────
@@ -125,7 +124,7 @@ T="$(mktemp -d)"
 ) && ok "explain-routes-verify-mode" || fail "explain-routes-verify-mode"
 rm -rf "$T"
 
-# ── explain routes each builder mode (child/orchestrate/implement/build) ──
+# ── explain routes one-ticket builder modes and parent projects ───────
 # The verify-mode route above was the only builder mode with explain coverage;
 # the other four routed silently, which is how v1.47.0 shipped a sub_ticket
 # (child-mode) routing regression unnoticed. Routing precedence is
@@ -155,7 +154,7 @@ seed_plan()        { bbs-ticket init >/dev/null 2>&1; local p; p="$(bbs-ticket p
 seed_requirement() { bbs-ticket init >/dev/null 2>&1; local r; r="$(bbs-ticket path requirement --write 2>/dev/null)"; [ -n "$r" ] && echo "# req" > "$r"; }
 
 route_mode_test child       bs-child-1  'builder (child mode)'       seed_sub_ticket
-route_mode_test orchestrate bs-orch-1   'builder (orchestrate mode)' seed_manifest
+route_mode_test project     bs-orch-1   'foreman (project orchestration)' seed_manifest
 route_mode_test implement   bs-impl-1   'builder (implement mode)'   seed_plan
 route_mode_test build       bs-build-1  'builder (build mode)'       seed_requirement
 

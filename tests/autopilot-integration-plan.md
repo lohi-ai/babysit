@@ -1,10 +1,11 @@
-# Autopilot orchestrator — integration test plan
+# Autopilot assistant — integration test plan
 
 > **Flow migration (v1.47.0).** The pack now runs **one workflow per archetype**
 > — `prototyper`, `builder`, `sweeper`, `grower`, `maintainer`. The old
 > `build` / `plan` / `implement` / `quality` / `orchestrate` / `sub-implement`
 > workflows were folded into `builder`, which selects an internal **mode**
-> (child / orchestrate / implement / build / verify) from ticket state. Because
+> (child / implement / build / verify) from ticket state. A decomposed parent
+> routes to `foreman`, which owns project orchestration. Because
 > `builder` accepts all those states, its frontmatter `needs-state` is permissive
 > and the **per-mode prerequisite gating moved from the Assign phase into
 > `builder`'s runtime mode-selection** (the workflow's mode table + stop
@@ -15,8 +16,8 @@
 
 Tracks the scenarios that exercise the Parse → Probe → Assign → Dispatch →
 Verify-post pipeline. Each row is a black-box invocation of `/bbs:autopilot`;
-assertions are made against the pinned BLOCKED template, the dispatched workflow
-(now always `builder` for state-routed work), and the decision log.
+assertions are made against the pinned BLOCKED template, the selected worker or
+foreman route, and the decision log.
 
 Runner: manual `/bbs:autopilot` invocation against a fixture ticket.
 Decision log: `~/.babysit/analytics/decisions.jsonl`.
@@ -44,7 +45,7 @@ Decision log: `~/.babysit/analytics/decisions.jsonl`.
 | 19 | `--dry-run` parity — block case | `/bbs:autopilot bs-ab123 --workflow=builder --dry-run` | `plan.md` absent | prints pinned BLOCKED template exactly as the live run would (SUMMARY: `plan_md is absent (needs present)` or equivalent) | no state mutation; re-running without `--dry-run` produces identical BLOCKED verdict |
 | 20 | `bbs autopilot explain` (no arg, branch-derived ticket) | `bbs autopilot explain` on a feat/ branch | any | uses `bbs slug env` to derive ticket; state + workflow table print against derived ticket | output header shows derived ticket id; probe values match a direct `bbs autopilot explain bs-xxx` call |
 | 21 | Sub-ticket `origin.type` surfaced to explain | `bbs autopilot explain bs-ab123` | `bbs ticket init --origin-type sub_ticket --parent <p> --seed <s> --plan <p>` seeded | state section prints `origin_type:     sub_ticket`; recommended-workflow line reads `builder — ticket origin is sub_ticket → builder (child mode)` | regression guard — any rename of the `origin.type` JSON path or `state_origin_type` probe var breaks this row |
-| 22 | Manifest presence surfaced to explain | `bbs autopilot explain bs-ab123` | `manifest.md` seeded at ticket root + `pointers.manifest` set | state section prints `manifest_md:     1`; recommended-workflow line reads `builder — manifest.md exists → builder (orchestrate mode)` | regression guard — decomposed parents must route to `builder` orchestrate mode, not a plain implement |
+| 22 | Manifest presence surfaced to explain | `bbs autopilot explain bs-ab123` | `manifest.md` seeded at ticket root + `pointers.manifest` set | state section prints `manifest_md:     1`; recommended-workflow line reads `foreman — manifest.md exists → foreman (project orchestration)` | regression guard — decomposed parents must leave autopilot and route to foreman, not a plain implement |
 
 ## Scoring rubric
 

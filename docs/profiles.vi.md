@@ -223,17 +223,17 @@ REASON: primary checkout … is on 'feat/…', not base 'main'.
 
 ### Cách A — để `foreman` giao việc hộ
 
-Cần [Orca](https://www.onorca.dev), phụ thuộc cứng. Đưa cho nó vài yêu cầu độc lập; nó
-mở mỗi ticket một worker nhìn thấy được, mỗi worker trong terminal Orca riêng
-chạy autopilot đầu-tới-cuối, và tự tạo worktree cho ticket trước mỗi lần giao — nên
-nó chạy y hệt nhau trên mọi repo, đã cấu hình hay chưa:
+Cần [Orca](https://www.onorca.dev) với orchestration được bật. Đưa cho nó một
+dự án lớn; nó tách requirement cha thành Task DAG, tạo worktree cho từng ticket,
+rồi giám sát các Dispatch autopilot plan và build/QA — nên nó chạy y hệt nhau
+trên mọi repo, đã cấu hình hay chưa:
 
 ```
 /bbs:foreman
 ```
 
-Nó cũng gác cửa thiết kế trước khi có dòng code nào, và có thể merge các ticket
-đã xong lên base ở máy để bạn review cả lô cùng lúc.
+Nó gác design trước khi có code, tuần tự hóa QA surface dùng chung, chạy QA tích
+hợp cho các ticket tương tác, rồi áp dụng finish policy theo thứ tự phụ thuộc.
 
 ### Cách B — tự giao việc
 

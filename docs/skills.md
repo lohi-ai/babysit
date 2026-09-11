@@ -21,7 +21,8 @@ of a product-building team — pick by the shape of the work, not the job title.
 | Workflow | Use when | Stops at |
 |----------|----------|----------|
 | `/bbs:autopilot prototyper "<idea>"` | Validate a risky assumption with a throwaway spike | learning verdict |
-| `/bbs:autopilot builder "<requirement>"` | Build new production work (auto-selects build/plan/implement/orchestrate/verify) | QA-verified branch |
+| `/bbs:autopilot builder "<requirement>"` | Build one production ticket (auto-selects build/implement/child/verify) | QA-verified local commit |
+| `/bbs:foreman "<project>"` | Decompose and orchestrate a multi-ticket project through Orca | Project-wide QA and configured finish |
 | `/bbs:autopilot sweeper` | Simplify / unship / optimize without changing behavior | QA-verified branch |
 | `/bbs:autopilot grower "<metric>"` | Rank or scaffold a growth experiment | ranked plan or scaffolded variant |
 | `/bbs:autopilot maintainer` | Audit security/deps/reliability/scale, or root-cause a bug | hardened/fixed branch |

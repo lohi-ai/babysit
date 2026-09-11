@@ -12,10 +12,10 @@ it was started in and never manages its own git topology: no branch cutting,
 no worktrees, no push, no land, no PR. It commits its own work locally — the
 verdict gates and crash-resume need durable commits — and the human closes
 out. When a run needs isolation or autonomy (parallel tickets, worktrees,
-landing, PRs), that is `foreman`'s job: foreman creates the worktree, starts
-autopilot inside it, and owns the finish policy. The one exception is
-builder's `orchestrate` mode, where a decomposed parent cuts its children's
-branches — that is dispatching sub-tickets, not relocating itself.
+landing, PRs), that is `foreman`'s job: foreman decomposes the project, creates
+the worktrees, starts one autopilot assistant per ticket, coordinates QA, and
+owns the finish policy. There is no parent/orchestrate exception inside
+autopilot.
 ## Harness and terminal portability
 - Follow [the preamble](../references/preamble.md) and
   [Auto-Decision Framework](../references/auto-decision-framework.md).
@@ -62,7 +62,9 @@ branches — that is dispatching sub-tickets, not relocating itself.
    from free text, list open decisions explicitly instead of papering over
    them ([references/finding-unknowns.md](../references/finding-unknowns.md)).
    Stop here on `--stop-after=requirement`.
-3. Pick the archetype workflow ([references/archetypes.md](../references/archetypes.md)):
+3. A parent carrying `manifest.md` is a multi-ticket project: stop init and
+   hand it to `foreman`; never dispatch or merge its children here. Otherwise
+   pick the archetype workflow ([references/archetypes.md](../references/archetypes.md)):
    named one wins; else route by the shape of the work; ambiguous or ordinary
    production work → `builder`. Several *independent* requirements in one
    invocation → don't batch here: autopilot runs one ticket end-to-end;
@@ -298,10 +300,9 @@ flag.
 - Git scope is exactly: `git init` on an unborn repo, and committing the
   work on the current branch. Never push, land, merge-base, or open a PR,
   and never cut a branch for itself — close-out is the human's
-  (`create-pr`) or the dispatching foreman's (its finish policy). The sole
-  branch exception is builder `orchestrate` mode cutting its children's
-  branches. Step skills are infra-isolated — they edit the working
-  tree and never commit; commit their output yourself at each milestone.
+  (`create-pr`) or the dispatching foreman's (its finish policy). Step skills
+  are infra-isolated — they edit the working tree and never commit; commit
+  their output yourself at each milestone.
 - `INVOKER=developer`: lead every stop — handoff, `NEEDS_CONTEXT`, final
   status — with one plain-language sentence saying what happened and the
   exact next command to paste; a non-technical user must be able to keep
