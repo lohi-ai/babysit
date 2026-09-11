@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Autopilot Runtime Architecture",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/lohi-ai/babysit.git",
+      "provider": "github",
+      "link_mode": "web",
+      "revision": "c563245527d8f17d3702f22454784c29c1d1d66d"
+    },
+    "viewBox": [1300, 620],
+    "views": [
+      { "id": "runtime", "label": "Primary runtime path", "focus": ["invoker", "autopilot", "runtime", "skills", "worker", "evidence", "readiness", "delivery"], "note": "Observe durable state, work through a scoped skill, verify evidence, then cross an authorization boundary." },
+      { "id": "recovery", "label": "Recovery and trust", "focus": ["autopilot", "runtime", "ticket", "git", "evidence", "readiness"], "note": "Disk is the source of truth; a successful snapshot is information, not permission to mutate." }
+    ]
+  },
+  "components": [
+    { "id": "invoker", "type": "external", "label": "Invoker authorization", "sublabel": "human or orchestrator", "tag": "intent + limits", "pos": [25, 250], "size": [150, 64], "sources": [{ "path": "docs/autopilot-design/architecture.md", "line": 37, "end_line": 51, "label": "ownership" }] },
+    { "id": "harness", "type": "external", "label": "Harness adapter", "sublabel": "Codex · Claude Code · OMP", "tag": "observed capabilities", "pos": [220, 95], "size": [150, 60], "sources": [{ "path": ".claude/skills/autopilot/SKILL.md", "line": 8, "end_line": 23, "label": "portability" }] },
+    { "id": "autopilot", "type": "backend", "label": "Autopilot work loop", "sublabel": "judgment + orchestration", "tag": "primary path", "pos": [220, 250], "size": [150, 64], "sources": [{ "path": ".claude/skills/autopilot/SKILL.md", "line": 5, "end_line": 8, "label": "goal proxy" }] },
+    { "id": "runtime", "type": "backend", "label": "bbs runtime contracts", "sublabel": "snapshot · attempts", "tag": "read-only packet", "pos": [415, 250], "size": [150, 64], "sources": [{ "path": "docs/autopilot-design/contracts.md", "line": 7, "end_line": 21, "label": "CLI surface" }] },
+    { "id": "ticket", "type": "database", "label": "Durable ticket state", "sublabel": "artifacts · locks", "tag": "cold-resume source", "pos": [415, 95], "size": [150, 60], "sources": [{ "path": "docs/autopilot-design/contracts.md", "line": 67, "end_line": 91, "label": "durable layout" }] },
+    { "id": "git", "type": "database", "label": "Git & worktree", "sublabel": "code identity + QA surface", "tag": "local repository", "pos": [415, 440], "size": [150, 60], "sources": [{ "path": "docs/autopilot-design/architecture.md", "line": 75, "end_line": 83, "label": "runtime surfaces" }] },
+    { "id": "skills", "type": "backend", "label": "Scoped domain skill", "sublabel": "plan · build · debug", "tag": "bounded work", "pos": [610, 250], "size": [150, 64], "sources": [{ "path": ".claude/skills/autopilot/SKILL.md", "line": 152, "end_line": 159, "label": "step skills" }] },
+    { "id": "worker", "type": "backend", "label": "Independent gate worker", "sublabel": "review-pr then QA", "tag": "serialized writer", "pos": [800, 250], "size": [150, 64], "sources": [{ "path": ".claude/skills/autopilot/SKILL.md", "line": 180, "end_line": 208, "label": "gate workers" }] },
+    { "id": "evidence", "type": "database", "label": "Attempt & evidence", "sublabel": "revision-bound gate results", "tag": "accepted proof", "pos": [800, 440], "size": [150, 60], "sources": [{ "path": "docs/autopilot-design/contracts.md", "line": 93, "end_line": 140, "label": "typed evidence" }] },
+    { "id": "readiness", "type": "security", "label": "Readiness & hooks", "sublabel": "freshness + policy recheck", "tag": "authorization boundary", "pos": [975, 440], "size": [150, 64], "sources": [{ "path": "docs/autopilot-design/architecture.md", "line": 37, "end_line": 51, "label": "ownership" }] },
+    { "id": "delivery", "type": "external", "label": "Finish target", "sublabel": "review · land · PR", "tag": "external mutation", "pos": [1150, 440], "size": [145, 64], "sources": [{ "path": ".claude/skills/autopilot/SKILL.md", "line": 246, "end_line": 264, "label": "finish policy" }] }
+  ],
+  "boundaries": [
+    { "kind": "region", "label": "Autonomous runtime", "wraps": ["autopilot", "runtime", "skills", "worker"] },
+    { "kind": "security-group", "label": "Authoritative local state — atomic records and exact code identity", "wraps": ["ticket", "git", "evidence"] },
+    { "kind": "security-group", "label": "Mutation boundary — recheck authorization before finish", "wraps": ["readiness"] }
+  ],
+  "connections": [
+    { "id": "intent", "from": "invoker", "to": "autopilot", "label": "1 · intent, stops, authorization", "labelDy": 58, "variant": "emphasis" },
+    { "id": "capabilities", "from": "harness", "to": "autopilot", "label": "observed tools", "labelDy": -58, "variant": "dashed" },
+    { "id": "observe", "from": "autopilot", "to": "runtime", "label": "2 · observe context + obligations", "labelDy": 58, "variant": "emphasis" },
+    { "id": "ticket-read", "from": "runtime", "to": "ticket", "fromSide": "top", "toSide": "bottom" },
+    { "id": "git-read", "from": "runtime", "to": "git", "fromSide": "bottom", "toSide": "top" },
+    { "id": "work", "from": "runtime", "to": "skills", "label": "3 · permitted work", "labelDy": 58, "variant": "emphasis" },
+    { "id": "verify", "from": "skills", "to": "worker", "label": "4 · review, repair, QA", "labelDy": 58, "variant": "emphasis" },
+    { "id": "proof", "from": "worker", "to": "evidence", "label": "5 · record final revision", "labelDy": 24, "variant": "emphasis", "fromSide": "bottom", "toSide": "top" },
+    { "id": "recheck", "from": "evidence", "to": "readiness", "label": "6 · fresh evidence", "labelDy": -64, "variant": "emphasis" },
+    { "id": "finish", "from": "readiness", "to": "delivery", "label": "7 · configured action", "labelDy": 58, "variant": "security" }
+  ],
+  "cards": [
+    { "dot": "cyan", "title": "Runtime and recovery", "items": ["The model interprets intent and selects work; the CLI returns facts, obligations, and required artifact references.", "Cold resume rebuilds from ticket files, workflow, Git, attempts, and evidence—not a short model summary."] },
+    { "dot": "rose", "title": "Evidence and authority", "items": ["Gate evidence binds the final inspected tree, test surface, producer, and limitations; QA fixes invalidate review and mutating gates serialize.", "Snapshot success is never release permission. Hooks, land, and PR re-evaluate fresh evidence and current authorization at mutation time."] }
+  ]
+}

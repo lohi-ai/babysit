@@ -57,16 +57,104 @@ status prints.
    requirement, plan, manifest, or branch work at all *and* no archetype was
    named — a named archetype is direction enough to proceed.
 4. Seed the plan when the routed mode needs one (build mode, size above XS):
-   run `plan-draft` now — `plan.md` on disk is what a crashed loop recovers
-   from. User-facing work routes through `design-ui` inside `plan-draft`;
-   make sure that ran, so the spec and prototype exist *before* the `/goal`
-   handoff — design is reviewed before implementation, not discovered after
-   it. Stop here on `--stop-after=plan`. Size relaxes *only this step*: an
-   XS change still gets the step-2 ticket and the verdict gates — there is no
-   inline path, and in a worktree run nothing is ever committed in the primary
-   checkout (code reaches it only via `bbs ticket merge-base`/`switch`).
+   run `plan-draft` through the planner subagent policy below — `plan.md` on
+   disk is what a crashed loop recovers from. User-facing work routes through
+   `design-ui` inside `plan-draft`; make sure that ran, so the spec and
+   prototype exist *before* the `/goal` handoff — design is reviewed before
+   implementation, not discovered after it. Stop here on `--stop-after=plan`.
+   Size relaxes *only this step*: an XS change still gets the step-2 ticket and
+   the verdict gates — there is no inline path, and in a worktree run nothing
+   is ever committed in the primary checkout (code reaches it only via
+   `bbs ticket merge-base`/`switch`).
 5. Hand the work to the harness's work loop (below). Init never executes
    workflow steps; without `/goal`, transition directly to execution.
+
+### Planner subagent (`--planner`, `--planner-effort`)
+Planning is a fresh-context job when native delegation is available. These
+flags select a native model/profile and its reasoning effort; they do **not**
+select an external harness (`--agent` on `bbs autopilot spawn-*` still means
+`claude`, `codex`, `grok`, or `omp`).
+- `--planner <model>` — use that exact advertised model or profile for
+  `plan-draft` and its nested `design-ui` prototype work.
+- `--planner-effort <effort>` — use that exact advertised reasoning effort.
+- A missing flag is automatic: an explicit model with no effort gets the
+  auto-selected effort, and an explicit effort with no model gets the
+  auto-selected model. Explicit values always win. If the native tool cannot
+  honor an explicit value, report `BLOCKED` naming the unsupported value; do
+  not silently substitute it.
+
+For automatic selection, inspect the native subagent tool's advertised models,
+profiles, and effort selector first; never invent an ID. Classify from the
+requirement and repo evidence: **simple** means an obvious local docs/config or
+tiny isolated change with no new contract or state; **critical/hard** means
+security, auth, money, irreversible/live-data migration, distributed
+concurrency, or a cross-system architecture decision; everything else is
+**normal**. Weak evidence stays normal. Apply this routing:
+
+| Harness | Simple | Normal (default) | Critical / hard |
+|---------|--------|------------------|-----------------|
+| Codex | `gpt-5.6-terra`, `high` | `gpt-5.6-sol`, `high` | `gpt-6-astra`, `high` |
+| Claude Code | `opus`, `high` | `opus`, `high` | advertised Fable 5.1 model/profile, `high` |
+| OMP | `default` profile, `high` | `slow` profile, `high` | `slow` profile, `high` |
+
+For an automatic choice whose preferred entry is not advertised, use the
+nearest capable advertised fallback in that harness and record the limitation;
+if no native model/profile selector is exposed, use an inherited/default child.
+If native delegation itself is unavailable or forbidden, run the real
+`plan-draft` skill in-session and record why. Automatic task-tier/model routing
+is a Taste decision: log the tier, selected model/profile, effort (or
+unsupported), and evidence through the Auto-Decision Framework.
+
+**OMP launch rule:** OMP's bundled general-purpose `task` subagent is bound to
+its `@task` model role and its task tool does not expose a per-child model
+selector. Do not use that child for a routed `default` or `slow` planner. Start
+one fresh OMP process in the target repo instead, activating the selected role
+with `omp --model @default|@slow --thinking <effort> --auto-approve -p
+<assignment>` (use the exact explicit model in place of `@<role>` when the user
+named one). Add an isolated `--session-dir` and a reasonable `--max-time` bound
+so the parent can verify the effective model/effort and cannot wait forever.
+The assignment invokes `/plan-draft` with the already-initialized ticket
+context; never invoke `/autopilot` in the child, which would recurse and choose
+another planner. `--slow <model>` configures the role; it does not activate it,
+so it is not a substitute for `--model @slow`. Preserve OMP's normal
+configuration root; do not use `PI_CODING_AGENT_DIR`, which replaces that root.
+Treat this process as the one planner child, wait for it, and validate its disk
+artifacts exactly like a native-tool child. A terminal final response plus the
+expected `DONE` verdict and artifacts is completion; if that exact child stays
+resident afterward, terminate only its verified PID and record the runtime
+concern rather than launching a replacement planner. If the launcher rejects an
+automatic role, apply the advertised fallback rule above; if it rejects an
+explicit value, report `BLOCKED`.
+
+Before dispatch, persist the resolved values so cold resume cannot choose a
+different planner:
+```bash
+bbs ticket set-pointer planner_model "<resolved-model-or-profile>"
+bbs ticket set-pointer planner_effort "<resolved-effort-or-unsupported>"
+```
+On resume, those pointers win unless the new invocation explicitly supplies a
+planner flag; an explicit change overwrites the affected pointer and re-plans
+only when the plan has not already passed its checkpoint. Never silently
+replace an accepted plan because a later invocation names a different planner.
+
+Dispatch exactly one planner and wait; the parent must not edit the shared
+checkout meanwhile. Give the child a complete bounded assignment: the real
+`plan-draft` skill reference and resolved `SKILL.md` path; ticket id and
+absolute repo/worktree/ticket paths; requirement and checkpoint paths; the
+selected model/profile and effort; permission to write the plan, design,
+prototype-only route/artifacts, pointers, handoff, and `plan-draft` verdict;
+and no implementation, git, push, or close-out authority. The child loads and
+executes `plan-draft`, which invokes `design-ui` when required; do not split
+those two writers across parallel children. Require its status body and exact
+artifact paths.
+
+After it returns, inspect the artifacts, confirm the result belongs to this
+attempt, and read `bbs ticket verdict-status --skill plan-draft`. Missing or
+inadequate output is not a plan: retry once with the next stronger advertised
+automatic option, or report `BLOCKED` for an explicit planner. Record the child
+handle, selected model/profile, effort, artifact paths, and result in the
+checkpoint/handoff. `--reviewer`, when supplied, runs only after this creation
+step and remains an independent review of the completed plan and prototype.
 ## The work loop (`/goal`)
 On a harness that supports `/goal`, `/goal <condition>` arms a Stop hook
 that blocks stopping until the condition holds. Autopilot cannot arm it

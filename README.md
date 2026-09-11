@@ -51,6 +51,11 @@ Step by step:
 **The human checkpoints — where you stay in control.** Autopilot only pauses at the moments that are actually yours to own; pick which one by flag:
 
 - `--stop-after=plan` — approve the approach before any code is written.
+- `--planner <model>` / `--planner-effort <effort>` — delegate plan and UI
+  prototype creation to that native model/profile and reasoning effort. Omit
+  either value to let autopilot select it from task difficulty and the models
+  the current harness actually advertises. On OMP, `default` and `slow` select
+  its configured model roles; normal work defaults to `slow`.
 - `--auto` — skip the paste; spawn `/goal` on the agent you started in (Grok stays Grok, Claude stays Claude).
 - `--reviewer <agent>` — spawn that agent to review the plan and prototype. Any registered agent — `claude`, `omp`, `grok`, `codex` — and never the one building. Omit it: no agent review. With `--auto`, approve starts `/goal` on the start agent.
 - `--verify` — grade the finished code in a fresh context: once the work is committed, review and QA run in a separate process that never saw the diff being written, and only its verdict files come back. Same agent by default — forgetting *why* the code looks like that is the point; add `--agent` to grade on a different model too.
@@ -254,7 +259,7 @@ The commands that move work between a worktree and the shared surface — `merge
 /bbs:autopilot "add a settings page with dark mode toggle"
 ```
 
-Autopilot inits the ticket — requirement, plan, branch — then stops and prints a `/goal` block as its **last message**. That block is the one thing you do next: **copy it, paste it back into the same agent, and walk away.** The goal session then writes the code, reviews it, runs QA, and pushes the branch. Open the PR yourself after review. Pass `--auto` to skip the paste: `/goal` runs on the same agent you started in. Pass `--reviewer codex` (or any other registered agent) if you want a second agent to review the plan first — it has to be a different agent than the one building, so the read is actually independent.
+Autopilot inits the ticket — requirement, plan, branch — then stops and prints a `/goal` block as its **last message**. That block is the one thing you do next: **copy it, paste it back into the same agent, and walk away.** The goal session then writes the code, reviews it, runs QA, and pushes the branch. Open the PR yourself after review. Pass `--planner gpt-5.6-sol --planner-effort high` to choose the native model that creates the plan and UI prototype; omit those flags and autopilot selects from task difficulty and the current harness's advertised capabilities. Pass `--auto` to skip the paste: `/goal` runs on the same agent you started in. Pass `--reviewer codex` (or any other registered agent) if you want a second agent to review the completed plan — it has to be a different agent than the one building, so the read is actually independent.
 
 > **The handoff looks like this** — autopilot ends with a plain-language preamble, then the block to copy:
 >
@@ -323,7 +328,7 @@ When a stage finishes, the ticket gets a `Next:` line — literally what to do n
 /bbs:autopilot                       # resume — picks up from the current branch's checkpoint
 ```
 
-That's the whole surface. Five flags extend it — `--stop-after=requirement|plan` to stop at an earlier checkpoint, `--auto` to spawn `/goal` on the agent you started in, `--reviewer <agent>` to add an independent agent review of the plan, `--verify` to move review and QA into a fresh-context process that never saw the code being written, and `--mode=worktree` (or `--mode=branch`) to isolate this one ticket, which no profile does for you. Verb tokens don't exist.
+That's the whole surface. Seven flags extend it — `--stop-after=requirement|plan` to stop at an earlier checkpoint, `--planner <model>` and `--planner-effort <effort>` to route plan/prototype creation, `--auto` to spawn `/goal` on the agent you started in, `--reviewer <agent>` to add an independent agent review of the plan, `--verify` to move review and QA into a fresh-context process that never saw the code being written, and `--mode=worktree` (or `--mode=branch`) to isolate this one ticket, which no profile does for you. Verb tokens don't exist.
 
 ### Working tickets in parallel (worktree mode)
 
