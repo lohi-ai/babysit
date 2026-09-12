@@ -6,16 +6,18 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/reallongnguyen/babysit/internal/agent"
-	"github.com/reallongnguyen/babysit/internal/config"
-	"github.com/reallongnguyen/babysit/internal/foreman"
-	"github.com/reallongnguyen/babysit/internal/identity"
-	"github.com/reallongnguyen/babysit/internal/orca"
+	"math"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/reallongnguyen/babysit/internal/agent"
+	"github.com/reallongnguyen/babysit/internal/config"
+	"github.com/reallongnguyen/babysit/internal/foreman"
+	"github.com/reallongnguyen/babysit/internal/identity"
+	"github.com/reallongnguyen/babysit/internal/orca"
 )
 
 // Watchdog for a foreman that stopped moving — and a metronome for one that
@@ -148,7 +150,7 @@ func watchOptsFrom(kv map[string]string) (watchOpts, error) {
 			return nil
 		}
 		n, err := strconv.Atoi(v)
-		if err != nil || n <= 0 {
+		if err != nil || n <= 0 || int64(n) > math.MaxInt64/int64(time.Second) {
 			return fmt.Errorf("foreman watch: --%s needs a positive number of seconds, got '%s'", key, v)
 		}
 		*dst = time.Duration(n) * time.Second

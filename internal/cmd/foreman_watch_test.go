@@ -451,7 +451,7 @@ func TestWatchOptsDefaultsAndValidation(t *testing.T) {
 		t.Errorf("flags not applied: %+v", o)
 	}
 	for _, bad := range []map[string]string{
-		{"idle": "0"}, {"idle": "soon"}, {"status-interval": "0"}, {"lines": "-1"}, {"max-nudges": "-1"}, {"nudge": "  "},
+		{"idle": "0"}, {"idle": "soon"}, {"status-interval": "0"}, {"status-interval": "9999999999"}, {"lines": "-1"}, {"max-nudges": "-1"}, {"nudge": "  "},
 	} {
 		if _, err := watchOptsFrom(bad); err == nil {
 			t.Errorf("expected an error for %v", bad)
