@@ -121,15 +121,39 @@ branch, worktree, Orca task/dispatch ids, and verdicts. Persist ids immediately
 after each successful external mutation. Terminal handles are routing metadata,
 never recovery identity.
 
-At every tick, re-adopt the current session idempotently, heartbeat the foreman
-record, re-read `bbs foreman inbox "$FOREMAN_ID"`, parent/child relations, and
-control state before reading Orca mail. Repeat the inbox read after every
-Delivery or wait timeout and immediately before finish. `paused` or `cancelled`
-means no new dispatch; leave current files and commits in place. Never act on
-remembered status. Initialize the harness's native task list at entry from
-the parent, children, and DAG (rebuild it from ticket + Orca state on cold
-resume), and keep it mirrored at every tick; disk and Orca state remain
+Every wake runs the reconcile tick in **Status reconciliation** below — never
+act on remembered status. Initialize the harness's native task list at entry
+from the parent, children, and DAG (rebuild it from ticket + Orca state on
+cold resume), and keep it mirrored at every tick; disk and Orca state remain
 authoritative.
+
+## Status reconciliation
+
+A "check status" nudge, a bounded `check --wait` timeout, a `watch --once`
+refresh, and a dashboard wake all run the same idempotent reconcile tick —
+a full project reconciliation, never a liveness-only reply. One tick:
+
+1. re-adopt the current session idempotently and heartbeat the foreman
+   record, then re-read `bbs foreman inbox "$FOREMAN_ID"`, control state, and
+   parent/child relations before reading Orca mail. Repeat the inbox read
+   after every Delivery or wait timeout and immediately before finish.
+   `paused` or `cancelled` means no new dispatch; leave current files and
+   commits in place.
+2. Bind the recorded Orca Run and read the live state of every project Task,
+   its current Dispatch, and its supervised worker.
+3. Cross-check each child against disk: checkpoint freshness, current
+   `review-pr`/`qa` verdicts, `bbs ticket readiness --json`, and the finish
+   policy. Never infer completion from worker prose or a `worker_done`
+   message alone.
+4. Report the status of every project Task and supervised worker — the full
+   TICKETS/INTEGRATION_QA snapshot, not only state changes.
+5. Dispatch only newly ready work, retry only proven failed/stopped
+   Dispatches, and release settled workers not immediately reused. Then stay
+   active for the next bounded check: a tick with work remaining is not a
+   terminal outcome.
+6. When every required ticket and integration gate passes, run the Finish
+   and cleanup sequence, report the user-facing terminal result, and only
+   then write the terminal `done` heartbeat described there.
 
 ## Persistent goal and long-horizon loop
 
@@ -326,6 +350,20 @@ failure/hold, keep the worktree recoverable. Never use `--force`, broad
 worktree removal, or terminal-close
 commands in place of Orca `worker-release`.
 
+The terminal write is the `done` heartbeat, and it is last:
+
+```bash
+bbs foreman heartbeat "$FOREMAN_ID" --status done
+```
+
+`Record.Status == done` is the only completion signal the external watcher
+consumes — it drops the foreman from the watch set on that value alone.
+Write it only after every durable gate, the finish handler, worker release,
+and eligible worktree cleanup have all succeeded; the record never completes
+from prose, a `worker_done` message, or a printed status block. A blocked,
+paused, or cancelled project never writes `done` — it reports `BLOCKED` and
+keeps its ordinary heartbeat.
+
 ## Resume reconciliation
 
 Cold resume must be sufficient with no conversation memory:
@@ -349,10 +387,13 @@ Cold resume must be sufficient with no conversation memory:
 ## Output
 
 Report only state changes, escalations, and terminal evidence; normal worker
-activity lives in Orca and the task board.
+activity lives in Orca and the task board. One exception: a status wake
+("check status" nudge or an explicit status request) always prints the full
+snapshot — every project Task and supervised worker — even when nothing
+changed, because the nudge exists to learn whether the foreman is wedged.
 
 ```text
-STATUS: DONE | DONE_WITH_CONCERNS | NEEDS_CONTEXT | BLOCKED
+STATUS: DONE | DONE_WITH_CONCERNS | NEEDS_CONTEXT | BLOCKED | IN_PROGRESS
 VERDICT: ORCHESTRATED(<completed>/<total>)
 PROJECT: <parent>  RUN: <orca-run>  FINISH: <review|land|pr>
 TICKETS: <ticket branch QA review readiness result; one row each>
