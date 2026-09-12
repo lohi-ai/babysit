@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -88,8 +89,10 @@ func write(t *testing.T, path, body string) {
 }
 
 func testWatchOpts() watchOpts {
-	return watchOpts{interval: time.Minute, idle: 10 * time.Minute, lines: 40,
-		nudge: "check status", maxNudges: 2}
+	// statusInterval sits past every horizon the legacy tests exercise, so
+	// they keep testing the stall clock alone; the status tests set their own.
+	return watchOpts{interval: time.Minute, idle: 10 * time.Minute,
+		statusInterval: time.Hour, lines: 40, nudge: "check status", maxNudges: 2}
 }
 
 // A pane that keeps changing is a foreman that is working. It must produce no
@@ -210,6 +213,176 @@ func TestWatchRealProgressClearsTheBudget(t *testing.T) {
 	}
 }
 
+// The status clock runs on the calendar, not the pane: a foreman whose output
+// never stops moving still gets asked for status once the interval elapses.
+func TestWatchStatusCheckOnMovingPane(t *testing.T) {
+	client, r, pane, log := watchFixture(t)
+	o := testWatchOpts()
+	o.statusInterval = 15 * time.Minute
+	now := time.Now()
+
+	watchTick(client, r, o, now)
+	write(t, pane, "worker A: still building\n")
+	line := watchTick(client, r, o, now.Add(16*time.Minute))
+	if !strings.HasPrefix(line, "STATUS fm-test") {
+		t.Fatalf("a moving pane must still get the status check, got %q", line)
+	}
+	if !strings.Contains(callLog(t, log), "terminal send --terminal term_0 --text /bbs:foreman --foreman-id fm-test check status --enter") {
+		t.Error("expected the status prompt to be sent")
+	}
+	if s := watchLoad(r.ID); s.Nudges != 0 || !s.PendingStatus {
+		t.Fatalf("status check must not spend the nudge budget: %+v", s)
+	}
+}
+
+// The interval is a floor, not a suggestion: a tick inside the window sends
+// nothing, so a fast --interval cannot multiply the prompts.
+func TestWatchNoEarlyStatusCheck(t *testing.T) {
+	client, r, pane, _ := watchFixture(t)
+	o := testWatchOpts()
+	o.statusInterval = 15 * time.Minute
+	now := time.Now()
+
+	watchTick(client, r, o, now)
+	write(t, pane, "worker A: still building\n")
+	if line := watchTick(client, r, o, now.Add(14*time.Minute)); line != "" {
+		t.Fatalf("status check fired early: %q", line)
+	}
+	if s := watchLoad(r.ID); s.PendingStatus {
+		t.Fatal("status prompt sent before the interval elapsed")
+	}
+}
+
+// A status prompt is a check, not the stall response: it must neither spend
+// the nudge budget nor restart the idle window, so a dead terminal reaches
+// STALLED on the same bound it would without the loop.
+func TestWatchStatusChecksDoNotEvadeStall(t *testing.T) {
+	client, r, _, _ := watchFixture(t)
+	o := testWatchOpts()
+	o.statusInterval = 5 * time.Minute
+	now := time.Now()
+
+	watchTick(client, r, o, now)
+	// Status check lands mid-idle; the pane never echoes it back.
+	if line := watchTick(client, r, o, now.Add(5*time.Minute)); !strings.HasPrefix(line, "STATUS") {
+		t.Fatalf("expected STATUS, got %q", line)
+	}
+	// The nudge still fires on the original idle window, not 10m after the
+	// status prompt.
+	line := watchTick(client, r, o, now.Add(10*time.Minute))
+	if !strings.HasPrefix(line, "NUDGED fm-test after 10m (1/2)") {
+		t.Fatalf("status prompt deferred the nudge: got %q", line)
+	}
+	// Second nudge coalesces with the next due status check: one prompt, and
+	// the nudge budget is still spent.
+	line = watchTick(client, r, o, now.Add(20*time.Minute))
+	if !strings.HasPrefix(line, "NUDGED fm-test after 10m (2/2)") {
+		t.Fatalf("expected coalesced nudge, got %q", line)
+	}
+	if s := watchLoad(r.ID); s.StatusCheck == "" {
+		t.Fatal("coalesced send must stamp the status clock")
+	}
+	line = watchTick(client, r, o, now.Add(30*time.Minute))
+	if !strings.HasPrefix(line, "STALLED fm-test — 2 nudges") {
+		t.Fatalf("expected STALLED, got %q", line)
+	}
+	// Declared stalled: the status loop stops poking too.
+	if line := watchTick(client, r, o, now.Add(40*time.Minute)); line != "" {
+		t.Fatalf("a stalled foreman must go quiet, got %q", line)
+	}
+}
+
+// The pathological configuration: --status-interval <= --interval on a
+// terminal that echoes every prompt but never answers one. Each tick is a
+// STATUS-ECHO followed by another send, so the pane never sits unchanged —
+// if the stall verdict required an unmoved tick it would be starved forever.
+// The loop must still reach STALLED in a bounded number of ticks.
+func TestWatchStatusFloodStillStalls(t *testing.T) {
+	client, r, pane, _ := watchFixture(t)
+	o := testWatchOpts()
+	o.interval = time.Minute
+	o.statusInterval = time.Minute // <= poll interval: a prompt is due every tick
+	now := time.Now()
+
+	watchTick(client, r, o, now)
+	stalled := ""
+	// The bound is generous — nudges alone need ~maxNudges*idle — but finite:
+	// a loop that never stalls fails here by exhausting the tick budget.
+	for i := 1; i <= 200 && stalled == ""; i++ {
+		tick := now.Add(time.Duration(i) * time.Minute)
+		if line := watchTick(client, r, o, tick); strings.HasPrefix(line, "STALLED") {
+			stalled = line
+			break
+		}
+		// The dead terminal echoes whatever was just sent into its pane.
+		write(t, pane, fmt.Sprintf("worker A: building\n> check status x%d\n", i))
+	}
+	if stalled == "" {
+		t.Fatal("status flood starved the stall verdict: no STALLED in 200 ticks")
+	}
+	// Declared stalled: even with a prompt due every tick, the loop goes quiet.
+	if line := watchTick(client, r, o, now.Add(300*time.Minute)); line != "" {
+		t.Fatalf("a stalled foreman must go quiet, got %q", line)
+	}
+}
+
+// A status echo that lands after the nudge it outlived is still an echo:
+// two prompts in flight means two claims, or the second echo reads as
+// progress and refunds the budget it just spent.
+func TestWatchLaggingStatusEchoDoesNotRefund(t *testing.T) {
+	client, r, pane, _ := watchFixture(t)
+	o := testWatchOpts()
+	o.statusInterval = 5 * time.Minute
+	now := time.Now()
+
+	watchTick(client, r, o, now)
+	// Status prompt at t=5m; its echo has not landed yet when the nudge
+	// fires at t=10m — two prompts in flight.
+	if line := watchTick(client, r, o, now.Add(5*time.Minute)); !strings.HasPrefix(line, "STATUS") {
+		t.Fatalf("expected STATUS, got %q", line)
+	}
+	if line := watchTick(client, r, o, now.Add(10*time.Minute)); !strings.HasPrefix(line, "NUDGED") {
+		t.Fatalf("expected NUDGED, got %q", line)
+	}
+	// The status echo arrives late, then the nudge echo: both are echoes.
+	write(t, pane, "worker A: building\n> check status\n")
+	watchTick(client, r, o, now.Add(11*time.Minute))
+	write(t, pane, "worker A: building\n> check status\n> check status\n")
+	watchTick(client, r, o, now.Add(12*time.Minute))
+	if s := watchLoad(r.ID); s.Nudges != 1 {
+		t.Fatalf("lagging status echo refunded the budget: nudges = %d, want 1", s.Nudges)
+	}
+}
+
+// A foreman that reported itself done is out of the watch set even while Orca
+// still has its terminal — the batch closed, the pane is a leftover.
+func TestWatchTargetsSkipDoneForemen(t *testing.T) {
+	client, r, _, _ := watchFixture(t)
+	r.Status = "done"
+	if err := foreman.Save(r); err != nil {
+		t.Fatal(err)
+	}
+	targets, err := watchTargets(client, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(targets) != 0 {
+		t.Fatalf("done foreman stayed in the watch set: %+v", targets)
+	}
+	// Only the canonical status is terminal; anything else stays watchable.
+	r.Status = "wrapping up"
+	if err := foreman.Save(r); err != nil {
+		t.Fatal(err)
+	}
+	targets, err = watchTargets(client, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(targets) != 1 || targets[0].ID != "fm-test" {
+		t.Fatalf("non-done status dropped from the watch set: %+v", targets)
+	}
+}
+
 // A closed workspace is the batch finishing, not a failure — and must not be
 // reported as unreachable, which is what a human would go investigate.
 func TestWatchReportsAClosedWorkspace(t *testing.T) {
@@ -264,18 +437,18 @@ func TestWatchOptsDefaultsAndValidation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if o.idle != 10*time.Minute || o.interval != time.Minute || o.nudge != "check status" || o.maxNudges != 3 {
+	if o.idle != 10*time.Minute || o.interval != time.Minute || o.statusInterval != 15*time.Minute || o.nudge != "check status" || o.maxNudges != 3 {
 		t.Errorf("unexpected defaults: %+v", o)
 	}
-	o, err = watchOptsFrom(map[string]string{"idle": "90", "nudge": "status?", "once": "1"})
+	o, err = watchOptsFrom(map[string]string{"idle": "90", "status-interval": "45", "nudge": "status?", "once": "1"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if o.idle != 90*time.Second || o.nudge != "status?" || !o.once {
+	if o.idle != 90*time.Second || o.statusInterval != 45*time.Second || o.nudge != "status?" || !o.once {
 		t.Errorf("flags not applied: %+v", o)
 	}
 	for _, bad := range []map[string]string{
-		{"idle": "0"}, {"idle": "soon"}, {"lines": "-1"}, {"max-nudges": "-1"}, {"nudge": "  "},
+		{"idle": "0"}, {"idle": "soon"}, {"status-interval": "0"}, {"lines": "-1"}, {"max-nudges": "-1"}, {"nudge": "  "},
 	} {
 		if _, err := watchOptsFrom(bad); err == nil {
 			t.Errorf("expected an error for %v", bad)

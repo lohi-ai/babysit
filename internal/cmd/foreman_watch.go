@@ -18,7 +18,8 @@ import (
 	"github.com/reallongnguyen/babysit/internal/orca"
 )
 
-// Watchdog for a foreman that stopped moving.
+// Watchdog for a foreman that stopped moving — and a metronome for one that
+// hasn't.
 //
 // A foreman drives its batch from its own terminal, so the failure mode nobody
 // sees is the quiet one: the session finishes a thought, prints nothing more,
@@ -34,6 +35,13 @@ import (
 // same nudge a human would give — and the escalation is to stop nudging and say
 // so, because a watchdog that pokes forever is indistinguishable from one that
 // is broken.
+//
+// Beside that stall clock runs a second, independent one: every
+// --status-interval the foreman gets the same skill prompt even while its pane
+// is moving, because a busy pane is not a status report. The two clocks never
+// share state — a status prompt spends no nudge budget and buys no idle time,
+// so it cannot let a dead terminal evade the bound. A foreman that reported
+// itself done leaves the loop entirely.
 //
 // Deliberately not a daemon: it is a foreground loop (or a single --once pass
 // for cron), holds no lock, and writes only its own state file. Nothing else in
@@ -53,18 +61,26 @@ type watchState struct {
 	// watchdog nudges forever: the nudge itself changes the pane, that change
 	// reads as progress, the counter resets, and --max-nudges never binds.
 	Pending bool `json:"pending_nudge,omitempty"`
+	// PendingStatus is Pending's twin for the periodic status check: the
+	// prompt's own echo must not read as independent progress either.
+	PendingStatus bool `json:"pending_status,omitempty"`
+	// StatusCheck is when the last status prompt was sent — the start of the
+	// current --status-interval window. It is a second clock beside Since:
+	// the idle window measures the pane, this one measures the calendar.
+	StatusCheck string `json:"status_check,omitempty"`
 	// Stalled records that the budget ran out and was reported, so the loop says
 	// it once rather than every interval.
 	Stalled bool `json:"stalled,omitempty"`
 }
 
 type watchOpts struct {
-	interval  time.Duration
-	idle      time.Duration
-	lines     int
-	nudge     string
-	maxNudges int
-	once      bool
+	interval       time.Duration
+	idle           time.Duration
+	statusInterval time.Duration
+	lines          int
+	nudge          string
+	maxNudges      int
+	once           bool
 }
 
 func watchDir() string { return filepath.Join(identity.BabysitHome(), "watch") }
@@ -106,11 +122,12 @@ func paneFingerprint(pane string) string {
 
 func watchOptsFrom(kv map[string]string) (watchOpts, error) {
 	o := watchOpts{
-		interval:  60 * time.Second,
-		idle:      10 * time.Minute,
-		lines:     40,
-		nudge:     "check status",
-		maxNudges: 3,
+		interval:       60 * time.Second,
+		idle:           10 * time.Minute,
+		statusInterval: 15 * time.Minute,
+		lines:          40,
+		nudge:          "check status",
+		maxNudges:      3,
 	}
 	secs := func(key string, dst *time.Duration) error {
 		v, ok := kv[key]
@@ -128,6 +145,9 @@ func watchOptsFrom(kv map[string]string) (watchOpts, error) {
 		return o, err
 	}
 	if err := secs("idle", &o.idle); err != nil {
+		return o, err
+	}
+	if err := secs("status-interval", &o.statusInterval); err != nil {
 		return o, err
 	}
 	if v, ok := kv["lines"]; ok {
@@ -216,6 +236,11 @@ func watchTargets(client *orca.Client, id string) ([]foreman.Record, error) {
 	}
 	var open []foreman.Record
 	for _, r := range records {
+		// A foreman that reported itself done leaves the loop even while its
+		// terminal stays open — the batch closed, the pane is just a leftover.
+		if strings.EqualFold(r.Status, "done") {
+			continue
+		}
 		if r.WorkspaceTitle == "" {
 			continue
 		}
@@ -242,8 +267,9 @@ func watchTick(client *orca.Client, r foreman.Record, o watchOpts, now time.Time
 
 	fp := paneFingerprint(pane)
 	s := watchLoad(r.ID)
+	moved := ""
 	if s.Fingerprint != fp {
-		moved := "MOVING"
+		moved = "MOVING"
 		if s.Pending {
 			// The pane changed for the first time since we nudged, so this is
 			// most likely our own text echoing. Restart the idle clock but keep
@@ -251,15 +277,41 @@ func watchTick(client *orca.Client, r foreman.Record, o watchOpts, now time.Time
 			// one tick, and the tick after this one is what clears the counter.
 			s.Pending = false
 			moved = "NUDGE-ECHO"
+		} else if s.PendingStatus {
+			// Same attribution for the status prompt's own echo.
+			s.PendingStatus = false
+			moved = "STATUS-ECHO"
 		} else {
 			s.Nudges, s.Stalled = 0, false
 		}
-		s.Fingerprint, s.Since = fp, now.UTC().Format(time.RFC3339)
-		watchSave(r.ID, s)
-		if o.once {
-			return fmt.Sprintf("%s %s", moved, r.ID)
+		s.Fingerprint = fp
+		// The status echo is the one pane change that must not restart the
+		// idle clock: the prompt is a check, not proof of life, and resetting
+		// Since here would let a dead-but-echoing terminal slip the stall
+		// bound every --status-interval.
+		if moved != "STATUS-ECHO" {
+			s.Since = now.UTC().Format(time.RFC3339)
 		}
-		return ""
+		watchSave(r.ID, s)
+	}
+
+	// The status clock is a second, independent timer: it fires on the
+	// calendar even while the pane keeps moving, so a busy foreman still gets
+	// asked for status. It never touches Since — a status prompt is a check,
+	// not the stall response, and must not defer the nudge a dead pane owes.
+	// A stalled foreman is already reported; poking it further is the
+	// watchdog that never stops.
+	statusDue := false
+	if !s.Stalled {
+		last, err := time.Parse(time.RFC3339, s.StatusCheck)
+		if err != nil {
+			// First sighting (or an unreadable stamp): start the clock now
+			// rather than prompting on the very first tick.
+			s.StatusCheck = now.UTC().Format(time.RFC3339)
+			watchSave(r.ID, s)
+		} else {
+			statusDue = now.Sub(last) >= o.statusInterval
+		}
 	}
 
 	since, err := time.Parse(time.RFC3339, s.Since)
@@ -275,13 +327,14 @@ func watchTick(client *orca.Client, r foreman.Record, o watchOpts, now time.Time
 		return ""
 	}
 	idleFor := now.Sub(since)
-	if idleFor < o.idle {
-		if o.once {
-			return fmt.Sprintf("IDLE %s %s (nudge at %s)", r.ID, roundMin(idleFor), roundMin(o.idle))
-		}
-		return ""
-	}
-	if s.Nudges >= o.maxNudges {
+
+	// The stall verdict outranks the status clock: a pane that spent its
+	// nudge budget is reported dead, not kept on the prompting metronome.
+	// Echoes are not a reprieve — real progress already zeroed the budget
+	// above, so reaching this line with Nudges spent means every pane change
+	// was our own prompt. Requiring moved == "" here would let a
+	// --status-interval <= --interval flood starve the verdict forever.
+	if moved != "MOVING" && idleFor >= o.idle && s.Nudges >= o.maxNudges {
 		if s.Stalled {
 			return ""
 		}
@@ -294,28 +347,70 @@ func watchTick(client *orca.Client, r foreman.Record, o watchOpts, now time.Time
 			r.ID, s.Nudges, roundMin(idleFor), r.WorkspaceTitle)
 	}
 
-	// Send + Enter in one call: text with no Enter sits in the composer
-	// unsent while the pane still looks busy — which would read as a
-	// foreman ignoring the nudge.
+	nudgeDue := idleFor >= o.idle && s.Nudges < o.maxNudges
+
+	// A due status check that is not also a due nudge sends on its own; when
+	// both are due the nudge below carries it — one prompt, budget still spent.
+	// It also waits while an echo claim is outstanding: fingerprint-only
+	// attribution cannot tell which of two prompts a pane change echoes, so at
+	// most one is ever armed.
+	if statusDue && !nudgeDue && !s.Pending && !s.PendingStatus {
+		prompt, err := watchSend(client, r, o.nudge)
+		if err != nil {
+			return fmt.Sprintf("UNREACHABLE %s — %s", r.ID, err)
+		}
+		s.StatusCheck = now.UTC().Format(time.RFC3339)
+		s.PendingStatus = true
+		watchSave(r.ID, s)
+		return fmt.Sprintf("STATUS %s after %s — sent %q",
+			r.ID, roundMin(o.statusInterval), prompt)
+	}
+	if idleFor < o.idle {
+		if o.once {
+			if moved != "" {
+				return fmt.Sprintf("%s %s", moved, r.ID)
+			}
+			return fmt.Sprintf("IDLE %s %s (nudge at %s)", r.ID, roundMin(idleFor), roundMin(o.idle))
+		}
+		return ""
+	}
+
+	prompt, err := watchSend(client, r, o.nudge)
+	if err != nil {
+		return fmt.Sprintf("UNREACHABLE %s — %s", r.ID, err)
+	}
+	s.Nudges++
+	s.Pending = true
+	// An outstanding status echo claim stays armed: its echo is still in
+	// flight and must not read as progress. Clearing it here would leave two
+	// echoes for one claim — the second refunds the budget it just spent.
+	s.Since = now.UTC().Format(time.RFC3339)
+	if statusDue {
+		s.StatusCheck = s.Since
+	}
+	watchSave(r.ID, s)
+	return fmt.Sprintf("NUDGED %s after %s (%d/%d) — sent %q",
+		r.ID, roundMin(idleFor), s.Nudges, o.maxNudges, prompt)
+}
+
+// watchSend delivers one prompt to the foreman's pane: Send + Enter in one
+// call, because text with no Enter sits in the composer unsent while the pane
+// still looks busy — which would read as a foreman ignoring the poke.
+func watchSend(client *orca.Client, r foreman.Record, instruction string) (string, error) {
 	agentName := r.Agent
 	if agentName == "" {
 		agentName = agent.Default
 	}
 	prof, err := agent.ByName(agentName)
 	if err != nil {
-		return fmt.Sprintf("UNREACHABLE %s — %s", r.ID, err)
+		return "", err
 	}
-	prompt := foremanSkillPrompt(prof, r.ID, o.nudge)
+	prompt := foremanSkillPrompt(prof, r.ID, instruction)
 	if err := client.SendEnter(r.WorkspaceTitle, prompt); err != nil {
 		foreman.MarkUnreachable(r.ID)
-		return fmt.Sprintf("UNREACHABLE %s — %s", r.ID, err)
+		return "", err
 	}
-	s.Nudges++
-	s.Pending = true
-	s.Since = now.UTC().Format(time.RFC3339)
-	watchSave(r.ID, s)
-	return fmt.Sprintf("NUDGED %s after %s (%d/%d) — sent %q",
-		r.ID, roundMin(idleFor), s.Nudges, o.maxNudges, prompt)
+	return prompt, nil
 }
 
 // roundMin renders a duration the way an operator reads one: whole minutes,
