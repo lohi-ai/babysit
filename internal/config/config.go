@@ -9,9 +9,13 @@
 package config
 
 import (
+	"fmt"
+	"math"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -41,6 +45,17 @@ const configHeader = `# babysit configuration — edit freely, changes take effe
 # telemetry: local          # off | local
 #                           #   off   — no data recorded
 #                           #   local — JSONL to ~/.babysit/analytics/ (never leaves machine)
+# ─── Foreman ─────────────────────────────────────────────────────────
+# foreman_status_interval: 3600   # seconds between full reconciliation ticks:
+#                                 #   the Foreman skill's bounded orca
+#                                 #   orchestration check --wait timeout and
+#                                 #   bbs foreman watch's status-prompt
+#                                 #   default share this one value. Deliveries
+#                                 #   still wake the foreman immediately; this
+#                                 #   is only the missed-event/restart backup.
+#                                 #   bbs foreman watch --status-interval
+#                                 #   overrides it for that watcher.
+
 #
 # ─── Updates ─────────────────────────────────────────────────────────
 # auto_upgrade: false       # true = silently run bbs-upgrade on session start
@@ -138,4 +153,24 @@ func List() []byte {
 		return nil
 	}
 	return b
+}
+
+// ForemanStatusIntervalSeconds is the one configured reconciliation interval:
+// the default for `bbs foreman watch --status-interval` and the bound the
+// Foreman skill applies to its `check --wait` timeout. Absent or empty config
+// falls back to the default, matching Get's missing-file convention; a
+// present-but-invalid value is an error, never a silent tight loop. The upper
+// bound is what a time.Duration of whole seconds can hold — the same
+// multiplication the watcher performs.
+func ForemanStatusIntervalSeconds() (int, error) {
+	const def = 3600
+	v, ok := Get("foreman_status_interval")
+	if !ok || strings.TrimSpace(v) == "" {
+		return def, nil
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(v))
+	if err != nil || n <= 0 || int64(n) > math.MaxInt64/int64(time.Second) {
+		return 0, fmt.Errorf("config foreman_status_interval needs a positive number of seconds, got '%s'", v)
+	}
+	return n, nil
 }

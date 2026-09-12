@@ -9,6 +9,7 @@ bbs config set telemetry local       # off | local
 bbs config set update_check true     # false silences upgrade notifications
 bbs config set auto_upgrade false    # true runs bbs update on session start
 bbs config set proactive true        # false = only run skills typed explicitly
+bbs config set foreman_status_interval 3600  # seconds between foreman reconciliation ticks
 bbs config list                      # show all keys + annotated docs
 ```
 
@@ -174,7 +175,11 @@ send — and if the nudges stop landing, it says so and gives up rather than
 poking forever. Independently of the pane, every `--status-interval` it sends
 the same skill prompt as an active status check, so a busy foreman still gets
 asked; a foreman whose record says `done` leaves the watch set even while its
-terminal stays open.
+terminal stays open. The status interval defaults to the configured
+`foreman_status_interval` (3600 seconds) — the same reconciliation interval
+the Foreman skill bounds its `check --wait` with — so the flag, the config
+key, and the skill's wait cannot drift apart; an explicit `--status-interval`
+overrides the configured value for that watcher.
 
 ```bash
 bbs foreman watch                       # every foreman with an open workspace
@@ -187,7 +192,7 @@ bbs foreman watch --once                # one pass, for cron
 |---|---|---|
 | `--interval <sec>` | 60 | how often to capture the pane |
 | `--idle <sec>` | 600 | unchanged for this long → nudge |
-| `--status-interval <sec>` | 900 | periodic status prompt, even while the pane moves |
+| `--status-interval <sec>` | `foreman_status_interval` config (3600) | periodic status prompt, even while the pane moves |
 | `--lines <n>` | 40 | how much of the pane forms the fingerprint |
 | `--nudge <text>` | `check status` | what gets typed in |
 | `--max-nudges <n>` | 3 | budget before it reports `STALLED` and stops |
@@ -199,7 +204,7 @@ Output is events only — a foreman that is working produces no output at all.
 
 ```text
 NUDGED fm-acme after 12m (1/3) — sent "check status"
-STATUS fm-acme after 15m — sent "check status"
+STATUS fm-acme after 60m — sent "check status"
 STALLED fm-acme — 3 nudges, no change in 41m; open "bbs foreman"
 GONE fm-acme — terminal "bbs foreman" is closed
 ```
