@@ -1,3 +1,4 @@
 # See .claude/skills/references/git-flow.md § Profiles.
 profile: pet          # pet | startup | enterprise
 base_branch: main
+finish: land         # Foreman merges verified worktrees into local main.

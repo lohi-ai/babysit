@@ -32,6 +32,11 @@ has_all "foreman-owns-topology" \
   'bbs ticket ensure --mode=worktree' 'git worktree list' \
   'git worktree remove' 'dependency-order finish'
 
+has_all "finish-cleans-worker-workspace" \
+  'worker-terminal' 'verified-clean non-primary worktree' \
+  'git worktree remove' 'keep its branch' 'Under `review`' \
+  'keep the worktree'
+
 has_all "bounded-worker-pool" \
   'bbs config get parallel_max_workers' 'MAX_WORKERS=16' \
   'positive integer' 'one writer per child worktree'

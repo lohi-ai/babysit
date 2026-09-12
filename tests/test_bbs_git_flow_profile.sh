@@ -9,8 +9,8 @@
 # Scenarios:
 #   profile-pet-derives-trunk-smoke        profile: pet → trunk/none/smoke/low
 #   unconfigured-repo-derives-pet          no profile: key → pet, like plain git
-#   profile-startup-derives-worktree       profile: startup → worktree/local/standard/medium
-#   profile-enterprise-derives-strict      profile: enterprise → worktree/local/strict/high
+#   profile-startup-derives-trunk-pr        profile: startup → trunk/pr/standard/medium
+#   profile-enterprise-derives-strict       profile: enterprise → trunk/pr/strict/high
 #   legacy-profile-names-resolve           the four pre-profile names still map
 #   explicit-key-overrides-profile         mode:/land:/push: beat the preset
 #   invalid-profile-exits-2                profile: hobby → exit 2, named
@@ -110,6 +110,14 @@ finish: land" \
 expect_gf "finish-pr-opt-in-is-exported" "profile: startup
 finish: pr" \
   BBS_PROFILE=startup BBS_LAND=pr BBS_FINISH=pr
+
+expect_gf "finish-pet-land-is-exported" "profile: pet
+finish: land" \
+  BBS_PROFILE=pet BBS_LAND=none BBS_FINISH=land BBS_BASE_BRANCH=main
+
+expect_gf "finish-enterprise-pr-is-exported" "profile: enterprise
+finish: pr" \
+  BBS_PROFILE=enterprise BBS_LAND=pr BBS_FINISH=pr
 
 expect_gf "profile-enterprise-derives-strict" "profile: enterprise" \
   BBS_PROFILE=enterprise BBS_MODE=trunk BBS_LAND=pr \

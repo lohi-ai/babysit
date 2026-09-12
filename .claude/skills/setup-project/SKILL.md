@@ -5,7 +5,9 @@ description: Configure the current repo for babysit/autopilot. Use when the user
 # setup-project
 Set up only the config the repo needs. Re-running should be safe.
 ## Create Or Update
-- `.babysit/git-flow.yaml`: `profile` + `base_branch`, nothing else. Everything else derives (`references/git-flow.md § Profiles`).
+- `.babysit/git-flow.yaml`: `profile` + `base_branch`; add `finish` only when
+  the human explicitly authorizes Foreman closeout. Everything else derives
+  (`references/git-flow.md § Profiles`).
 - `.babysit/qa.yaml`: minimal local `url`, `start`, `check`, and `flows`.
 - `.babysit/config.yaml`: committed — which workspace this repo belongs to, plus optional `name`, `description`, `repo_type`. Written via `bbs config repo set`; only when the repo joins a workspace.
 - `.babysit/.env`: gitignored machine-local values (credentials; related repo paths only when there is no workspace entry).
@@ -19,7 +21,12 @@ Set up only the config the repo needs. Re-running should be safe.
   - Client or small-team work — release speed matters more than polish → `startup`: tickets off `develop`, a PR each, standard QA.
   - A team or enterprise codebase — code quality outranks release speed → `enterprise`: the same shape plus a `staging` environment and strict QA, with code review on GitHub by someone else.
   Unsure, hedging, or trying babysit for the first time → `startup`: nothing reaches the remote without a PR, and it's a one-line switch later. The profile buys a review venue and QA rigor — it never changes where you work: under every profile babysit works on the branch you are standing on, and worktrees happen only when `foreman` or an explicit `bbs ticket ensure --mode=worktree` asks for them.
-  Write `profile:` and `base_branch:` into `git-flow.yaml` and nothing else — a knob written out by hand is a knob that stops tracking its profile. Add `push:` only when the human asks for something the profile doesn't give them; `mode:`/`land:` stay unwritten.
+  Write `profile:` and `base_branch:` into `git-flow.yaml` and nothing else by
+  default — a knob written out by hand is a knob that stops tracking its
+  profile. When the human explicitly asks Foreman to close verified work, add
+  `finish: land` for `pet` or `finish: pr` for `startup`/`enterprise`. Add
+  `push:` only when the human asks for something the profile does not give
+  them; `mode:`/`land:` stay unwritten.
 - **`base_branch` follows the profile's branch topology** (`references/git-flow.md § Profiles`): `pet` → `main`; `startup`/`enterprise` → `develop`, so *integrated* and *shipped* are two events and `main` stays releasable. Detect before asking — if `origin/develop` exists, write it and say nothing. Ask only when the profile is `startup`/`enterprise` **and** there is no `develop` on the remote: **does every merge to `main` deploy, or do you cut releases?**
   - **Cut releases** (recommended) → have them create it first (`git switch -c develop main && git push -u origin develop`), then write `base_branch: develop`. Don't create the branch yourself — it changes the repo's shape and their host may need branch rules on it.
   - **Every merge deploys** → write the detected default branch and say plainly that the local compose is now the last gate before release.

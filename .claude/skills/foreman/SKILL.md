@@ -305,11 +305,13 @@ eval "$(bbs autopilot git-flow)"   # BBS_FINISH=review | land | pr
 - `pr` — invoke the real `create-pr` skill once per child in dependency order.
   Never replace it with raw git/GitHub commands.
 
-After a successful `land` or `pr`, release the settled Orca worker, archive its
-readable output through Orca, and remove only its verified-clean non-primary
-worktree with ordinary `git worktree remove`. Keep branches. Under `review`, or
-on any failure/hold, keep the worktree. Never use `--force`, broad worktree
-removal, or terminal-close commands in place of Orca `worker-release`.
+Archive every settled worker's readable output through Orca, then call
+`worker-release` unless immediately reusing it; that is the worker-terminal
+close operation. After a successful `land` or `pr`, also remove only its
+verified-clean non-primary worktree with ordinary `git worktree remove`, and
+keep its branch. Under `review`, or on any failure/hold, keep the worktree
+recoverable. Never use `--force`, broad worktree removal, or terminal-close
+commands in place of Orca `worker-release`.
 
 ## Resume reconciliation
 

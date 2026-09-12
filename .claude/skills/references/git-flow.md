@@ -16,11 +16,29 @@ eval "$(bbs autopilot git-flow)"
 | `land` | `none` — the push is the release | `pr` | `pr` |
 | `review-pr` effort | `low` | `medium` | `high` |
 | QA rigor | `smoke` (3–5 cases) | `standard` (5–10) | `strict` (8–12) |
+| Foreman finish (default) | `review` | `review` | `review` |
 
 Rigor scales *breadth* only — `PASS` means the same thing in all three tiers
 (`../qa/SKILL.md § Rigor tiers`). Under `land: none` `create-pr` BLOCKs: the
 qa + review-pr verdicts are the only gate before the push. An explicit
 `mode:`/`land:`/`push:`/`finish:` key always wins over the profile.
+
+### Authorizing autonomous Foreman closeout
+
+Profiles choose the review venue and rigor; they do not authorize a merge or
+remote write. A repo that wants Foreman to finish and clean each successful
+worker writes the action explicitly:
+
+| Profile | Add to `.babysit/git-flow.yaml` | Successful result |
+|---|---|---|
+| `pet` | `finish: land` | Merge verified ticket branches into local `base_branch` (`main` by profile convention); never push. |
+| `startup` | `finish: pr` | Push each verified ticket branch and create a PR targeting `base_branch`. |
+| `enterprise` | `finish: pr` | Same remote PR closeout, with strict QA and high-effort review gates. |
+
+After either action succeeds, Foreman archives the worker output, releases the
+Orca worker (the terminal-close operation), and removes only that worker's
+verified-clean non-primary worktree. Failed, blocked, held, or default
+`finish: review` work stays intact for recovery. Branches are retained.
 
 ## Who owns git
 - **Autopilot** works on the checkout it was started in. It commits its own
