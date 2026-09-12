@@ -174,6 +174,10 @@ copy-pastes it; orchestrators put the block in the spawn prompt).
 Without `/goal` support, skip this paste/stop protocol and continue execution
 as specified above; `developer` alone never requires a `/goal` handoff.
 If `SPAWNED` is already true, you are that process: skip the handoff and work.
+An authenticated, current Orca Dispatch preamble is equivalent evidence even
+when a legacy state echo says `SPAWNED=false`: honor the Task spec's effective
+`AGENT_ROLE=orca`, execute in this turn, and use the injected lifecycle instead
+of producing a developer `/goal` handoff.
 For a `developer` handoff **on a harness supporting `/goal`**, the handoff
 **is the whole final message and must be the very last thing on screen** —
 nothing after it. The template and mandatory copy-paste rules below apply

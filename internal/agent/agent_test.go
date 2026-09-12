@@ -182,18 +182,18 @@ func TestWorkerCommandSurvivesAnApostropheInTheRequirement(t *testing.T) {
 	}
 }
 
-// Foreman spawns are attended, so they carry no yolo flag — and the session
-// flags are what make a foreman resumable.
+// Foreman spawns are autonomous, so they carry the profile's approval flag;
+// exact session flags make supported agents resumable.
 func TestForemanCommandsBindAndResumeTheSession(t *testing.T) {
 	p := profiles["grok"]
-	if got := p.NewSessionCommand("uuid-1", "/bbs:foreman"); got != `grok --session-id uuid-1 '/bbs:foreman'` {
+	if got := p.NewSessionCommand("uuid-1", "/bbs:foreman"); got != `grok --always-approve --session-id uuid-1 '/bbs:foreman'` {
 		t.Errorf("new session: %s", got)
 	}
-	if got := p.ResumeCommand("uuid-1", "/bbs:foreman"); got != `grok --resume uuid-1 '/bbs:foreman'` {
+	if got := p.ResumeCommand("uuid-1", "/bbs:foreman"); got != `grok --always-approve --resume uuid-1 '/bbs:foreman'` {
 		t.Errorf("resume: %s", got)
 	}
-	if strings.Contains(p.NewSessionCommand("u", "/x"), p.Yolo) {
-		t.Error("a foreman spawn must not skip permission prompts — it is attended")
+	if !strings.Contains(p.NewSessionCommand("u", "/x"), p.Yolo) {
+		t.Error("an autonomous foreman spawn must not wait on tool approvals")
 	}
 }
 
@@ -432,7 +432,7 @@ func TestSessionTokenPicksTheStrongestHandleEachAgentSupports(t *testing.T) {
 		{"claude", uuid}, // --session-id
 		{"grok", uuid},   // --session-id
 		{"omp", dir},     // no mint flag; --session-dir is the durable handle
-		{"codex", ""},    // neither; resume falls back to "most recent"
+		{"codex", ""},    // neither; shared-repo resume cold-starts safely
 	} {
 		p, err := ByName(tc.name)
 		if err != nil {
@@ -448,26 +448,26 @@ func TestForemanSessionCommandShapes(t *testing.T) {
 	for _, tc := range []struct{ name, token, wantNew, wantResume string }{
 		{
 			"claude", "u1",
-			`claude --session-id u1 '/bbs:foreman'`,
-			`claude --resume u1 '/bbs:foreman'`,
+			`claude --dangerously-skip-permissions --session-id u1 '/bbs:foreman'`,
+			`claude --dangerously-skip-permissions --resume u1 '/bbs:foreman'`,
 		},
 		{
 			"grok", "u1",
-			`grok --session-id u1 '/bbs:foreman'`,
-			`grok --resume u1 '/bbs:foreman'`,
+			`grok --always-approve --session-id u1 '/bbs:foreman'`,
+			`grok --always-approve --resume u1 '/bbs:foreman'`,
 		},
 		{
 			// omp: private store, then "the most recent conversation in it".
 			"omp", "/tmp/fm.sessions",
-			`omp --session-dir '/tmp/fm.sessions' '/bbs:foreman'`,
-			`omp --session-dir '/tmp/fm.sessions' --continue '/bbs:foreman'`,
+			`omp --auto-approve --session-dir '/tmp/fm.sessions' '/bbs:foreman'`,
+			`omp --auto-approve --session-dir '/tmp/fm.sessions' --continue '/bbs:foreman'`,
 		},
 		{
-			// codex: no handle at all — a fresh session is bare, and resume is
-			// the `resume --last` subcommand.
+			// codex: no exact handle or private store, so recovery cold-starts.
+			// Project state, not an ambiguous repo-wide "last" chat, is the brain.
 			"codex", "",
-			`codex '/bbs:foreman'`,
-			`codex resume --last '/bbs:foreman'`,
+			`codex --dangerously-bypass-approvals-and-sandbox '/bbs:foreman'`,
+			`codex --dangerously-bypass-approvals-and-sandbox '/bbs:foreman'`,
 		},
 	} {
 		p, err := ByName(tc.name)
@@ -479,6 +479,23 @@ func TestForemanSessionCommandShapes(t *testing.T) {
 		}
 		if got := p.ResumeCommand(tc.token, "/bbs:foreman"); got != tc.wantResume {
 			t.Errorf("%s resume:\n got %s\nwant %s", tc.name, got, tc.wantResume)
+		}
+	}
+}
+
+func TestForemanResumeRequiresAnExactConversationIdentity(t *testing.T) {
+	for _, tc := range []struct {
+		name, token string
+		want        bool
+	}{
+		{"claude", "uuid", true},
+		{"grok", "uuid", true},
+		{"omp", "/tmp/private", true},
+		{"codex", "", false},
+	} {
+		p, _ := ByName(tc.name)
+		if got := p.CanResume(tc.token); got != tc.want {
+			t.Errorf("%s CanResume(%q) = %v, want %v", tc.name, tc.token, got, tc.want)
 		}
 	}
 }

@@ -126,7 +126,7 @@ func TestWatchIgnoresTrailingWhitespace(t *testing.T) {
 	if !strings.HasPrefix(line, "NUDGED") {
 		t.Fatalf("re-padded pane should still be idle, got %q", line)
 	}
-	if !strings.Contains(callLog(t, log), "terminal send --terminal term_0 --text check status --enter") {
+	if !strings.Contains(callLog(t, log), "terminal send --terminal term_0 --text /bbs:foreman --foreman-id fm-test check status --enter") {
 		t.Error("expected the nudge text to be sent")
 	}
 }
@@ -147,7 +147,7 @@ func TestWatchNudgesAfterIdle(t *testing.T) {
 		t.Fatalf("got %q", line)
 	}
 	calls := callLog(t, log)
-	if !strings.Contains(calls, "terminal send --terminal term_0 --text check status --enter") {
+	if !strings.Contains(calls, "terminal send --terminal term_0 --text /bbs:foreman --foreman-id fm-test check status --enter") {
 		t.Errorf("nudge text not sent and submitted; calls:\n%s", calls)
 	}
 }

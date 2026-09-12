@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # tests/test_bbs_ticket_control.sh — coverage for the control axis:
-# `bbs ticket assign | pause | cancel | resume | restore`.
+# `bbs ticket assign | claim | pause | cancel | resume | restore`.
 #
 # The point of the feature is that control and status are separate axes:
 # status is the derived lifecycle rung, control is a human override. So the
@@ -16,6 +16,7 @@
 #   clear-when-unset          resume on an uncontrolled ticket is a no-op, rc 0
 #   reconcile-skips-control   plan.md would advance triage→planned; paused wins
 #   assign-and-unassign       assignee set, then --none clears it to null
+#   claim-is-single-writer    racing foremen cannot replace the first owner
 #   board-shows-control       board sub-row names state/actor/rung/undo verb,
 #                             and a control-cancelled ticket is not hidden
 
@@ -164,6 +165,32 @@ T="$(mktemp -d)"
   out="$("$BBS" assign 2>&1)"; rc=$?
   [ "$rc" -eq 2 ] || { echo "bare assign rc=$rc: $out"; exit 1; }
 ) && ok "assign-and-unassign" || fail "assign-and-unassign"
+rm -rf "$T"
+
+# ── claim-is-single-writer ───────────────────────────────────────────
+T="$(mktemp -d)"
+(
+  sandbox "$T"
+  "$BBS" claim fm-alpha >"$T/a.out" 2>&1 & a_pid=$!
+  "$BBS" claim fm-beta  >"$T/b.out" 2>&1 & b_pid=$!
+  a_rc=0; wait "$a_pid" || a_rc=$?
+  b_rc=0; wait "$b_pid" || b_rc=$?
+
+  owner="$(field .assignee)"
+  [ "$owner" = "fm-alpha" ] || [ "$owner" = "fm-beta" ] \
+    || { echo "unexpected owner: $owner"; exit 1; }
+  [ $(( (a_rc == 0) + (b_rc == 0) )) -eq 1 ] \
+    || { echo "claim results: alpha=$a_rc beta=$b_rc"; exit 1; }
+
+  "$BBS" claim "$owner" >/dev/null 2>&1 \
+    || { echo "same-owner claim was not idempotent"; exit 1; }
+  other="fm-alpha"; [ "$owner" = "fm-alpha" ] && other="fm-beta"
+  out="$("$BBS" claim "$other" 2>&1)"; rc=$?
+  [ "$rc" -eq 2 ] || { echo "conflicting claim rc=$rc: $out"; exit 1; }
+  printf '%s' "$out" | grep -q "already claimed by $owner" \
+    || { echo "conflict omits owner: $out"; exit 1; }
+  [ "$(field .assignee)" = "$owner" ] || { echo "owner was replaced"; exit 1; }
+) && ok "claim-is-single-writer" || fail "claim-is-single-writer"
 rm -rf "$T"
 
 # ── board-shows-control ───────────────────────────────────────────────

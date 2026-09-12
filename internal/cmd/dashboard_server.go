@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/reallongnguyen/babysit/internal/agent"
 	"github.com/reallongnguyen/babysit/internal/dashboard"
 	"github.com/reallongnguyen/babysit/internal/foreman"
 	"github.com/reallongnguyen/babysit/internal/identity"
@@ -653,7 +654,16 @@ func (s *dashServer) wake(id, msg string) wakeResult {
 	if err != nil {
 		return wakeResult{"orca-unavailable", err.Error()}
 	}
-	if err := client.SendEnter(rec.WorkspaceTitle, "/bbs:foreman "+msg); err != nil {
+	agentName := rec.Agent
+	if agentName == "" {
+		agentName = agent.Default
+	}
+	prof, err := agent.ByName(agentName)
+	if err != nil {
+		return wakeResult{"unreachable", err.Error()}
+	}
+	prompt := foremanSkillPrompt(prof, id, msg)
+	if err := client.SendEnter(rec.WorkspaceTitle, prompt); err != nil {
 		if errors.Is(err, orca.ErrNoTerminal) {
 			foreman.MarkUnreachable(id)
 			return wakeResult{"unreachable", fmt.Sprintf("terminal %q is not open — the assignment is on disk and will be picked up on the foreman's next resume", rec.WorkspaceTitle)}

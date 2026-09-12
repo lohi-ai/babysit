@@ -58,7 +58,9 @@ type Record struct {
 	// the id, not the ~/.babysit/sessions/<id>.yaml path: that file is written
 	// by the session-writer hook, which does not know foremen exist, and a
 	// foreman spawned outside a hooked run would have no file to point at.
-	// Empty for a foreman that was registered rather than spawned.
+	// Empty for a foreman that was registered or directly adopted rather than
+	// spawned; its first recovery mints a handle for the replacement session
+	// when the selected agent supports one.
 	Session string `yaml:"session,omitempty"`
 	// Run is the Orca orchestration Run this foreman's mailbox lives in, bound
 	// fresh per session by `run-create`. It is recorded because coordinator

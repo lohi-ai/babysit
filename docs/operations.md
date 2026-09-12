@@ -26,11 +26,31 @@ editing tracked state):
 
 Supported: `claude`, `omp`, `grok`, `codex`. `BABYSIT_AGENT=<name>` overrides
 both for one run; `bbs foreman spawn --agent <name>` overrides everything.
+`foreman_agent` selects only a session created or recovered by `spawn`; a
+directly invoked Foreman naturally runs in the CLI where its skill was invoked.
+
+Direct skill invocation is the normal entrypoint:
+
+```text
+Claude Code  /bbs:foreman <large project>
+OMP          /foreman <large project>
+Codex        $bbs:foreman <large project>
+```
+
+The skill's first operation is `bbs foreman adopt <id> --agent <current>`. It
+reads and renames the active Orca terminal, records the actual agent dialect,
+and makes dashboard/watchdog wakes addressable. Re-adoption after compaction is
+idempotent. It refuses to steal an id, terminal, or repo already bound to a
+different Foreman. `bbs foreman spawn` is optional convenience and recovery,
+not the required launch path. Direct invocation inherits the current CLI's
+permission mode, so configure that session for unattended tool use before
+leaving a multi-day run.
 
 The two keys do not inherit from each other on purpose. A foreman reviews design
 gates and QA evidence from its workers, so moving workers to another agent is a
 throughput choice that must not silently relocate that audit — `worker_agent:
-omp` alone leaves the foreman on Claude Code.
+omp` alone leaves a directly invoked foreman in its current CLI and a managed
+foreman on its independently selected `foreman_agent`.
 
 Adding an agent is a registry entry in `internal/agent`, which owns the binary
 name, the flag that suppresses tool approval, how (or whether) a conversation
@@ -65,10 +85,16 @@ Two things it does not own:
   be told to use one we chose: they take `--session-id <uuid>`. `omp` has no
   such flag, so a foreman on omp gets a private session directory
   (`--session-dir`) and resumes with `--continue` — unambiguous because nothing
-  else writes to that directory. `codex` has neither and resumes by "most
-  recent". A uuid is never recorded against an agent that cannot be told to use
-  it: the record would look resumable and the resume would hand the CLI an id
-  it has never heard of.
+  else writes to that directory. `codex` has neither, so a closed Codex foreman
+  starts a fresh conversation and cold-resumes from ticket + Orca state. It
+  deliberately does not use repo-wide `resume --last`: several foremen may
+  share one repo, and "last" could attach the wrong project's goal. A uuid is
+  never recorded against an agent that cannot be told to use it.
+
+  For multi-day runs, schedule `bbs foreman ensure <id>` to recreate a missing
+  Orca terminal and `bbs foreman watch <id> --once` to refresh an idle one.
+  Both prompts reload the Foreman skill and carry `--foreman-id <id>` so
+  compaction or a cold start cannot erase coordinator identity.
 
 **grok needs the directory trusted first.** grok keeps a per-folder trust record
 in `~/.grok/trusted_folders.toml`, and it is *separate* from `permission_mode` —

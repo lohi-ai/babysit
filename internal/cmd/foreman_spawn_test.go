@@ -21,13 +21,26 @@ func fakeOrcaFor(t *testing.T, open ...string) (string, string) {
 	dir := t.TempDir()
 	log := filepath.Join(dir, "calls.log")
 	titles := filepath.Join(dir, "titles")
+	currentTitle := filepath.Join(dir, "current-title")
+	currentAgent := filepath.Join(dir, "current-agent")
+	currentPath := filepath.Join(dir, "current-path")
 	if err := os.WriteFile(titles, []byte(strings.Join(open, "\n")+"\n"), 0o644); err != nil {
 		t.Fatal(err)
+	}
+	for path, value := range map[string]string{
+		currentTitle: "active agent", currentAgent: "claude", currentPath: "/repo",
+	} {
+		if err := os.WriteFile(path, []byte(value), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
 	script := `#!/bin/sh
 PATH=/bin:/usr/bin
 printf '%s\n' "$*" >> ` + log + `
 titles=` + titles + `
+current_title=` + currentTitle + `
+current_agent=` + currentAgent + `
+current_path=` + currentPath + `
 case "$1" in
   status) echo '{"ok":true,"result":{"runtime":{"reachable":true}}}' ;;
   open) echo '{"ok":true,"result":{}}' ;;
@@ -36,12 +49,13 @@ case "$1" in
     case "$2" in
       list)
         python3 -c '
-import json
-titles=open("'"$titles"'").read().splitlines()
-terms=[{"handle":"term_%d"%i,"title":t,"connected":True,"worktreePath":"/repo"}
+import json,sys
+titles=open(sys.argv[1]).read().splitlines()
+current=open(sys.argv[2]).read()
+terms=[{"handle":"term_current" if t == current else "term_%d"%i,"title":t,"connected":True,"worktreePath":"/repo"}
        for i,t in enumerate(titles) if t]
 print(json.dumps({"ok":True,"result":{"terminals":terms}}))
-' ;;
+' "$titles" "$current_title" ;;
       create)
         title=""
         while [ $# -gt 0 ]; do
@@ -51,7 +65,33 @@ print(json.dumps({"ok":True,"result":{"terminals":terms}}))
         printf '%s\n' "$title" >> "$titles"
         python3 -c 'import json,sys; print(json.dumps({"ok":True,"result":{"terminal":{"handle":"term_new","title":sys.argv[1]}}}))' "$title"
         ;;
-      send|close|show|read) echo '{"ok":true,"result":{}}' ;;
+      show)
+        python3 -c '
+import json,sys
+title=open(sys.argv[1]).read()
+agent=open(sys.argv[2]).read()
+path=open(sys.argv[3]).read()
+print(json.dumps({"ok":True,"result":{"terminal":{"handle":"term_current","title":title,"connected":True,"worktreePath":path,"agentIdentity":agent}}}))
+' "$current_title" "$current_agent" "$current_path"
+        ;;
+      rename)
+        title=""
+        while [ $# -gt 0 ]; do
+          if [ "$1" = "--title" ]; then title="$2"; fi
+          shift
+        done
+        old=$(cat "$current_title")
+        python3 -c '
+import sys
+path,old,new=sys.argv[1:]
+titles=[line for line in open(path).read().splitlines() if line and line != old and line != new]
+titles.append(new)
+open(path,"w").write("\n".join(titles)+"\n")
+' "$titles" "$old" "$title"
+        printf '%s' "$title" > "$current_title"
+        echo '{"ok":true,"result":{}}'
+        ;;
+      send|close|read) echo '{"ok":true,"result":{}}' ;;
       *) echo '{"ok":true,"result":{}}' ;;
     esac ;;
   worktree) echo '{"ok":true,"result":{}}' ;;
@@ -165,7 +205,7 @@ func TestSpawnMintsAndRecordsTheSession(t *testing.T) {
 	}
 	// A workspace that comes up on a bare `claude` is a Claude session sitting
 	// in a repo, not a foreman.
-	if !strings.Contains(calls, "/bbs:foreman") {
+	if !strings.Contains(calls, "/bbs:foreman --foreman-id fm-a") {
 		t.Errorf("spawn did not open the session on the foreman skill:\n%s", calls)
 	}
 }
@@ -194,8 +234,31 @@ func TestSpawnResumesARecordedSessionWhenTheWorkspaceIsGone(t *testing.T) {
 	if again.Session != first.Session {
 		t.Errorf("resume changed the session: %q -> %q", first.Session, again.Session)
 	}
-	if !strings.Contains(readCalls(t, log), "--resume "+first.Session+" '/bbs:foreman'") {
+	if !strings.Contains(readCalls(t, log), "--resume "+first.Session+" '/bbs:foreman --foreman-id fm-a'") {
 		t.Errorf("re-spawn did not resume the recorded session on the skill:\n%s", readCalls(t, log))
+	}
+}
+
+func TestEnsureKeepsOneLiveTerminalAndRecoversAClosedOne(t *testing.T) {
+	log, titles := fakeOrcaFor(t)
+	dir := trustedDir(t)
+	if _, err := spawnForeman("fm-a", dir, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := foremanEnsure([]string{"fm-a"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Count(readCalls(t, log), "terminal create"); got != 1 {
+		t.Fatalf("ensure duplicated a live foreman: %d creates", got)
+	}
+	if err := os.WriteFile(titles, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := foremanEnsure([]string{"fm-a"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Count(readCalls(t, log), "terminal create"); got != 2 {
+		t.Fatalf("ensure did not recover the closed foreman: %d creates", got)
 	}
 }
 
@@ -250,7 +313,7 @@ func TestSpawnKeepsTheForemanOnClaudeWhenOnlyWorkersMoved(t *testing.T) {
 		t.Fatal(err)
 	}
 	calls := readCalls(t, log)
-	if !strings.Contains(calls, "claude --session-id") {
+	if !strings.Contains(calls, "claude --dangerously-skip-permissions --session-id") {
 		t.Errorf("`worker_agent: grok` moved the foreman off claude:\n%s", calls)
 	}
 	if rec, _ := foreman.Load("fm-a"); rec.Agent != "claude" {
@@ -267,7 +330,7 @@ func TestSpawnHonorsForemanAgent(t *testing.T) {
 	if _, err := spawnForeman("fm-a", dir, "", ""); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(readCalls(t, log), "grok --session-id") {
+	if !strings.Contains(readCalls(t, log), "grok --always-approve --session-id") {
 		t.Errorf("foreman_agent: grok did not launch grok:\n%s", readCalls(t, log))
 	}
 	if rec, _ := foreman.Load("fm-a"); rec.Agent != "grok" {
@@ -321,7 +384,7 @@ func TestResumeUsesThePinnedAgentNotCurrentConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	calls := readCalls(t, log)
-	if !strings.Contains(calls, "grok --resume "+first.Session) {
+	if !strings.Contains(calls, "grok --always-approve --resume "+first.Session) {
 		t.Errorf("resume did not use the agent that minted the session:\n%s", calls)
 	}
 	if strings.Contains(calls, "claude --resume") {
@@ -342,7 +405,7 @@ func TestSpawnRefusesAnAgentThatContradictsThePinnedSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err := spawnForeman("fm-a", dir, "", "grok")
-	if err == nil || !strings.Contains(err.Error(), "cannot resume it as grok") {
+	if err == nil || !strings.Contains(err.Error(), "cannot restart it as grok") {
 		t.Fatalf("want a refusal naming the conflict, got %v", err)
 	}
 }
@@ -453,6 +516,138 @@ func readCalls(t *testing.T, log string) string {
 	return string(b)
 }
 
+func setFakeCurrent(t *testing.T, log, agentName, path string) {
+	t.Helper()
+	dir := filepath.Dir(log)
+	for name, value := range map[string]string{
+		"current-agent": agentName,
+		"current-path":  path,
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(value), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestDirectSkillInvocationAdoptsTheCurrentAgent(t *testing.T) {
+	for _, tc := range []struct {
+		agent string
+		ref   string
+	}{
+		{"claude", "/bbs:foreman"},
+		{"omp", "/foreman"},
+		{"codex", "$bbs:foreman"},
+	} {
+		t.Run(tc.agent, func(t *testing.T) {
+			log, _ := fakeOrcaFor(t)
+			setFakeCurrent(t, log, tc.agent, "/repo")
+			id := "fm-" + tc.agent
+
+			if err := foremanAdopt([]string{id}); err != nil {
+				t.Fatal(err)
+			}
+			// A compacted/bare reinvocation can recover the id from the adopted
+			// current terminal instead of guessing from another record.
+			if err := foremanAdopt(nil); err != nil {
+				t.Fatal(err)
+			}
+			rec, err := foreman.Load(id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if rec.Agent != tc.agent || rec.WorkspaceTitle != "bbs foreman "+id || rec.WorkspaceRef != "term_current" {
+				t.Fatalf("direct adoption recorded the wrong identity: %+v", rec)
+			}
+			if got := strings.Count(readCalls(t, log), "terminal rename"); got != 1 {
+				t.Fatalf("idempotent adoption renamed the terminal %d times", got)
+			}
+
+			s := &dashServer{stateDir: t.TempDir()}
+			if got := s.wake(id, "check status"); got.state != "sent" {
+				t.Fatalf("wake did not reach adopted foreman: %+v", got)
+			}
+			if !strings.Contains(readCalls(t, log), "--text "+tc.ref+" --foreman-id "+id+" check status") {
+				t.Fatalf("wake used the wrong skill dialect:\n%s", readCalls(t, log))
+			}
+		})
+	}
+}
+
+func TestDirectAdoptionRefusesToStealAnotherLiveForeman(t *testing.T) {
+	log, _ := fakeOrcaFor(t, "bbs foreman fm-a")
+	setFakeCurrent(t, log, "codex", "/repo")
+	if err := foreman.Save(foreman.Record{
+		ID: "fm-a", Agent: "codex", ProjectDir: "/repo", WorkspaceDir: "/repo",
+		WorkspaceTitle: "bbs foreman fm-a", WorkspaceRef: "term_0", Heartbeat: foreman.Now(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := foremanAdopt([]string{"fm-a"}); err == nil || !strings.Contains(err.Error(), "another Orca terminal") {
+		t.Fatalf("want live-owner collision, got %v", err)
+	}
+}
+
+func TestAdoptedForemanRecoveryPinsEachAgent(t *testing.T) {
+	for _, tc := range []struct {
+		agent string
+		fresh string
+		later string
+	}{
+		{"claude", "claude --dangerously-skip-permissions --session-id", "claude --dangerously-skip-permissions --resume"},
+		{"omp", "omp --auto-approve --session-dir", "omp --auto-approve --session-dir"},
+		{"codex", "codex --dangerously-bypass-approvals-and-sandbox", "codex --dangerously-bypass-approvals-and-sandbox"},
+	} {
+		t.Run(tc.agent, func(t *testing.T) {
+			log, titles := fakeOrcaFor(t)
+			dir := t.TempDir()
+			if tc.agent == "claude" {
+				trustDir(t, dir)
+			}
+			setFakeCurrent(t, log, tc.agent, dir)
+			id := "fm-" + tc.agent
+			if err := foremanAdopt([]string{id}); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(titles, nil, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := spawnForeman(id, "", "", ""); err != nil {
+				t.Fatal(err)
+			}
+			calls := readCalls(t, log)
+			if !strings.Contains(calls, tc.fresh) {
+				t.Fatalf("first recovery did not pin %s:\n%s", tc.agent, calls)
+			}
+			if tc.agent == "claude" && strings.Contains(calls, "--resume") {
+				t.Fatalf("first recovery tried to resume a newly minted id:\n%s", calls)
+			}
+			if tc.agent == "omp" && strings.Contains(calls, "--continue") {
+				t.Fatalf("first recovery tried to continue a new session directory:\n%s", calls)
+			}
+			if tc.agent == "codex" && strings.Contains(calls, "resume --last") {
+				t.Fatalf("codex recovery used an ambiguous conversation:\n%s", calls)
+			}
+
+			if err := os.WriteFile(titles, nil, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := spawnForeman(id, "", "", ""); err != nil {
+				t.Fatal(err)
+			}
+			calls = readCalls(t, log)
+			if !strings.Contains(calls, tc.later) {
+				t.Fatalf("later recovery lost pinned %s:\n%s", tc.agent, calls)
+			}
+			if tc.agent == "omp" && !strings.Contains(calls, "--continue") {
+				t.Fatalf("later omp recovery did not continue its private store:\n%s", calls)
+			}
+			if tc.agent == "codex" && strings.Contains(calls, "resume --last") {
+				t.Fatalf("later codex recovery used an ambiguous conversation:\n%s", calls)
+			}
+		})
+	}
+}
+
 // A poke lands in a session that may be many compactions past the point where
 // it last read the skill. Prose alone assumes a protocol the receiver has
 // forgotten; the invocation reloads it.
@@ -469,7 +664,7 @@ func TestWakePrefixesThePokeWithTheForemanSkill(t *testing.T) {
 		t.Fatalf("wake did not land: %+v", got)
 	}
 	calls := readCalls(t, log)
-	if !strings.Contains(calls, "--text /bbs:foreman ticket bs-x was assigned to you.") {
+	if !strings.Contains(calls, "--text /bbs:foreman --foreman-id fm-a ticket bs-x was assigned to you.") {
 		t.Errorf("poke was not prefixed with the skill:\n%s", calls)
 	}
 }

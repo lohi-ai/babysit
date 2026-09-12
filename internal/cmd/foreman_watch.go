@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/reallongnguyen/babysit/internal/agent"
 	"github.com/reallongnguyen/babysit/internal/foreman"
 	"github.com/reallongnguyen/babysit/internal/identity"
 	"github.com/reallongnguyen/babysit/internal/orca"
@@ -296,7 +297,16 @@ func watchTick(client *orca.Client, r foreman.Record, o watchOpts, now time.Time
 	// Send + Enter in one call: text with no Enter sits in the composer
 	// unsent while the pane still looks busy — which would read as a
 	// foreman ignoring the nudge.
-	if err := client.SendEnter(r.WorkspaceTitle, o.nudge); err != nil {
+	agentName := r.Agent
+	if agentName == "" {
+		agentName = agent.Default
+	}
+	prof, err := agent.ByName(agentName)
+	if err != nil {
+		return fmt.Sprintf("UNREACHABLE %s — %s", r.ID, err)
+	}
+	prompt := foremanSkillPrompt(prof, r.ID, o.nudge)
+	if err := client.SendEnter(r.WorkspaceTitle, prompt); err != nil {
 		foreman.MarkUnreachable(r.ID)
 		return fmt.Sprintf("UNREACHABLE %s — %s", r.ID, err)
 	}
@@ -305,7 +315,7 @@ func watchTick(client *orca.Client, r foreman.Record, o watchOpts, now time.Time
 	s.Since = now.UTC().Format(time.RFC3339)
 	watchSave(r.ID, s)
 	return fmt.Sprintf("NUDGED %s after %s (%d/%d) — sent %q",
-		r.ID, roundMin(idleFor), s.Nudges, o.maxNudges, o.nudge)
+		r.ID, roundMin(idleFor), s.Nudges, o.maxNudges, prompt)
 }
 
 // roundMin renders a duration the way an operator reads one: whole minutes,

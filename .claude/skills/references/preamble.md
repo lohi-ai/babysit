@@ -36,6 +36,10 @@ you're steering — stop and report.
 `orca` → ask the coordinator over the message bus and block (below);
 anything else (`mayor`, `general`, `scanner`, …) → print the structured block
 verbatim (an orchestrator relays it; `AskUserQuestion` would hang the run).
+An authenticated current Orca Dispatch preamble plus a Task spec declaring
+effective `AGENT_ROLE=orca` is authoritative when the launcher cannot export
+environment variables into an already-running agent. Treat that worker as
+`orca`/spawned even if a legacy state echo still prints the defaults.
 Only the channel changes. The analysis, the artifacts, and the decision itself
 are identical in all four.
 ### `AGENT_ROLE=dashboard`

@@ -26,8 +26,10 @@ const foremanUsage = `Usage:
   bbs foreman list
   bbs foreman inbox <id>
   bbs foreman register <id> [--dir <path>] [--workspace-title <title>] [--session <uuid>]
+  bbs foreman adopt [<id>] [--agent <name>]
   bbs foreman heartbeat <id> [--status <status>] [--session <uuid>]
   bbs foreman spawn [<id>] [--dir <path>] [--command <text>] [--agent <name>]
+  bbs foreman ensure <id>
   bbs foreman worker-command --prompt <text> [--skill <name>] [--agent <name>] [--dir <path>]
   bbs foreman mailbox <status|bind|dispatch|wait|reply|done> ...
   bbs foreman watch [<id>] [--interval <sec>] [--idle <sec>] [--lines <n>]
@@ -46,14 +48,25 @@ const foremanUsage = `Usage:
 // bare `claude` is just a Claude session sitting in a repo — it does not know
 // it is a foreman until something tells it, and a long-lived one loses the
 // skill to context compaction. Re-invoking is cheap and idempotent by the
-// skill's own design (bare `/bbs:foreman` = reconcile and resume), so the
-// prompt doubles as the refresh.
+// skill's own design, so the prompt doubles as the refresh. Every generated
+// prompt also names --foreman-id; identity must survive compaction too.
 //
 // Unquoted: the agent profile shell-quotes it when rendering the command line.
 // The `bbs:` prefix comes from the profile rather than being spelled here —
 // an agent that discovers skills through a flat directory list exposes them
 // bare, and a prompt naming the wrong prefix resolves to nothing at all.
 const foremanSkillName = "foreman"
+
+// foremanSkillPrompt always carries the durable coordinator identity. The
+// skill invocation reloads the protocol after compaction; the id prevents a
+// recovered session from guessing which foreman's inbox and claims it owns.
+func foremanSkillPrompt(prof agent.Profile, id, instruction string) string {
+	prompt := prof.SkillRef(foremanSkillName) + " --foreman-id " + id
+	if instruction = strings.TrimSpace(instruction); instruction != "" {
+		prompt += " " + instruction
+	}
+	return prompt
+}
 
 func newForemanCmd() *cobra.Command {
 	return &cobra.Command{
@@ -90,11 +103,15 @@ func dispatchForeman(args []string) error {
 		return foremanInbox(rest)
 	case "register":
 		return foremanRegister(rest)
+	case "adopt":
+		return foremanAdopt(rest)
 	case "heartbeat":
 		return foremanHeartbeat(rest)
 	case "spawn":
 		_, err := foremanSpawn(rest)
 		return err
+	case "ensure":
+		return foremanEnsure(rest)
 	case "worker-command":
 		return foremanWorkerCommand(rest)
 	case "mailbox":
@@ -274,6 +291,139 @@ func foremanRegister(args []string) error {
 	return nil
 }
 
+// foremanAdopt makes direct skill invocation a first-class Foreman session.
+// It binds the current Orca terminal to a stable id and records the actual
+// agent, so later wakes use that agent's skill syntax. The operation is
+// idempotent for the same terminal and refuses to steal a live identity.
+func foremanAdopt(args []string) error {
+	id, kv, err := foremanFlags(args)
+	if err != nil {
+		return err
+	}
+	client, err := orca.Preflight()
+	if err != nil {
+		return err
+	}
+	term, err := client.CurrentTerminal()
+	if err != nil {
+		return fmt.Errorf("foreman adopt must run inside the invoking Orca terminal: %w", err)
+	}
+
+	agentName := kv["agent"]
+	if agentName == "" {
+		agentName = term.AgentIdentity
+	}
+	if agentName == "" {
+		return errors.New("foreman adopt: current agent is unknown; pass --agent claude|codex|omp|grok")
+	}
+	if term.AgentIdentity != "" && term.AgentIdentity != agentName {
+		return fmt.Errorf("foreman adopt: --agent %s conflicts with Orca terminal agent %s", agentName, term.AgentIdentity)
+	}
+	if _, err := agent.ByName(agentName); err != nil {
+		return err
+	}
+
+	if id == "" {
+		matches := map[string]bool{}
+		for _, r := range foreman.List() {
+			if r.WorkspaceTitle == term.Title {
+				matches[r.ID] = true
+			}
+		}
+		const prefix = "bbs foreman "
+		if strings.HasPrefix(term.Title, prefix) {
+			candidate := strings.TrimPrefix(term.Title, prefix)
+			if foreman.ValidID(candidate) == nil {
+				matches[candidate] = true
+			}
+		}
+		if len(matches) != 1 {
+			return errors.New("foreman adopt: first direct invocation needs a project-scoped id")
+		}
+		for match := range matches {
+			id = match
+		}
+	}
+	if err := foreman.ValidID(id); err != nil {
+		return err
+	}
+
+	dir := term.WorktreePath
+	if dir == "" {
+		if dir, err = os.Getwd(); err != nil {
+			return err
+		}
+	}
+	if dir, err = filepath.Abs(dir); err != nil {
+		return err
+	}
+
+	r, loadErr := foreman.Load(id)
+	if loadErr != nil {
+		if !errors.Is(loadErr, os.ErrNotExist) {
+			return loadErr
+		}
+		r = foreman.Record{ID: id}
+	} else {
+		if r.Agent == "" && r.Session != "" && agentName != agent.Default {
+			return fmt.Errorf("foreman %s has a legacy %s session — cannot adopt it as %s; retire it first", id, agent.Default, agentName)
+		}
+		if r.Agent != "" && r.Agent != agentName {
+			return fmt.Errorf("foreman %s is pinned to %s — cannot adopt it as %s; retire it first", id, r.Agent, agentName)
+		}
+		if r.ProjectDir != "" {
+			bound, absErr := filepath.Abs(r.ProjectDir)
+			if absErr != nil {
+				return absErr
+			}
+			if filepath.Clean(bound) != filepath.Clean(dir) {
+				return fmt.Errorf("foreman %s is bound to %s — cannot adopt it from %s", id, bound, dir)
+			}
+		}
+		if r.WorkspaceTitle != "" {
+			ref, refErr := client.Ref(r.WorkspaceTitle)
+			if refErr == nil && ref != term.Handle {
+				return fmt.Errorf("foreman %s is already running in another Orca terminal", id)
+			}
+			if refErr != nil && !errors.Is(refErr, orca.ErrNoTerminal) {
+				return fmt.Errorf("cannot resolve foreman %s terminal: %w", id, refErr)
+			}
+		}
+	}
+
+	for _, other := range foreman.List() {
+		if other.ID != id && other.WorkspaceTitle == term.Title {
+			return fmt.Errorf("current Orca terminal is already adopted by foreman %s", other.ID)
+		}
+	}
+	title := "bbs foreman " + id
+	if ref, refErr := client.Ref(title); refErr == nil && ref != term.Handle {
+		return fmt.Errorf("foreman %s is already running in another Orca terminal", id)
+	} else if refErr != nil && !errors.Is(refErr, orca.ErrNoTerminal) {
+		return fmt.Errorf("cannot resolve foreman %s terminal: %w", id, refErr)
+	}
+	if term.Title != title {
+		if err := client.Rename(term.Handle, title); err != nil {
+			return err
+		}
+	}
+
+	r.Owner = currentUser()
+	r.ProjectDir = dir
+	r.WorkspaceDir = dir
+	r.WorkspaceRef = term.Handle
+	r.WorkspaceTitle = title
+	r.Agent = agentName
+	r.Status = "working"
+	r.Heartbeat = foreman.Now()
+	r.Unreachable = ""
+	if err := foreman.Save(r); err != nil {
+		return err
+	}
+	fmt.Printf("adopted %s in %s as %s\n", id, title, agentName)
+	return nil
+}
+
 func foremanHeartbeat(args []string) error {
 	id, kv, err := foremanFlags(args)
 	if err != nil {
@@ -302,6 +452,35 @@ func foremanSpawn(args []string) (string, error) {
 		return "", err
 	}
 	return spawnForeman(id, kv["dir"], kv["command"], kv["agent"])
+}
+
+// foremanEnsure is the idempotent watchdog entrypoint: an open terminal is a
+// no-op; a closed one is recreated through spawnForeman, which either resumes
+// an exact conversation or cold-starts on the durable Foreman skill contract.
+func foremanEnsure(args []string) error {
+	id, _, err := foremanFlags(args)
+	if err != nil {
+		return err
+	}
+	if id == "" {
+		return fmt.Errorf("foreman ensure: needs an id\n%s", foremanUsage)
+	}
+	rec, err := foreman.Load(id)
+	if err != nil {
+		return err
+	}
+	client, err := orca.Preflight()
+	if err != nil {
+		return err
+	}
+	if _, err := client.Ref(rec.WorkspaceTitle); err == nil {
+		fmt.Printf("running %s in %s\n", id, rec.WorkspaceTitle)
+		return nil
+	} else if !errors.Is(err, orca.ErrNoTerminal) {
+		return fmt.Errorf("cannot tell whether %s is still running: %w", id, err)
+	}
+	_, err = spawnForeman(id, "", "", "")
+	return err
 }
 
 // foremanWorkerCommand prints the command line that runs one worker on a
@@ -365,9 +544,10 @@ func foremanWorkerCommand(args []string) error {
 // closed used to be a hard error ("retire it first"), which is the one thing a
 // human must not do here: retiring drops the record, and with it the only
 // pointer back to the conversation the foreman was having. So a registered id
-// with a dead terminal re-opens one on `claude --resume <session>` instead. A
-// registered id whose terminal is still OPEN stays an error — that is a real
-// collision, not a restart.
+// with a dead terminal re-opens the pinned agent instead. It resumes an exact
+// recorded conversation when one exists and otherwise starts from durable
+// Foreman state. A registered id whose terminal is still OPEN stays an error —
+// that is a real collision, not a restart.
 func spawnForeman(id, dir, command, agentFlag string) (string, error) {
 	client, err := orca.Preflight()
 	if err != nil {
@@ -412,9 +592,9 @@ func spawnForeman(id, dir, command, agentFlag string) (string, error) {
 		r = foreman.Record{ID: id}
 	}
 
-	// The session id is minted here rather than read back afterwards. A foreman
-	// is one long conversation, and the only durable handle on it is the uuid
-	// Claude Code was told to use: correlating after the fact through
+	// The session id is minted here rather than read back afterwards. When the
+	// agent supports an exact conversation handle, the uuid is the only safe
+	// way to resume it: correlating after the fact through
 	// ~/.babysit/sessions by cwd cannot tell two sessions in the same repo
 	// apart, which is exactly the case a foreman lives in.
 	//
@@ -422,28 +602,19 @@ func spawnForeman(id, dir, command, agentFlag string) (string, error) {
 	// fresh — there is nothing to resume, and guessing a handle would fail at
 	// launch.
 	//
-	// "Has a conversation to resume" is keyed on the recorded AGENT, not on the
-	// recorded session: an agent with no mint flag records no session id and
-	// would otherwise look, forever, like a foreman that had never run.
-	verb, session := "spawned", r.Session
-	resumable := resuming && r.Agent != ""
-	if resumable {
-		verb = "resumed"
-	}
+	session := r.Session
 
-	// Which CLI runs this foreman. On a resume the recorded agent wins over
+	// Which CLI runs this foreman. On a restart the recorded agent wins over
 	// config: the handle recorded above is only meaningful to the CLI that
 	// minted it, so re-resolving from a config that has changed since would
-	// hand a different agent something it has never heard of. That is true even
-	// for an agent whose handle is empty — resuming "the most recent
-	// conversation" under a different CLI resumes a different conversation. An
+	// hand a different agent something it has never heard of. An
 	// explicit --agent that contradicts the recording is a mistake worth naming
 	// rather than silently honoring either way.
 	var prof agent.Profile
-	if resumable {
+	if resuming && r.Agent != "" {
 		pinned := r.Agent
 		if agentFlag != "" && agentFlag != pinned {
-			return "", fmt.Errorf("foreman %s has a %s session — cannot resume it as %s; "+
+			return "", fmt.Errorf("foreman %s is pinned to %s — cannot restart it as %s; "+
 				"retire it first to start a fresh conversation", id, pinned, agentFlag)
 		}
 		prof, err = agent.ByName(pinned)
@@ -454,7 +625,6 @@ func spawnForeman(id, dir, command, agentFlag string) (string, error) {
 			return "", fmt.Errorf("foreman %s has a %s session — cannot resume it as %s; "+
 				"retire it first to start a fresh conversation", id, agent.Default, agentFlag)
 		}
-		verb = "resumed"
 		prof, err = agent.ByName(agent.Default)
 	} else {
 		prof, err = agent.Resolve(agent.ForemanKey, agentFlag)
@@ -464,15 +634,17 @@ func spawnForeman(id, dir, command, agentFlag string) (string, error) {
 	}
 
 	// Mint the durable handle only once the profile is known, because what a
-	// handle even IS depends on the agent. Only some agents take a uuid;
-	// omp has no mint flag and gets a private session directory instead, so
-	// that "the most recent conversation in there" is unambiguously this
-	// foreman's rather than whatever else ran in the same checkout; codex has
-	// neither and gets "", resuming by "most recent" alone.
+	// handle even IS depends on the agent. This includes the first restart of a
+	// directly adopted session: its current conversation cannot be retroactively
+	// named, but the replacement can be, making later restarts exact. Only some
+	// agents take a uuid; omp gets a private session directory instead. Codex has
+	// neither and gets "": it cold-starts rather than risk attaching this
+	// foreman to another foreman's most-recent chat in the same repo.
 	//
 	// Recording a uuid against an agent that cannot be told to use it is the
 	// specific bug this ordering prevents: the record would look resumable and
 	// the resume would hand the CLI an id it has never heard of.
+	hadSession := session != ""
 	if session == "" {
 		uuid := ""
 		if prof.MintsSessionID() {
@@ -481,6 +653,14 @@ func spawnForeman(id, dir, command, agentFlag string) (string, error) {
 			}
 		}
 		session = prof.SessionToken(uuid, filepath.Join(foreman.Dir(), id+".sessions"))
+	}
+	verb := "spawned"
+	if resuming {
+		verb = "restarted"
+	}
+	resumable := resuming && hadSession && prof.CanResume(session)
+	if resumable {
+		verb = "resumed"
 	}
 
 	title := "bbs foreman " + id
@@ -494,10 +674,11 @@ func spawnForeman(id, dir, command, agentFlag string) (string, error) {
 		if err := prof.PreflightDir(dir); err != nil {
 			return "", err
 		}
-		if verb == "resumed" {
-			command = prof.ResumeCommand(session, prof.SkillRef(foremanSkillName))
+		prompt := foremanSkillPrompt(prof, id, "")
+		if resumable {
+			command = prof.ResumeCommand(session, prompt)
 		} else {
-			command = prof.NewSessionCommand(session, prof.SkillRef(foremanSkillName))
+			command = prof.NewSessionCommand(session, prompt)
 		}
 	}
 	ref, err := client.Create(orca.CreateOpts{Title: title, Cwd: dir, Command: command})

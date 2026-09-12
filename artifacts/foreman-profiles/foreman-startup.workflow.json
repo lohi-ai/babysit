@@ -1,0 +1,81 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "Foreman + N Autopilot Workers — Startup Profile",
+    "locale": "en",
+    "animation": "none",
+    "quality_profile": "showcase",
+    "output": "artifacts/foreman-profiles/foreman-startup.html"
+  },
+  "lanes": [
+    { "id": "project", "label": "Product Initiative" },
+    { "id": "foreman", "label": "Autonomous Foreman" },
+    { "id": "workers", "label": "Autopilot Worker Pool" },
+    { "id": "delivery", "label": "Quality & Delivery" }
+  ],
+  "phases": [
+    { "id": "shape", "label": "Plan + prepare", "fromCol": 0, "toCol": 1 },
+    { "id": "build", "label": "Parallel delivery", "fromCol": 2, "toCol": 3, "variant": "emphasis" },
+    { "id": "ship", "label": "Integrate + finish", "fromCol": 4, "toCol": 5, "variant": "dashed" }
+  ],
+  "groups": [
+    { "id": "two_phase", "label": "Plan-only → Foreman design gate → Build + QA", "lane": "workers", "fromCol": 2, "toCol": 4, "variant": "emphasis" }
+  ],
+  "mainPath": ["initiative", "foreman_start", "ticket_dag", "scheduler", "worker_1", "ticket_gates", "integration", "configured_finish"],
+  "semanticChecks": {
+    "allowedRoots": ["initiative", "change_intake"],
+    "allowedTerminals": ["configured_finish"],
+    "requiredPaths": [
+      { "from": "initiative", "to": "configured_finish" },
+      { "from": "scheduler", "to": "ticket_gates" }
+    ]
+  },
+  "nodes": [
+    { "id": "initiative", "lane": "project", "col": 0, "type": "external", "label": "Large feature", "sublabel": "customer outcome", "width": 136 },
+    { "id": "foreman_start", "lane": "foreman", "col": 0, "type": "backend", "label": "Foreman", "sublabel": "direct skill + ID", "tag": "profile: startup", "width": 136 },
+    { "id": "change_intake", "lane": "project", "col": 1, "type": "external", "label": "New ticket / CR", "sublabel": "durable live intake", "width": 136 },
+    { "id": "ticket_dag", "lane": "foreman", "col": 1, "type": "database", "label": "Claimed DAG", "sublabel": "one parent owner", "width": 136 },
+    { "id": "scheduler", "lane": "foreman", "col": 2, "type": "messagebus", "label": "Orca scheduler", "sublabel": "bounded ready wave", "width": 136 },
+    { "id": "worker_1", "lane": "workers", "col": 2, "type": "backend", "label": "Autopilot 1", "sublabel": "plan → build", "width": 136 },
+    { "id": "worker_2", "lane": "workers", "col": 3, "type": "backend", "label": "Autopilot 2", "sublabel": "plan → build", "width": 136 },
+    { "id": "worker_n", "lane": "workers", "col": 4, "type": "backend", "label": "Autopilot N", "sublabel": "dependency-ready", "width": 136 },
+    { "id": "ticket_gates", "lane": "delivery", "col": 3, "type": "security", "label": "Ticket readiness", "sublabel": "review-pr + QA", "width": 136 },
+    { "id": "integration", "lane": "delivery", "col": 4, "type": "security", "label": "Project QA", "sublabel": "QA lease + compose", "width": 136 },
+    { "id": "configured_finish", "lane": "delivery", "col": 5, "type": "cloud", "label": "Owner opens PR", "sublabel": "target: develop", "tag": "author merges", "width": 136 }
+  ],
+  "edges": [
+    { "id": "initiative_foreman", "from": "initiative", "to": "foreman_start", "label": "delegate outcome", "variant": "emphasis" },
+    { "id": "foreman_dag", "from": "foreman_start", "to": "ticket_dag", "label": "claim + slices", "variant": "default" },
+    { "id": "intake_dag", "from": "change_intake", "to": "ticket_dag", "label": "append child", "variant": "dashed" },
+    { "id": "dag_scheduler", "from": "ticket_dag", "to": "scheduler", "label": "dependency edges", "variant": "emphasis" },
+    { "id": "scheduler_worker_1", "from": "scheduler", "to": "worker_1", "role": "branch", "variant": "default" },
+    { "id": "scheduler_worker_2", "from": "scheduler", "to": "worker_2", "role": "branch", "variant": "default" },
+    { "id": "scheduler_worker_n", "from": "scheduler", "to": "worker_n", "label": "up to N", "role": "async", "variant": "dashed" },
+    { "id": "worker_1_gate", "from": "worker_1", "to": "ticket_gates", "label": "commit + verdicts", "variant": "default" },
+    { "id": "worker_2_gate", "from": "worker_2", "to": "ticket_gates", "variant": "default" },
+    { "id": "worker_n_gate", "from": "worker_n", "to": "ticket_gates", "variant": "default" },
+    { "id": "ticket_project_qa", "from": "ticket_gates", "to": "integration", "label": "ready set", "variant": "emphasis" },
+    { "id": "qa_finish", "from": "integration", "to": "configured_finish", "label": "reviewed locally", "variant": "emphasis" }
+  ],
+  "cards": [
+    {
+      "dot": "violet",
+      "title": "Startup operating model",
+      "items": [
+        "Standard QA covers 5–10 cases; review-pr runs at medium effort",
+        "N comes from parallel_max_workers; default 16 per foreman",
+        "Different parent projects may run under distinct Foreman IDs"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Recovery contract",
+      "items": [
+        "Direct invoke adopts CLI + terminal; Orca IDs persist",
+        "Cold resume reloads the skill and reconstructs Orca + babysit state",
+        "ensure/watch keep multi-day coordination recoverable"
+      ]
+    }
+  ]
+}

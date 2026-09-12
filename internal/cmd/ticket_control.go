@@ -6,6 +6,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/reallongnguyen/babysit/internal/foreman"
 	"github.com/reallongnguyen/babysit/internal/ticket"
 )
 
@@ -205,6 +206,56 @@ func runAssign(args []string) {
 		fmt.Printf("%s: unassigned\n", env.Ticket)
 	} else {
 		fmt.Printf("%s: assigned to %s\n", env.Ticket, foreman)
+	}
+	os.Exit(0)
+}
+
+// claimSet is the compare-and-set ownership path for autonomous coordinators.
+// Human assignment remains an explicit override; a foreman must use claim so
+// two coordinators racing for one parent cannot silently replace each other.
+func claimSet(st *ticket.Store, foremanID, actor string) (owner string, claimed bool, err error) {
+	if err := foreman.ValidID(foremanID); err != nil {
+		return "", false, err
+	}
+	err = withLock(st, func() error {
+		doc := loadForMutate(st)
+		owner = doc.Get("assignee")
+		if owner != "" {
+			return nil
+		}
+		doc.Set("assignee", foremanID)
+		if err := ticket.WriteDoc(st.IndexPath(), doc); err != nil {
+			return err
+		}
+		st.HistoryAppendExtra("claimed", actor,
+			fmt.Sprintf(`{"to":"%s"}`, foremanID))
+		owner, claimed = foremanID, true
+		return nil
+	})
+	return owner, claimed, err
+}
+
+func runClaim(args []string) {
+	env := resolveEnv()
+	needTicket(env)
+	if len(args) != 1 {
+		fmt.Fprintln(os.Stderr, "claim: foreman id required")
+		os.Exit(2)
+	}
+	want := args[0]
+	owner, claimed, err := claimSet(ticket.New(env), want, actorRole())
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	if owner != want {
+		fmt.Fprintf(os.Stderr, "%s: already claimed by %s\n", env.Ticket, owner)
+		os.Exit(2)
+	}
+	if claimed {
+		fmt.Printf("%s: claimed by %s\n", env.Ticket, want)
+	} else {
+		fmt.Printf("%s: already claimed by %s\n", env.Ticket, want)
 	}
 	os.Exit(0)
 }

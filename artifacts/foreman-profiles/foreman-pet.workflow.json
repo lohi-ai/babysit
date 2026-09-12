@@ -1,0 +1,82 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "Foreman + N Autopilot Workers — Pet Profile",
+    "locale": "en",
+    "animation": "none",
+    "quality_profile": "showcase",
+    "output": "artifacts/foreman-profiles/foreman-pet.html"
+  },
+  "lanes": [
+    { "id": "project", "label": "Large Feature" },
+    { "id": "foreman", "label": "Autonomous Foreman" },
+    { "id": "workers", "label": "Autopilot Workers" },
+    { "id": "quality", "label": "Evidence & Finish" }
+  ],
+  "phases": [
+    { "id": "shape", "label": "Shape", "fromCol": 0, "toCol": 1 },
+    { "id": "parallel", "label": "Parallel build", "fromCol": 2, "toCol": 3, "variant": "emphasis" },
+    { "id": "verify", "label": "Verify + hand off", "fromCol": 4, "toCol": 5, "variant": "dashed" }
+  ],
+  "groups": [
+    { "id": "two_phase", "label": "Plan-only → Foreman design gate → Build + QA", "lane": "workers", "fromCol": 2, "toCol": 4, "variant": "emphasis" }
+  ],
+  "mainPath": ["feature", "foreman_start", "ticket_dag", "dispatch", "worker_1", "ticket_gates", "integration", "review_finish"],
+  "semanticChecks": {
+    "allowedRoots": ["feature", "change_intake"],
+    "allowedTerminals": ["review_finish"],
+    "requiredPaths": [
+      { "from": "feature", "to": "review_finish" },
+      { "from": "dispatch", "to": "ticket_gates" }
+    ]
+  },
+  "nodes": [
+    { "id": "feature", "lane": "project", "col": 0, "type": "external", "label": "Large feature", "sublabel": "project goal", "width": 136 },
+    { "id": "foreman_start", "lane": "foreman", "col": 0, "type": "backend", "label": "Foreman", "sublabel": "direct skill + ID", "tag": "profile: pet", "width": 136 },
+    { "id": "change_intake", "lane": "project", "col": 1, "type": "external", "label": "Ticket / CR", "sublabel": "live intake", "width": 136 },
+    { "id": "ticket_dag", "lane": "foreman", "col": 1, "type": "database", "label": "Claimed DAG", "sublabel": "one parent owner", "width": 136 },
+    { "id": "dispatch", "lane": "foreman", "col": 2, "type": "messagebus", "label": "Orca dispatch", "sublabel": "ready tickets only", "width": 136 },
+    { "id": "worker_1", "lane": "workers", "col": 2, "type": "backend", "label": "Autopilot 1", "sublabel": "ticket worktree", "width": 136 },
+    { "id": "worker_2", "lane": "workers", "col": 3, "type": "backend", "label": "Autopilot 2", "sublabel": "ticket worktree", "width": 136 },
+    { "id": "worker_n", "lane": "workers", "col": 4, "type": "backend", "label": "Autopilot N", "sublabel": "next ready ticket", "width": 136 },
+    { "id": "ticket_gates", "lane": "quality", "col": 3, "type": "security", "label": "Ticket gates", "sublabel": "review-pr + QA", "width": 136 },
+    { "id": "integration", "lane": "quality", "col": 4, "type": "security", "label": "Integration QA", "sublabel": "QA lease + compose", "width": 136 },
+    { "id": "review_finish", "lane": "quality", "col": 5, "type": "cloud", "label": "Owner pushes main", "sublabel": "push is release", "tag": "after foreman review stop", "width": 136 }
+  ],
+  "edges": [
+    { "id": "feature_to_foreman", "from": "feature", "to": "foreman_start", "label": "delegate project", "variant": "emphasis" },
+    { "id": "foreman_to_dag", "from": "foreman_start", "to": "ticket_dag", "label": "claim + decompose", "variant": "default" },
+    { "id": "intake_to_dag", "from": "change_intake", "to": "ticket_dag", "label": "new child", "variant": "dashed" },
+    { "id": "dag_to_dispatch", "from": "ticket_dag", "to": "dispatch", "label": "ready wave", "variant": "emphasis" },
+    { "id": "dispatch_worker_1", "from": "dispatch", "to": "worker_1", "role": "branch", "variant": "default" },
+    { "id": "dispatch_worker_2", "from": "dispatch", "to": "worker_2", "role": "branch", "variant": "default" },
+    { "id": "dispatch_worker_n", "from": "dispatch", "to": "worker_n", "label": "up to N", "role": "async", "variant": "dashed" },
+    { "id": "worker_1_gate", "from": "worker_1", "to": "ticket_gates", "label": "commit + evidence", "variant": "default" },
+    { "id": "worker_2_gate", "from": "worker_2", "to": "ticket_gates", "variant": "default" },
+    { "id": "worker_n_gate", "from": "worker_n", "to": "ticket_gates", "variant": "default" },
+    { "id": "gates_integration", "from": "ticket_gates", "to": "integration", "label": "all current", "variant": "emphasis" },
+    { "id": "integration_finish", "from": "integration", "to": "review_finish", "label": "PASS / N/A", "variant": "emphasis" }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Pet operating model",
+      "items": [
+        "Foreman keeps topology and worker lifecycle out of autopilot",
+        "Smoke QA covers 3–5 cases; review-pr runs at low effort",
+        "N comes from parallel_max_workers; default 16 per foreman",
+        "Different parents may run under different Foreman IDs"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Completion rule",
+      "items": [
+        "Every ticket has current review-pr and QA evidence",
+        "Foreman stops at review; the owner decides when to push main",
+        "Direct invoke adopts CLI; ensure/watch recover long runs"
+      ]
+    }
+  ]
+}

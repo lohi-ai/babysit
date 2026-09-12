@@ -4,6 +4,7 @@
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 F="$ROOT/.claude/skills/foreman/SKILL.md"
+A="$ROOT/.claude/skills/autopilot/SKILL.md"
 WRAPPER="$ROOT/skills/foreman/SKILL.md"
 
 PASS=0; FAIL=0; FAIL_NAMES=()
@@ -31,6 +32,23 @@ has_all "foreman-owns-topology" \
   'bbs ticket ensure --mode=worktree' 'git worktree list' \
   'git worktree remove' 'dependency-order finish'
 
+has_all "bounded-worker-pool" \
+  'bbs config get parallel_max_workers' 'MAX_WORKERS=16' \
+  'positive integer' 'one writer per child worktree'
+
+has_all "autopilot-worker-execution-envelope" \
+  '`AGENT_ROLE=orca`' 'already spawned' \
+  'skips any developer `/goal`' 'worker-start --agent' \
+  'exactly one `worker_done`'
+
+if grep -q 'authenticated, current Orca Dispatch preamble' "$A" \
+   && grep -q 'use the injected lifecycle instead' "$A" \
+   && grep -q 'developer `/goal` handoff' "$A"; then
+  ok "autopilot-accepts-orca-dispatch-envelope"
+else
+  fail "autopilot-accepts-orca-dispatch-envelope"
+fi
+
 has_all "agent-independent-design-gate" \
   'Two-phase ticket dispatch' '--stop-after=plan' 'Orca decision gate' \
   'approval self-resolve'
@@ -42,6 +60,23 @@ has_all "project-qa-gate" \
 has_all "durable-resume-and-finish" \
   'pointers.orca_run' 'Terminal handles are routing metadata' \
   'bbs ticket readiness --json' 'BBS_FINISH=review | land | pr'
+
+has_all "single-writer-multi-foreman" \
+  '--foreman-id <id>' 'bbs ticket claim' 'hard fence' \
+  'different parents may run'
+
+has_all "direct-skill-invocation-is-primary" \
+  'Direct skill invocation' 'default entrypoint' \
+  'bbs foreman adopt' '--agent claude' '--agent omp' '--agent codex' \
+  'not a prerequisite' 're-adopt the current session'
+
+has_all "live-change-intake" \
+  'bbs foreman inbox' 'change-request' \
+  "Do not rewrite a settled ticket" 'prior Integration QA'
+
+has_all "goal-compaction-and-days" \
+  'persistent goal proxy' 'Compaction is a cold-resume boundary' \
+  'bbs foreman ensure <id>' 'cold-starts instead'
 
 if ! grep -q 'bbs foreman mailbox wait' "$F" \
    && ! grep -q 'sleep 20' "$F" \

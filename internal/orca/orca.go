@@ -109,10 +109,11 @@ func (c *Client) ready() error {
 
 // Terminal is one live Orca terminal.
 type Terminal struct {
-	Handle       string `json:"handle"`
-	Title        string `json:"title"`
-	Connected    bool   `json:"connected"`
-	WorktreePath string `json:"worktreePath"`
+	Handle        string `json:"handle"`
+	Title         string `json:"title"`
+	Connected     bool   `json:"connected"`
+	WorktreePath  string `json:"worktreePath"`
+	AgentIdentity string `json:"agentIdentity"`
 }
 
 // CreateOpts describes a terminal to create. Command runs in the new
@@ -282,6 +283,36 @@ func (c *Client) Ref(title string) (string, error) {
 		return "", err
 	}
 	return t.Handle, nil
+}
+
+// CurrentTerminal returns the Orca terminal that contains the caller. Direct
+// skill invocation uses this to adopt the already-running agent session rather
+// than requiring foreman spawn to create a second one.
+func (c *Client) CurrentTerminal() (Terminal, error) {
+	raw, err := c.run("terminal", "show")
+	if err != nil {
+		return Terminal{}, err
+	}
+	var wrap struct {
+		Terminal Terminal `json:"terminal"`
+	}
+	if err := json.Unmarshal(raw, &wrap); err != nil {
+		return Terminal{}, fmt.Errorf("terminal show: %w", err)
+	}
+	if wrap.Terminal.Handle == "" {
+		return Terminal{}, errors.New("orca terminal show: current terminal is unavailable")
+	}
+	return wrap.Terminal, nil
+}
+
+// Rename gives an adopted terminal a stable title. Runtime handles are
+// ephemeral; the title is how watchdogs and dashboard wakes find it again.
+func (c *Client) Rename(handle, title string) error {
+	if handle == "" || title == "" {
+		return errors.New("orca terminal rename: handle and title are required")
+	}
+	_, err := c.run("terminal", "rename", "--terminal", handle, "--title", title)
+	return err
 }
 
 func (c *Client) lookup(title string) (Terminal, error) {

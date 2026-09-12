@@ -68,11 +68,10 @@ type Profile struct {
 	Name string
 	// Bin is the executable looked up on PATH.
 	Bin string
-	// Yolo is the flag that stops the agent asking for tool approval. A worker
-	// runs unattended in an Orca terminal nobody is watching keystroke by
-	// keystroke, so without it the run stalls on the first edit. Foreman spawns
-	// deliberately omit it — a foreman is attended, and the human at the
-	// sidebar is the approver.
+	// Yolo is the flag that stops the agent asking for tool approval. Workers
+	// and autonomous foremen run unattended in Orca terminals, so without it a
+	// multi-day run stalls on the first mutation. Skill policy still fences
+	// money, auth, irreversible data, and unauthorized finish actions.
 	Yolo string
 	// Session is the flag binding a NEW conversation to a uuid we minted, and
 	// Resume re-opens one by that uuid. claude and grok happen to spell these
@@ -92,8 +91,8 @@ type Profile struct {
 	// the property Continue alone does not have in a shared checkout.
 	SessionDir string
 	// Continue re-opens the most recent conversation without naming it (omp:
-	// --continue, codex: `resume --last`). It is the fallback for an agent with
-	// no Session, and is only trustworthy when paired with SessionDir.
+	// --continue). It is only trustworthy when paired with SessionDir. A shared
+	// repo may host several foremen, so an unscoped "last" is never safe.
 	Continue string
 	// SkillPrefix is how this agent namespaces babysit's skills in a prompt.
 	// "bbs:" for agents that read the plugin manifest; "" for agents that
@@ -185,7 +184,7 @@ var profiles = map[string]Profile{
 		// codex has no mint flag either, and its resume is a SUBCOMMAND taking a
 		// positional id (`codex resume <id>`) rather than a flag — which renders
 		// identically, because the token follows the word either way.
-		Session: "", Resume: "resume", Continue: "resume --last",
+		Session: "", Resume: "resume", Continue: "",
 		SkillSigil: "$", SkillPrefix: "bbs:",
 		Install: "install codex: https://developers.openai.com/codex/cli, then install babysit: " +
 			"codex plugin marketplace add lohi-ai/babysit && codex plugin add bbs@babysit",
@@ -379,13 +378,21 @@ func (p Profile) WorkerCommand(prompt string) string {
 // hand it one it cannot find. SessionToken says what to record instead.
 func (p Profile) MintsSessionID() bool { return p.Session != "" }
 
+// CanResume reports whether session identifies exactly one conversation.
+// Falling back to a repo-wide "most recent" chat can attach one foreman to
+// another foreman's goal, so agents without an id or private store cold-start
+// and recover from the project's durable state instead.
+func (p Profile) CanResume(session string) bool {
+	return session != "" && (p.MintsSessionID() || p.SessionDir != "")
+}
+
 // SessionToken is the durable handle to record for a foreman's conversation,
 // given a freshly minted uuid and a private directory this foreman may own.
 // Three shapes, strongest first:
 //
 //	uuid  — the agent takes --session-id (claude, grok)
 //	dir   — the agent only has a private session store (omp)
-//	""    — neither; resume falls back to "the most recent conversation" (codex)
+//	""    — neither; foreman recovery cold-starts from durable project state
 //
 // The caller supplies both candidates rather than this deciding how to build a
 // path, so the directory stays the caller's layout concern.
@@ -400,14 +407,14 @@ func (p Profile) SessionToken(uuid, dir string) string {
 }
 
 // NewSessionCommand starts a fresh conversation carrying the durable handle
-// SessionToken chose, and ResumeCommand re-opens it. These are the foreman's
-// spawn shapes: no Yolo, because a foreman is attended.
+// SessionToken chose, and ResumeCommand re-opens it. Foremen are autonomous,
+// so both shapes include the profile's unattended approval flag.
 func (p Profile) NewSessionCommand(session, prompt string) string {
-	return p.Bin + p.sessionArgs(session, false) + " " + shellQuote(prompt)
+	return p.Bin + " " + p.Yolo + p.sessionArgs(session, false) + " " + shellQuote(prompt)
 }
 
 func (p Profile) ResumeCommand(session, prompt string) string {
-	return p.Bin + p.sessionArgs(session, true) + " " + shellQuote(prompt)
+	return p.Bin + " " + p.Yolo + p.sessionArgs(session, true) + " " + shellQuote(prompt)
 }
 
 // sessionArgs renders the session half of a foreman command line, and its one

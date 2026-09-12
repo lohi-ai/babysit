@@ -61,6 +61,8 @@ func newTicketCmd() *cobra.Command {
 				runSetParent(args[1:])
 			case "assign":
 				runAssign(args[1:])
+			case "claim":
+				runClaim(args[1:])
 			case "pause":
 				runPause(args[1:])
 			case "cancel":
@@ -174,6 +176,7 @@ Subcommands:
   set-phase <s>     set current owning skill
   set-parent <t>    set parent ticket
   assign <foreman-id>|--none    set the owning foreman (assignee)
+  claim <foreman-id>             atomically claim an unowned project; same owner is idempotent
   pause [--note M]  human override: stop dispatch, keep status (reversible)
   cancel [--note M] human override: drop from dispatch, keep status (reversible)
   resume            clear a pause      restore   clear a cancel

@@ -7,7 +7,8 @@ description: Autonomous Orca orchestrator for large projects made of multiple ti
 Complete a multi-ticket project without making the human coordinate its parts.
 Foreman owns project topology and orchestration; workers own code. Every worker
 is a supervised Orca Dispatch running the `autopilot` assistant in a worktree
-foreman prepared.
+foreman prepared. Foreman is a persistent goal proxy: one process may disappear,
+compact, or restart, but the project goal continues from ticket and Orca state.
 
 Follow [the preamble](../references/preamble.md),
 [Auto-Decision Framework](../references/auto-decision-framework.md), and
@@ -55,6 +56,36 @@ whose response was lost.
 
 ## Invocation and durable state
 
+Direct skill invocation from Codex, OMP, or Claude Code inside an Orca terminal
+is the default entrypoint. `bbs foreman spawn` is optional recovery/convenience,
+not a prerequisite. Before any other mutation, adopt the invoking session:
+
+1. Resolve `FOREMAN_ID`. A managed spawn, dashboard wake, or watchdog nudge
+   supplies `--foreman-id <id>` and it wins. On a first direct invocation,
+   choose a stable project-scoped id (prefer `fm-<parent>` when the parent
+   exists). On a compacted or bare continuation, omit the id only when this
+   terminal was already adopted; the command recovers its one recorded id.
+2. Name the agent that is executing this skill and run the corresponding form:
+
+   ```bash
+   bbs foreman adopt "$FOREMAN_ID" --agent claude  # Claude Code
+   bbs foreman adopt "$FOREMAN_ID" --agent omp     # OMP
+   bbs foreman adopt "$FOREMAN_ID" --agent codex   # Codex
+   ```
+
+   Run exactly one matching form, not all three. On a continuation whose id is
+   not in context, use `bbs foreman adopt --agent <current-agent>`.
+3. Treat adoption failure as `BLOCKED`. Adoption resolves the active Orca
+   terminal, cross-checks its agent identity, renames it to `bbs foreman <id>`,
+   persists the agent/workspace binding, and is idempotent for that same
+   terminal. It refuses another live terminal, agent, repo, or Foreman id.
+
+Never use low-level `bbs foreman register` for direct skill invocation and
+never borrow another live terminal's id. When running multiple foremen in one
+repo, give each a distinct id and parent project. Direct invocation inherits
+the current CLI's permission mode; the session must already permit unattended
+tool use if nobody will be present to answer harness-level approval prompts.
+
 - **Free-text project** — create a parent project ticket on the current
   checkout without cutting it, persist the requirement, run `plan-draft`, and
   decompose L work into bounded child tickets. A list of already-independent
@@ -70,6 +101,19 @@ whose response was lost.
   the live Orca recovery rules. Leave ticket branches and worktrees intact and
   resumable unless the user separately asked to remove them.
 
+Before creating/binding a Run, changing the DAG, creating worktrees,
+dispatching, running integration QA, or finishing, atomically claim the parent:
+
+```bash
+BABYSIT_TICKET=<parent> bbs ticket claim "$FOREMAN_ID"
+```
+
+The same owner is an idempotent success. Another owner is a hard fence: remain
+read-only, identify that foreman and its Run, and report `BLOCKED`. Human
+`assign` is an explicit ownership transfer, not a command two live foremen may
+race. One parent has one mutating foreman; different parents may run in
+parallel, including inside the same repository.
+
 The parent ticket is the durable project record. Its `requirement.md`,
 `plan.md`, and `manifest.md` define the objective and decomposition; `children`
 and `relations` define the DAG. Each child records its parent, position, seed,
@@ -77,10 +121,61 @@ branch, worktree, Orca task/dispatch ids, and verdicts. Persist ids immediately
 after each successful external mutation. Terminal handles are routing metadata,
 never recovery identity.
 
-At every tick, re-read control state. `paused` or `cancelled` means no new
-dispatch; leave current files and commits in place. Never act on remembered
-status. Mirror project progress into the native task list when available, but
-ticket + Orca state remain authoritative.
+At every tick, re-adopt the current session idempotently, heartbeat the foreman
+record, re-read `bbs foreman inbox "$FOREMAN_ID"`, parent/child relations, and
+control state before reading Orca mail. Repeat the inbox read after every
+Delivery or wait timeout and immediately before finish. `paused` or `cancelled`
+means no new dispatch; leave current files and commits in place. Never act on
+remembered status. Mirror project progress into the native task list when
+available, but ticket + Orca state remain authoritative.
+
+## Persistent goal and long-horizon loop
+
+When the harness exposes a persistent goal facility, run Foreman under one
+goal. Reuse a compatible active goal; otherwise create it from the user's
+Foreman request. Its objective must name `FOREMAN_ID`, the owned parent ticket,
+the installed `foreman` skill as the protocol to reload on every continuation,
+and the terminal condition: every required ticket and integration gate is
+complete under the configured finish policy, or a structured
+`BLOCKED`/`NEEDS_CONTEXT` handoff is persisted. Keep detailed instructions in
+this skill and project artifacts, not in the goal text.
+
+Compaction is a cold-resume boundary. On the first pass after compaction,
+re-invoke/re-read this skill, the preamble, and the live Orca orchestration
+guide, then re-adopt the current terminal before reconciling disk and Orca
+state. A wait timeout, idle prompt,
+context compaction, rate-limit pause, closed terminal, or process restart is not
+a terminal goal outcome. Never complete the goal for one of those conditions.
+
+Use bounded rolling `check --wait` calls so each timeout becomes a full
+reconcile/heartbeat tick. For multi-day work, an external scheduler may run
+`bbs foreman ensure <id>` to recreate a missing terminal and `bbs foreman watch
+<id> --once` to refresh an idle one. Both paths re-enter with the skill and
+foreman id; a harness without an exact conversation handle cold-starts instead
+of resuming an ambiguous "last" chat. Machine sleep or shutdown pauses work;
+the next ensure/resume continues it from durable state.
+
+## Live ticket and change-request intake
+
+The assigned ticket set is the durable intake queue. A dashboard assignment
+wakes the running foreman immediately; a CLI-created assignment is still found
+on the next bounded reconcile tick. Terminal prose or an Orca message may wake
+the coordinator, but it is not accepted scope until represented on disk.
+
+- A new feature slice is a normal child ticket linked on both sides to the
+  owned parent, assigned to `FOREMAN_ID`, and added to the Orca DAG exactly
+  once. Create missing Tasks before dispatching the next ready wave.
+- A change request after planning or implementation began becomes a new child
+  ticket labeled `change-request`, with its own requirement and explicit
+  dependency/impact relations. Do not rewrite a settled ticket or silently
+  change an active Dispatch's accepted scope.
+- If the request supersedes active work, pause the affected ticket, preserve its
+  worktree, and use a fresh plan/build Dispatch for the replacement scope. If it
+  is additive, let unaffected work continue and schedule the CR by dependency.
+- Any accepted child-set or parent-criteria change makes prior Integration QA
+  stale. Recompose and rerun it. If intake changes during finish, stop after the
+  current safe handler boundary, reconcile the new DAG, and never report the
+  old child snapshot as project completion.
 
 ## Decompose and prepare topology
 
@@ -104,10 +199,29 @@ ticket + Orca state remain authoritative.
    normal recorded merge before dispatch. On conflict, leave the conflict to a
    supervised worker on that ticket; foreman never edits the resolution.
 
-`MAX_WORKERS` comes from `parallel_max_workers` (default 3). Create all Orca
-Tasks and their dependency edges before starting the first ready wave. Orca
-does not infer scheduling or filesystem conflicts: foreman dispatches only
-ready Tasks up to the limit and keeps one writer per child worktree.
+Resolve the worker bound on every fresh invocation or resume:
+
+```bash
+MAX_WORKERS="$(bbs config get parallel_max_workers 2>/dev/null || true)"
+[ -n "$MAX_WORKERS" ] || MAX_WORKERS=16
+```
+
+An explicit value must be a positive integer; otherwise report `BLOCKED` with
+the invalid value. Create all Orca Tasks and their dependency edges before
+starting the first ready wave. Orca does not infer scheduling or filesystem
+conflicts: foreman dispatches only ready Tasks up to `MAX_WORKERS` and keeps
+one writer per child worktree. The bound is per foreman: `F` concurrent foremen
+can request up to `F × MAX_WORKERS`, so each still respects actual Orca/host
+capacity rather than treating 16 as a launch quota.
+
+Every worker Task spec must establish the execution envelope before naming its
+ticket work: this is a supervised Orca Dispatch, its effective
+`AGENT_ROLE=orca`, and it is already spawned. The worker invokes the installed
+skill directly in that turn, skips any developer `/goal` copy/paste handoff,
+uses Orca `ask` for a genuine User Challenge, and follows the injected
+lifecycle through exactly one `worker_done`. This statement in the Task spec is
+load-bearing because `worker-start --agent` does not expose an environment
+option; never assume a coordinator shell export reached the worker process.
 
 ## Two-phase ticket dispatch
 
@@ -201,16 +315,20 @@ removal, or terminal-close commands in place of Orca `worker-release`.
 
 Cold resume must be sufficient with no conversation memory:
 
-1. Resolve parent and children from ticket relations; read controls,
+1. Re-read this skill and the live Orca guide; resolve `FOREMAN_ID`, re-adopt
+   the current terminal, re-claim the parent, and reconstruct the active
+   persistent goal.
+2. Resolve parent and children from ticket relations and the current foreman
+   inbox; read controls,
    manifests, checkpoints, verdicts, and finish policy.
-2. Bind the recorded Orca Run and list its Tasks. For each Task, inspect the
+3. Bind the recorded Orca Run and list its Tasks. For each Task, inspect the
    current Dispatch and supervised worker state using the live guide.
-3. Cross-check each Task against the child worktree and disk gate it claims to
+4. Cross-check each Task against the child worktree and disk gate it claims to
    own. Never synthesize `worker_done` or a PASS to repair disagreement.
-4. Recover a lost mutation by request receipt; keep waiting for live workers;
+5. Recover a lost mutation by request receipt; keep waiting for live workers;
    retry only proven failed/stopped attempts; release every settled worker not
    immediately reused.
-5. Recreate only missing safe topology, dispatch the next ready wave, run any
+6. Recreate only missing safe topology, dispatch the next ready wave, run any
    outstanding integration gate, then finish when all terminal conditions hold.
 
 ## Output

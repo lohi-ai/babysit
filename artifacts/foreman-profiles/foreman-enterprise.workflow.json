@@ -1,0 +1,81 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "Foreman + N Autopilot Workers — Enterprise Profile",
+    "locale": "en",
+    "animation": "none",
+    "quality_profile": "showcase",
+    "output": "artifacts/foreman-profiles/foreman-enterprise.html"
+  },
+  "lanes": [
+    { "id": "portfolio", "label": "Program Scope" },
+    { "id": "foreman", "label": "Autonomous Foreman" },
+    { "id": "workers", "label": "Isolated Autopilot Workers" },
+    { "id": "governance", "label": "Governance & Release" }
+  ],
+  "phases": [
+    { "id": "control", "label": "Control + plan", "fromCol": 0, "toCol": 1, "variant": "security" },
+    { "id": "execute", "label": "Controlled execution", "fromCol": 2, "toCol": 3, "variant": "emphasis" },
+    { "id": "release", "label": "Assure + release", "fromCol": 4, "toCol": 5, "variant": "security" }
+  ],
+  "groups": [
+    { "id": "two_phase", "label": "Plan-only → Foreman design gate → Build + QA", "lane": "workers", "fromCol": 2, "toCol": 4, "variant": "security" }
+  ],
+  "mainPath": ["program", "foreman_start", "governed_dag", "scheduler", "worker_1", "evidence_gate", "integration", "release_boundary"],
+  "semanticChecks": {
+    "allowedRoots": ["program", "change_intake"],
+    "allowedTerminals": ["release_boundary"],
+    "requiredPaths": [
+      { "from": "program", "to": "release_boundary" },
+      { "from": "scheduler", "to": "evidence_gate" }
+    ]
+  },
+  "nodes": [
+    { "id": "program", "lane": "portfolio", "col": 0, "type": "external", "label": "Large feature", "sublabel": "program outcome", "width": 136 },
+    { "id": "foreman_start", "lane": "foreman", "col": 0, "type": "backend", "label": "Foreman", "sublabel": "direct skill + goal", "tag": "profile: enterprise", "width": 136 },
+    { "id": "change_intake", "lane": "portfolio", "col": 1, "type": "external", "label": "Approved ticket / CR", "sublabel": "durable live intake", "width": 136 },
+    { "id": "governed_dag", "lane": "foreman", "col": 1, "type": "database", "label": "Claimed governed DAG", "sublabel": "one parent owner", "width": 136 },
+    { "id": "scheduler", "lane": "foreman", "col": 2, "type": "messagebus", "label": "Orca coordinator", "sublabel": "dependency waves", "width": 136 },
+    { "id": "worker_1", "lane": "workers", "col": 2, "type": "backend", "label": "Autopilot 1", "sublabel": "isolated worktree", "width": 136 },
+    { "id": "worker_2", "lane": "workers", "col": 3, "type": "backend", "label": "Autopilot 2", "sublabel": "isolated worktree", "width": 136 },
+    { "id": "worker_n", "lane": "workers", "col": 4, "type": "backend", "label": "Autopilot N", "sublabel": "isolated worktree", "width": 136 },
+    { "id": "evidence_gate", "lane": "governance", "col": 3, "type": "security", "label": "Evidence gate", "sublabel": "review + QA + policy", "width": 136 },
+    { "id": "integration", "lane": "governance", "col": 4, "type": "security", "label": "Integration QA", "sublabel": "QA lease + compose", "width": 136 },
+    { "id": "release_boundary", "lane": "governance", "col": 5, "type": "cloud", "label": "GitHub review", "sublabel": "PR → develop", "tag": "someone else merges", "width": 136 }
+  ],
+  "edges": [
+    { "id": "program_foreman", "from": "program", "to": "foreman_start", "label": "project brief", "variant": "emphasis" },
+    { "id": "foreman_dag", "from": "foreman_start", "to": "governed_dag", "label": "atomic claim + assign", "variant": "security" },
+    { "id": "intake_dag", "from": "change_intake", "to": "governed_dag", "label": "append governed child", "variant": "dashed" },
+    { "id": "dag_scheduler", "from": "governed_dag", "to": "scheduler", "label": "ready set", "variant": "emphasis" },
+    { "id": "scheduler_worker_1", "from": "scheduler", "to": "worker_1", "role": "branch", "variant": "default" },
+    { "id": "scheduler_worker_2", "from": "scheduler", "to": "worker_2", "role": "branch", "variant": "default" },
+    { "id": "scheduler_worker_n", "from": "scheduler", "to": "worker_n", "label": "up to N", "role": "async", "variant": "dashed" },
+    { "id": "worker_1_gate", "from": "worker_1", "to": "evidence_gate", "label": "evidence", "variant": "security" },
+    { "id": "worker_2_gate", "from": "worker_2", "to": "evidence_gate", "variant": "security" },
+    { "id": "worker_n_gate", "from": "worker_n", "to": "evidence_gate", "variant": "security" },
+    { "id": "gate_integration", "from": "evidence_gate", "to": "integration", "label": "policy PASS", "variant": "security" },
+    { "id": "integration_release", "from": "integration", "to": "release_boundary", "label": "human opens PR", "variant": "emphasis" }
+  ],
+  "cards": [
+    {
+      "dot": "rose",
+      "title": "Enterprise control plane",
+      "items": [
+        "Strict QA covers 8–12 cases; review-pr runs at high effort",
+        "N comes from parallel_max_workers; default 16 per foreman",
+        "Parent claims fence concurrent Foreman coordinators"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Auditable completion",
+      "items": [
+        "Direct invoke adopts CLI + terminal before project claims",
+        "Release follows dependency order only after integration QA",
+        "Goal + skill reload + ensure/watch support multi-day recovery"
+      ]
+    }
+  ]
+}
