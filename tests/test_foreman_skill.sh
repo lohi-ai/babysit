@@ -105,6 +105,20 @@ has_all "goal-compaction-and-days" \
   'persistent goal proxy' 'Compaction is a cold-resume boundary' \
   'bbs foreman ensure <id>' 'cold-starts instead'
 
+has_all "active-status-reconcile" \
+  '## Status reconciliation' 'check --wait' \
+  'never a liveness-only reply' 'Dispatch only newly ready work' \
+  'active for the next bounded check'
+
+has_all "status-wake-full-snapshot" \
+  'status wake' 'always prints the full' \
+  'every project Task and supervised worker' 'IN_PROGRESS'
+
+has_all "terminal-done-heartbeat" \
+  'bbs foreman heartbeat "$FOREMAN_ID" --status done' \
+  'only completion signal' 'record never completes' \
+  'paused, or cancelled project never writes `done`'
+
 if ! grep -q 'bbs foreman mailbox wait' "$F" \
    && ! grep -q 'sleep 20' "$F" \
    && ! grep -q 'Copy the block below' "$F"; then
