@@ -229,6 +229,38 @@ T="$(mktemp -d)"
 ) && ok "land-multi" || fail "land-multi"
 rm -rf "$T"
 
+# ── land-blocks-on-scratch-composition ────────────────────────────────
+# switch composes a ticket onto base as scratch (bbs-serving marker set).
+# land must refuse to merge on top of it — the composition is what reset-base
+# discards, and landing there either no-ops or mixes scratch into history.
+T="$(mktemp -d)"
+(
+  export PATH="$SCRIPT_DIR/bin:$PATH"
+  export HOME="$T/home"; mkdir -p "$HOME"
+  export AGENT_ROLE=mayor
+  build_two_tickets "$T" || { echo "fixture failed"; exit 1; }
+  finish "$TK_A"
+  "$BBS_TICKET_BIN" switch "$TK_A" >/dev/null 2>&1 || { echo "switch failed"; exit 1; }
+
+  before="$(git rev-parse HEAD)"
+  "$BBS_TICKET_BIN" land "$TK_A" >"$T/out" 2>"$T/err"; rc=$?
+  [ "$rc" -eq 2 ] || { echo "expected rc 2, got $rc"; exit 1; }
+  grep -q "STATUS: BLOCKED" "$T/err" || { echo "no BLOCKED; err: $(cat "$T/err")"; exit 1; }
+  grep -q "scratch composition" "$T/err" || { echo "reason must name scratch composition; err: $(cat "$T/err")"; exit 1; }
+  grep -q "reset-base" "$T/err" || { echo "recommendation must name reset-base; err: $(cat "$T/err")"; exit 1; }
+  [ "$(git rev-parse HEAD)" = "$before" ] || { echo "base moved on a blocked land"; exit 1; }
+
+  # After reset-base discards the composition, land succeeds for real.
+  "$BBS_TICKET_BIN" reset-base >/dev/null 2>&1 || { echo "reset-base failed"; exit 1; }
+  out="$("$BBS_TICKET_BIN" land "$TK_A" 2>"$T/err")"; rc=$?
+  [ "$rc" -eq 0 ] || { echo "land after reset failed rc=$rc: $(cat "$T/err")"; exit 1; }
+  printf '%s\n' "$out" | grep -q "^LANDED=1 $TK_A " \
+    || { echo "expected LANDED=1 after reset; out: $out"; exit 1; }
+  [ "$(git rev-list --count --merges origin/main..HEAD)" -eq 1 ] \
+    || { echo "expected one merge commit after reset+land"; exit 1; }
+) && ok "land-blocks-on-scratch-composition" || fail "land-blocks-on-scratch-composition"
+rm -rf "$T"
+
 # ── land-survives-reset-base-guard ────────────────────────────────────
 # reset-base BLOCKs when base carries commits no other branch holds. A landed
 # ticket must not trip it: the ticket branch still holds every commit, and the

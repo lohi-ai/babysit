@@ -67,8 +67,8 @@ has_all "durable-resume-and-finish" \
   'bbs ticket readiness --json' 'BBS_FINISH=review | land | pr'
 
 has_all "ensure-before-init-ordering" \
-  'ensure --mode=worktree' '--from-input "$SEED_SUMMARY"' \
-  'never pre-create the ticket id' 'origin-type sub_ticket' \
+  'ensure --mode=worktree' '--from-input-file "$SEED_PATH"' \
+  'never pre-create' 'fast-path no-op' 'origin-type sub_ticket' \
   'from inside its own worktree'
 
 has_all "reset-base-before-land" \

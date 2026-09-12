@@ -1271,7 +1271,7 @@ func landTickets(args []string) int {
 		if serving := splitCommaSpace(string(b)); len(serving) > 0 {
 			fmt.Fprintln(os.Stderr, "STATUS: BLOCKED")
 			fmt.Fprintf(os.Stderr, "REASON: primary is serving a scratch composition (%s) — land never merges on top of it.\n", strings.Join(serving, ","))
-			fmt.Fprintln(os.Stderr, "RECOMMENDATION: run 'bbs-ticket reset-base' to discard the composition, then re-run land.")
+			fmt.Fprintln(os.Stderr, retarget("RECOMMENDATION: run 'bbs-ticket reset-base' to discard the composition, then re-run land."))
 			return 2
 		}
 	}

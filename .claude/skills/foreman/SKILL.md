@@ -185,13 +185,13 @@ the coordinator, but it is not accepted scope until represented on disk.
    that are independently implementable and verifiable. Keep genuine ordering
    as `blocked_by`/`blocks`; avoid artificial chains deeper than 3–4 tasks.
 2. For each accepted seed, run `bbs ticket ensure --mode=worktree
-   --from-input "$SEED_SUMMARY"` from the canonical repo/base. `ensure` owns
-   the ticket id, branch naming, and initial checkout — it only cuts on its
-   slow path, so never pre-create the ticket id: a resolved `BABYSIT_TICKET`
-   forces the fast-path no-op and no worktree is made. Parse and persist its
-   `TICKET`/`BRANCH`/`WORKTREE` output; never `eval` it. Existing child →
-   read `manifest.yaml` and reuse its exact branch/worktree instead of
-   calling `ensure` again.
+   --from-input-file "$SEED_PATH" --reason foreman-decompose` from the
+   canonical repo/base. `ensure` owns the ticket id, branch naming, and
+   initial checkout — it only cuts on its slow path, so never pre-create the
+   ticket id: a resolved `BABYSIT_TICKET` forces the fast-path no-op and no
+   worktree is made. Parse and persist its `TICKET`/`BRANCH`/`WORKTREE`
+   output; never `eval` it. Existing child → read `manifest.yaml` and reuse
+   its exact branch/worktree instead of calling `ensure` again.
 3. Initialize each child as a sub-ticket from inside its own worktree:
    `bbs ticket init --parent <parent> --origin-type sub_ticket --seed <seed
    path> --plan <parent plan> --position <n> --worktree <path>`. Running it
@@ -322,8 +322,8 @@ close operation. Only after a successful `land` or `pr` — `land` evaluates
 readiness inside the recorded worktree and BLOCKs on chdir if it is gone —
 remove its verified-clean non-primary worktree with ordinary
 `git worktree remove`, and keep its branch. Under `review`, or on any
-failure/hold, keep the worktree recoverable.
-recoverable. Never use `--force`, broad worktree removal, or terminal-close
+failure/hold, keep the worktree recoverable. Never use `--force`, broad
+worktree removal, or terminal-close
 commands in place of Orca `worker-release`.
 
 ## Resume reconciliation
