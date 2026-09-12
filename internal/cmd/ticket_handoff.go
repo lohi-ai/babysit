@@ -320,6 +320,7 @@ var (
 	qaBadDimRe   = regexp.MustCompile(`[a-z_]+=[CD]\b`)
 	qaThinNoEvid = regexp.MustCompile(`(?i)^(none|n/?a|-|tbd)$`)
 	qaE2ERe      = regexp.MustCompile(`(?i)e2e|browser|agent-browser|journey|click|navigat|snapshot|screenshot|\.png|curl|api|cli|request`)
+	qaArtifactRe = regexp.MustCompile(`evidence/[A-Za-z0-9_./-]+`)
 )
 
 // runQAEvidence ports qa-evidence (bbs-ticket.bash:1589-1632): audit the persisted
@@ -374,6 +375,21 @@ func runQAEvidence(args []string) {
 		}
 		if !qaE2ERe.MatchString(evid) {
 			return "thin:no-e2e"
+		}
+		// A verdict that cites an artifact path must have written it — a
+		// citation to a missing file is a fabricated-evidence smell. The
+		// thin: prefix keeps the classification inside the set pre-tool-gate
+		// acts on; traversal is rejected before Stat so a citation can never
+		// escape the ticket home.
+		for _, m := range qaArtifactRe.FindAllString(string(b), -1) {
+			p := filepath.Clean(strings.TrimRight(m, ".,;:)"))
+			if !strings.HasPrefix(p, "evidence/") {
+				// Cleaned path escaped evidence/ (traversal) — flag it, never Stat.
+				return "thin:invalid-artifact-path:" + m
+			}
+			if _, err := os.Stat(filepath.Join(ticket.New(env).Home(), p)); err != nil {
+				return "thin:missing-artifact:" + p
+			}
 		}
 		return "ok"
 	}

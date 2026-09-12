@@ -182,14 +182,20 @@ the coordinator, but it is not accepted scope until represented on disk.
 1. Run the real `plan-draft` skill against the parent. Prefer vertical slices
    that are independently implementable and verifiable. Keep genuine ordering
    as `blocked_by`/`blocks`; avoid artificial chains deeper than 3–4 tasks.
-2. Materialize each accepted seed as a child ticket with
-   `origin.type=sub_ticket`, parent, position, requirement, and both sides of
-   every relation. Assign parent and children to this foreman.
-3. For each child, run `bbs ticket ensure --mode=worktree` from the canonical
-   repo/base. This command owns branch naming and initial checkout. Parse and
-   persist its ticket, branch, and worktree output; never `eval` it. Existing
-   child → read `manifest.yaml` and reuse its exact branch/worktree instead of
+2. For each accepted seed, run `bbs ticket ensure --mode=worktree
+   --from-input <seed summary>` from the canonical repo/base. `ensure` owns
+   the ticket id, branch naming, and initial checkout — it only cuts on its
+   slow path, so never pre-create the ticket id: a resolved `BABYSIT_TICKET`
+   forces the fast-path no-op and no worktree is made. Parse and persist its
+   `TICKET`/`BRANCH`/`WORKTREE` output; never `eval` it. Existing child →
+   read `manifest.yaml` and reuse its exact branch/worktree instead of
    calling `ensure` again.
+3. Initialize each child as a sub-ticket from inside its own worktree:
+   `bbs ticket init --parent <parent> --origin-type sub_ticket --seed <seed
+   path> --plan <parent plan> --position <n> --worktree <path>`. Running it
+   from the worktree records the ticket branch in `pointers.branch`; from
+   the primary it would record `main`. Write `requirement.md`, link both
+   sides of every relation, and assign parent and children to this foreman.
 4. Validate the primary checkout, `git worktree list`, every recorded path,
    branch head, and configured base before dispatch. Recreate a missing clean
    worktree only from its recorded branch. A dirty or divergent worktree is a
@@ -300,16 +306,22 @@ eval "$(bbs autopilot git-flow)"   # BBS_FINISH=review | land | pr
 
 - `review` — leave clean committed branches/worktrees for the human; optionally
   compose them with `bbs ticket serve` when asked.
-- `land` — run `bbs ticket land` in dependency order. It merges locally and
-  never pushes.
+- `land` — if integration QA (or any `switch`/`serve`) left a scratch
+  composition on the primary, run `bbs ticket reset-base` first: `land`
+  checks ancestry and reports `already on <base>` without merging when the
+  ticket commits are composed onto base, so landing on top of a `switch`
+  silently produces no merge commits. Then run `bbs ticket land` in
+  dependency order. It merges locally and never pushes.
 - `pr` — invoke the real `create-pr` skill once per child in dependency order.
   Never replace it with raw git/GitHub commands.
 
 Archive every settled worker's readable output through Orca, then call
 `worker-release` unless immediately reusing it; that is the worker-terminal
-close operation. After a successful `land` or `pr`, also remove only its
-verified-clean non-primary worktree with ordinary `git worktree remove`, and
-keep its branch. Under `review`, or on any failure/hold, keep the worktree
+close operation. Only after a successful `land` or `pr` — `land` evaluates
+readiness inside the recorded worktree and BLOCKs on chdir if it is gone —
+remove its verified-clean non-primary worktree with ordinary
+`git worktree remove`, and keep its branch. Under `review`, or on any
+failure/hold, keep the worktree recoverable.
 recoverable. Never use `--force`, broad worktree removal, or terminal-close
 commands in place of Orca `worker-release`.
 

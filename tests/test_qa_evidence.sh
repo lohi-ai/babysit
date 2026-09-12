@@ -27,6 +27,12 @@ run_case() {
     export BABYSIT_PROJECT_HOME="$T/proj" BABYSIT_TICKET="bs-x"
     unset BBS_TICKET BABYSIT_HOME 2>/dev/null
     mkdir -p "$T/proj/tickets/bs-x/verdicts"
+    # GOOD_EVID cites evidence/qa/signup.png — create it unless the case
+    # opts out via BBS_NO_ARTIFACT=1.
+    if [ "${BBS_NO_ARTIFACT:-0}" != 1 ]; then
+      mkdir -p "$T/proj/tickets/bs-x/evidence/qa"
+      : > "$T/proj/tickets/bs-x/evidence/qa/signup.png"
+    fi
     if [ "$#" -gt 0 ]; then printf '%s\n' "$@" > "$T/proj/tickets/bs-x/verdicts/qa.md"; fi
     "$BBS_TICKET_BIN" qa-evidence 2>/dev/null
   )"; rc=$?
@@ -36,6 +42,15 @@ run_case() {
 
 # no verdict file at all
 run_case "none-no-file" "none"
+# PASS citing an artifact that was never written → thin:missing-artifact
+BBS_NO_ARTIFACT=1 run_case "missing-artifact" "thin:missing-artifact:evidence/qa/signup.png" \
+  "STATUS: DONE" "VERDICT: PASS" "SUMMARY: x" "$GOOD_RUBRIC" "$GOOD_EVID"
+unset BBS_NO_ARTIFACT
+
+# traversal citation is flagged, never Stat'd outside ticket home
+run_case "traversal-flagged" "thin:invalid-artifact-path:evidence/../../etc/passwd" \
+  "STATUS: DONE" "VERDICT: PASS" "SUMMARY: x" "$GOOD_RUBRIC" \
+  "EVIDENCE: agent-browser journey ok; artifact at evidence/../../etc/passwd"
 
 # clean PASS: freshness=A, no C/D, real e2e evidence
 run_case "ok-clean-pass" "ok" \

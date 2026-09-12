@@ -107,8 +107,9 @@ ATTEMPTED: Grepped invoices/*.ts for prior handling — only happy path present.
 RECOMMENDATION: Ask the ticket owner which of A/B/C applies before implementing.
 ```
 ## Native task list
-Multi-step work mirrors into Claude Code's native task list
-(TaskCreate/TaskUpdate): seed tasks from the skill's driving artifact —
+Multi-step work mirrors into the harness's native task list — Claude Code's
+TaskCreate/TaskUpdate, Codex's `update_plan`, OMP's `todo` tool; use whatever
+the active harness exposes. Seed tasks from the skill's driving artifact —
 `plan.md`, the QA flow matrix, workflow milestones — and mark each
 in_progress on start, completed only when its check passes. The task list is
 the visible progress view; disk artifacts stay the durable state — on cold
