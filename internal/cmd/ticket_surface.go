@@ -336,7 +336,7 @@ func splitCommaSpace(s string) []string {
 // surface is one held lease over one primary checkout. A handler builds it
 // with acquireSurface, defers release, and drives the lifecycle — guards,
 // reset, compose, marker — through its methods. The guards print the shared
-// STATUS: BLOCKED shape; the handler supplies the tail of each message,
+// STATUS: BLOCKED shape; the handler supplies the tail of each message.
 type surface struct {
 	primary string
 	gitdir  string
