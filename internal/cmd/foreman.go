@@ -34,6 +34,7 @@ const foremanUsage = `Usage:
   bbs foreman mailbox <status|bind|dispatch|wait|reply|done> ...
   bbs foreman watch [<id>] [--interval <sec>] [--idle <sec>] [--lines <n>]
                     [--status-interval <sec>] [--nudge <text>] [--max-nudges <n>] [--once]
+                    (--status-interval defaults to config foreman_status_interval, 3600)
   bbs foreman retire <id> [--keep-workspace]
   bbs foreman hold <id>
   bbs foreman hold show <id>

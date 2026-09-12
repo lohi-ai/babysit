@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/reallongnguyen/babysit/internal/agent"
+	"github.com/reallongnguyen/babysit/internal/config"
 	"github.com/reallongnguyen/babysit/internal/foreman"
 	"github.com/reallongnguyen/babysit/internal/identity"
 	"github.com/reallongnguyen/babysit/internal/orca"
@@ -38,10 +40,12 @@ import (
 //
 // Beside that stall clock runs a second, independent one: every
 // --status-interval the foreman gets the same skill prompt even while its pane
-// is moving, because a busy pane is not a status report. The two clocks never
-// share state — a status prompt spends no nudge budget and buys no idle time,
-// so it cannot let a dead terminal evade the bound. A foreman that reported
-// itself done leaves the loop entirely.
+// is moving, because a busy pane is not a status report. The flag's default
+// is the configured foreman_status_interval — the same reconciliation
+// interval the Foreman skill bounds its check --wait with — so the two
+// cannot drift. The two clocks never share state — a status prompt spends no
+// nudge budget and buys no idle time, so it cannot let a dead terminal evade
+// the bound. A foreman that reported itself done leaves the loop entirely.
 //
 // Deliberately not a daemon: it is a foreground loop (or a single --once pass
 // for cron), holds no lock, and writes only its own state file. Nothing else in
@@ -122,12 +126,23 @@ func paneFingerprint(pane string) string {
 
 func watchOptsFrom(kv map[string]string) (watchOpts, error) {
 	o := watchOpts{
-		interval:       60 * time.Second,
-		idle:           10 * time.Minute,
-		statusInterval: 15 * time.Minute,
-		lines:          40,
-		nudge:          "check status",
-		maxNudges:      3,
+		interval:  60 * time.Second,
+		idle:      10 * time.Minute,
+		lines:     40,
+		nudge:     "check status",
+		maxNudges: 3,
+	}
+	// The status clock's default is the shared configured reconciliation
+	// interval — the same value the Foreman skill bounds its check --wait
+	// with — so the two cannot drift. An explicit --status-interval wins;
+	// a present-but-invalid configured value fails here rather than
+	// silently tightening the loop.
+	if _, ok := kv["status-interval"]; !ok {
+		secs, err := config.ForemanStatusIntervalSeconds()
+		if err != nil {
+			return o, fmt.Errorf("foreman watch: %w", err)
+		}
+		o.statusInterval = time.Duration(secs) * time.Second
 	}
 	secs := func(key string, dst *time.Duration) error {
 		v, ok := kv[key]
@@ -135,7 +150,7 @@ func watchOptsFrom(kv map[string]string) (watchOpts, error) {
 			return nil
 		}
 		n, err := strconv.Atoi(v)
-		if err != nil || n <= 0 {
+		if err != nil || n <= 0 || int64(n) > math.MaxInt64/int64(time.Second) {
 			return fmt.Errorf("foreman watch: --%s needs a positive number of seconds, got '%s'", key, v)
 		}
 		*dst = time.Duration(n) * time.Second

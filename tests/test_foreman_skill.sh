@@ -134,6 +134,11 @@ else
   fail "codex-wrapper-matches"
 fi
 
+has_all "shared-reconciliation-interval" \
+  'bbs config get foreman_status_interval' 'default 3600' \
+  'check --wait' 'missed-event/restart/stale-state' \
+  'never let a bad value shrink the wait'
+
 echo
 echo "PASS: $PASS  FAIL: $FAIL"
 if [ "$FAIL" -gt 0 ]; then

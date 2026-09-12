@@ -433,11 +433,14 @@ func TestWatchTargetsSkipClosedWorkspaces(t *testing.T) {
 }
 
 func TestWatchOptsDefaultsAndValidation(t *testing.T) {
+	// watchOptsFrom reads foreman_status_interval from the global config, so
+	// isolate it: no file means the documented 3600-second default.
+	t.Setenv("BABYSIT_STATE_DIR", t.TempDir())
 	o, err := watchOptsFrom(map[string]string{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if o.idle != 10*time.Minute || o.interval != time.Minute || o.statusInterval != 15*time.Minute || o.nudge != "check status" || o.maxNudges != 3 {
+	if o.idle != 10*time.Minute || o.interval != time.Minute || o.statusInterval != time.Hour || o.nudge != "check status" || o.maxNudges != 3 {
 		t.Errorf("unexpected defaults: %+v", o)
 	}
 	o, err = watchOptsFrom(map[string]string{"idle": "90", "status-interval": "45", "nudge": "status?", "once": "1"})
@@ -448,10 +451,48 @@ func TestWatchOptsDefaultsAndValidation(t *testing.T) {
 		t.Errorf("flags not applied: %+v", o)
 	}
 	for _, bad := range []map[string]string{
-		{"idle": "0"}, {"idle": "soon"}, {"status-interval": "0"}, {"lines": "-1"}, {"max-nudges": "-1"}, {"nudge": "  "},
+		{"idle": "0"}, {"idle": "soon"}, {"status-interval": "0"}, {"status-interval": "9999999999"}, {"lines": "-1"}, {"max-nudges": "-1"}, {"nudge": "  "},
 	} {
 		if _, err := watchOptsFrom(bad); err == nil {
 			t.Errorf("expected an error for %v", bad)
+		}
+	}
+}
+
+// The status clock's default is the configured reconciliation interval, and
+// the explicit flag still wins over it — the same precedence the Foreman
+// skill documents for its check --wait bound.
+func TestWatchStatusIntervalFromConfig(t *testing.T) {
+	state := t.TempDir()
+	t.Setenv("BABYSIT_STATE_DIR", state)
+	cfg := filepath.Join(state, "config.yaml")
+
+	write(t, cfg, "foreman_status_interval: 1800\n")
+	o, err := watchOptsFrom(map[string]string{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if o.statusInterval != 30*time.Minute {
+		t.Errorf("configured value not applied: %+v", o)
+	}
+
+	o, err = watchOptsFrom(map[string]string{"status-interval": "120"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if o.statusInterval != 2*time.Minute {
+		t.Errorf("explicit --status-interval must win over config: %+v", o)
+	}
+
+	// A present-but-invalid value fails loudly — never a silent tight loop.
+	for _, v := range []string{"0", "-5", "soon", "99999999999999999999"} {
+		write(t, cfg, "foreman_status_interval: "+v+"\n")
+		if _, err := watchOptsFrom(map[string]string{}); err == nil {
+			t.Errorf("expected an error for foreman_status_interval=%q", v)
+		}
+		// The explicit flag rescues the run: it wins before config is read.
+		if _, err := watchOptsFrom(map[string]string{"status-interval": "60"}); err != nil {
+			t.Errorf("explicit flag should bypass invalid config %q: %v", v, err)
 		}
 	}
 }

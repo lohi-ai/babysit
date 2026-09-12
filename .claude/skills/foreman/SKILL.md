@@ -174,7 +174,15 @@ context compaction, rate-limit pause, closed terminal, or process restart is not
 a terminal goal outcome. Never complete the goal for one of those conditions.
 
 Use bounded rolling `check --wait` calls so each timeout becomes a full
-reconcile/heartbeat tick. For multi-day work, an external scheduler may run
+reconcile/heartbeat tick. Bound each wait with the configured reconciliation
+interval — `bbs config get foreman_status_interval` seconds, default 3600 —
+the same value `bbs foreman watch` uses for its status-prompt default, so the
+two never drift. Deliveries (`worker_done`, escalation, question) return from
+the wait immediately; the interval is only the missed-event/restart/stale-state
+backup. An unset or empty key means 3600; a present value that is not a
+positive integer of seconds is invalid — stop and report it rather than
+guessing, and never let a bad value shrink the wait into a tight loop. For
+multi-day work, an external scheduler may run
 `bbs foreman ensure <id>` to recreate a missing terminal and `bbs foreman watch
 <id> --once` to refresh an idle one. Both paths re-enter with the skill and
 foreman id; a harness without an exact conversation handle cold-starts instead
