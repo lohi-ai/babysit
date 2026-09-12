@@ -56,6 +56,10 @@ func runEnsure(args []string) {
 			forceNoBranch = true
 		case "--mode":
 			modeFlag, i = valueAt(args, i), i+1
+		default:
+			if strings.HasPrefix(args[i], "--mode=") {
+				modeFlag = strings.TrimPrefix(args[i], "--mode=")
+			}
 		}
 	}
 

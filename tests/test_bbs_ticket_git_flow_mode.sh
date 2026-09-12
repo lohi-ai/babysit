@@ -140,6 +140,32 @@ T="$(mktemp -d)"
   [ "$(git branch --show-current)" = "main" ] \
     || { echo "primary checkout moved off main"; exit 1; }
 ) && ok "mode-flag-overrides-config" || fail "mode-flag-overrides-config"
+
+# ── mode-equals-form-diverts ─────────────────────────────────────────
+# The foreman skill mandates `ensure --mode=worktree`; the hand-rolled
+# parser used to silently ignore the = form (bs-ff4dokqk). Pin it.
+T="$(mktemp -d)"
+(
+  export PATH="$SCRIPT_DIR/bin:$PATH"
+  export HOME="$T/home"; mkdir -p "$HOME"
+  export AGENT_ROLE=mayor
+  build_repo "$T"
+  cd "$T/repo"
+  set_git_flow "mode: trunk"
+
+  out="$("$BBS_TICKET_BIN" ensure --mode=worktree --slug-hint feat-e --type feat 2>"$T/err")" || {
+    echo "ensure failed: $(cat "$T/err")"; exit 1; }
+  printf '%s\n' "$out" | grep -q '^WORKTREE=' \
+    || { echo "expected --mode=worktree to divert; out: $out"; exit 1; }
+  [ "$(git branch --show-current)" = "main" ] \
+    || { echo "primary checkout moved off main"; exit 1; }
+
+  if "$BBS_TICKET_BIN" ensure --mode=bogus --slug-hint x 2>"$T/err2"; then
+    echo "expected --mode=bogus to exit nonzero"; exit 1
+  fi
+  grep -q "invalid --mode 'bogus'" "$T/err2" \
+    || { echo "expected invalid-mode error; err: $(cat "$T/err2")"; exit 1; }
+) && ok "mode-equals-form-diverts" || fail "mode-equals-form-diverts"
 rm -rf "$T"
 
 # ── legacy-ticket-branch-optional ─────────────────────────────────────
