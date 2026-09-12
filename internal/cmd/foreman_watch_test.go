@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -288,6 +289,68 @@ func TestWatchStatusChecksDoNotEvadeStall(t *testing.T) {
 	// Declared stalled: the status loop stops poking too.
 	if line := watchTick(client, r, o, now.Add(40*time.Minute)); line != "" {
 		t.Fatalf("a stalled foreman must go quiet, got %q", line)
+	}
+}
+
+// The pathological configuration: --status-interval <= --interval on a
+// terminal that echoes every prompt but never answers one. Each tick is a
+// STATUS-ECHO followed by another send, so the pane never sits unchanged —
+// if the stall verdict required an unmoved tick it would be starved forever.
+// The loop must still reach STALLED in a bounded number of ticks.
+func TestWatchStatusFloodStillStalls(t *testing.T) {
+	client, r, pane, _ := watchFixture(t)
+	o := testWatchOpts()
+	o.interval = time.Minute
+	o.statusInterval = time.Minute // <= poll interval: a prompt is due every tick
+	now := time.Now()
+
+	watchTick(client, r, o, now)
+	stalled := ""
+	// The bound is generous — nudges alone need ~maxNudges*idle — but finite:
+	// a loop that never stalls fails here by exhausting the tick budget.
+	for i := 1; i <= 200 && stalled == ""; i++ {
+		tick := now.Add(time.Duration(i) * time.Minute)
+		if line := watchTick(client, r, o, tick); strings.HasPrefix(line, "STALLED") {
+			stalled = line
+			break
+		}
+		// The dead terminal echoes whatever was just sent into its pane.
+		write(t, pane, fmt.Sprintf("worker A: building\n> check status x%d\n", i))
+	}
+	if stalled == "" {
+		t.Fatal("status flood starved the stall verdict: no STALLED in 200 ticks")
+	}
+	// Declared stalled: even with a prompt due every tick, the loop goes quiet.
+	if line := watchTick(client, r, o, now.Add(300*time.Minute)); line != "" {
+		t.Fatalf("a stalled foreman must go quiet, got %q", line)
+	}
+}
+
+// A status echo that lands after the nudge it outlived is still an echo:
+// two prompts in flight means two claims, or the second echo reads as
+// progress and refunds the budget it just spent.
+func TestWatchLaggingStatusEchoDoesNotRefund(t *testing.T) {
+	client, r, pane, _ := watchFixture(t)
+	o := testWatchOpts()
+	o.statusInterval = 5 * time.Minute
+	now := time.Now()
+
+	watchTick(client, r, o, now)
+	// Status prompt at t=5m; its echo has not landed yet when the nudge
+	// fires at t=10m — two prompts in flight.
+	if line := watchTick(client, r, o, now.Add(5*time.Minute)); !strings.HasPrefix(line, "STATUS") {
+		t.Fatalf("expected STATUS, got %q", line)
+	}
+	if line := watchTick(client, r, o, now.Add(10*time.Minute)); !strings.HasPrefix(line, "NUDGED") {
+		t.Fatalf("expected NUDGED, got %q", line)
+	}
+	// The status echo arrives late, then the nudge echo: both are echoes.
+	write(t, pane, "worker A: building\n> check status\n")
+	watchTick(client, r, o, now.Add(11*time.Minute))
+	write(t, pane, "worker A: building\n> check status\n> check status\n")
+	watchTick(client, r, o, now.Add(12*time.Minute))
+	if s := watchLoad(r.ID); s.Nudges != 1 {
+		t.Fatalf("lagging status echo refunded the budget: nudges = %d, want 1", s.Nudges)
 	}
 }
 

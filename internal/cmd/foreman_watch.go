@@ -330,7 +330,11 @@ func watchTick(client *orca.Client, r foreman.Record, o watchOpts, now time.Time
 
 	// The stall verdict outranks the status clock: a pane that spent its
 	// nudge budget is reported dead, not kept on the prompting metronome.
-	if moved == "" && idleFor >= o.idle && s.Nudges >= o.maxNudges {
+	// Echoes are not a reprieve — real progress already zeroed the budget
+	// above, so reaching this line with Nudges spent means every pane change
+	// was our own prompt. Requiring moved == "" here would let a
+	// --status-interval <= --interval flood starve the verdict forever.
+	if moved != "MOVING" && idleFor >= o.idle && s.Nudges >= o.maxNudges {
 		if s.Stalled {
 			return ""
 		}
@@ -374,10 +378,9 @@ func watchTick(client *orca.Client, r foreman.Record, o watchOpts, now time.Time
 	}
 	s.Nudges++
 	s.Pending = true
-	// A nudge supersedes an outstanding status echo claim: the next pane
-	// change is attributed to the nudge, which spends the budget — the
-	// conservative call when two prompts could have produced it.
-	s.PendingStatus = false
+	// An outstanding status echo claim stays armed: its echo is still in
+	// flight and must not read as progress. Clearing it here would leave two
+	// echoes for one claim — the second refunds the budget it just spent.
 	s.Since = now.UTC().Format(time.RFC3339)
 	if statusDue {
 		s.StatusCheck = s.Since
