@@ -66,6 +66,28 @@ has_all "durable-resume-and-finish" \
   'pointers.orca_run' 'Terminal handles are routing metadata' \
   'bbs ticket readiness --json' 'BBS_FINISH=review | land | pr'
 
+has_all "ensure-before-init-ordering" \
+  'ensure --mode=worktree' '--from-input "$SEED_SUMMARY"' \
+  'never pre-create the ticket id' 'origin-type sub_ticket' \
+  'from inside its own worktree'
+
+has_all "reset-base-before-land" \
+  'reset-base' 'bbs-serving' 'BLOCKs' 'dependency order'
+
+has_all "native-task-list-init" \
+  'native task list at entry' 'parent, children, and DAG' \
+  'rebuild it from ticket + Orca state'
+
+P="$ROOT/.claude/skills/references/preamble.md"
+if grep -q 'MUST mirror' "$P" \
+   && grep -q 'update_plan' "$P" \
+   && grep -q 'TaskCreate' "$P" \
+   && grep -q '`todo`' "$P"; then
+  ok "preamble-task-list-per-harness"
+else
+  fail "preamble-task-list-per-harness"
+fi
+
 has_all "single-writer-multi-foreman" \
   '--foreman-id <id>' 'bbs ticket claim' 'hard fence' \
   'different parents may run'

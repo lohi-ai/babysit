@@ -107,13 +107,14 @@ ATTEMPTED: Grepped invoices/*.ts for prior handling — only happy path present.
 RECOMMENDATION: Ask the ticket owner which of A/B/C applies before implementing.
 ```
 ## Native task list
-Multi-step work mirrors into the harness's native task list — Claude Code's
-TaskCreate/TaskUpdate, Codex's `update_plan`, OMP's `todo` tool; use whatever
-the active harness exposes. Seed tasks from the skill's driving artifact —
-`plan.md`, the QA flow matrix, workflow milestones — and mark each
-in_progress on start, completed only when its check passes. The task list is
-the visible progress view; disk artifacts stay the durable state — on cold
-resume rebuild the list from them, never the reverse.
+Multi-step work MUST mirror into the harness's native task list — resolve
+the surface explicitly: Claude Code `TaskCreate`/`TaskUpdate`, Codex
+`update_plan`, OMP `todo`; if the harness exposes none, checkpoint milestones
+on disk instead. Seed tasks from the skill's driving artifact — `plan.md`,
+the QA flow matrix, workflow milestones — and mark each in_progress on start,
+completed only when its check passes. The task list is the visible progress
+view; disk artifacts stay the durable state — on cold resume rebuild the list
+from them, never the reverse.
 ## Preamble (run first)
 ```bash
 # ── Skill preamble ───────────────────────────────────────────────

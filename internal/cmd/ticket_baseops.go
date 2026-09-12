@@ -1263,6 +1263,18 @@ func landTickets(args []string) int {
 		return 2
 	}
 
+	// A nonempty serving marker means the base carries a scratch composition
+	// (switch/serve/merge-base) that reset-base is expected to discard. Landing
+	// on top of it either no-ops ("already on base") or mixes scratch commits
+	// into real history — refuse and name the recovery.
+	if b, err := os.ReadFile(filepath.Join(gitdir, "bbs-serving")); err == nil {
+		if serving := splitCommaSpace(string(b)); len(serving) > 0 {
+			fmt.Fprintln(os.Stderr, "STATUS: BLOCKED")
+			fmt.Fprintf(os.Stderr, "REASON: primary is serving a scratch composition (%s) — land never merges on top of it.\n", strings.Join(serving, ","))
+			fmt.Fprintln(os.Stderr, "RECOMMENDATION: run 'bbs-ticket reset-base' to discard the composition, then re-run land.")
+			return 2
+		}
+	}
 	landed, already := 0, 0
 	for _, r := range rows {
 		mergeTarget := r.branch

@@ -126,8 +126,10 @@ record, re-read `bbs foreman inbox "$FOREMAN_ID"`, parent/child relations, and
 control state before reading Orca mail. Repeat the inbox read after every
 Delivery or wait timeout and immediately before finish. `paused` or `cancelled`
 means no new dispatch; leave current files and commits in place. Never act on
-remembered status. Mirror project progress into the native task list when
-available, but ticket + Orca state remain authoritative.
+remembered status. Initialize the harness's native task list at entry from
+the parent, children, and DAG (rebuild it from ticket + Orca state on cold
+resume), and keep it mirrored at every tick; disk and Orca state remain
+authoritative.
 
 ## Persistent goal and long-horizon loop
 
@@ -183,7 +185,7 @@ the coordinator, but it is not accepted scope until represented on disk.
    that are independently implementable and verifiable. Keep genuine ordering
    as `blocked_by`/`blocks`; avoid artificial chains deeper than 3–4 tasks.
 2. For each accepted seed, run `bbs ticket ensure --mode=worktree
-   --from-input <seed summary>` from the canonical repo/base. `ensure` owns
+   --from-input "$SEED_SUMMARY"` from the canonical repo/base. `ensure` owns
    the ticket id, branch naming, and initial checkout — it only cuts on its
    slow path, so never pre-create the ticket id: a resolved `BABYSIT_TICKET`
    forces the fast-path no-op and no worktree is made. Parse and persist its
@@ -307,11 +309,10 @@ eval "$(bbs autopilot git-flow)"   # BBS_FINISH=review | land | pr
 - `review` — leave clean committed branches/worktrees for the human; optionally
   compose them with `bbs ticket serve` when asked.
 - `land` — if integration QA (or any `switch`/`serve`) left a scratch
-  composition on the primary, run `bbs ticket reset-base` first: `land`
-  checks ancestry and reports `already on <base>` without merging when the
-  ticket commits are composed onto base, so landing on top of a `switch`
-  silently produces no merge commits. Then run `bbs ticket land` in
-  dependency order. It merges locally and never pushes.
+  composition on the primary, run `bbs ticket reset-base` first. `land`
+  itself BLOCKs when the `bbs-serving` marker is nonempty — scratch
+  composition must be discarded, never merged onto. Then run
+  `bbs ticket land` in dependency order. It merges locally and never pushes.
 - `pr` — invoke the real `create-pr` skill once per child in dependency order.
   Never replace it with raw git/GitHub commands.
 

@@ -52,6 +52,11 @@ run_case "traversal-flagged" "thin:invalid-artifact-path:evidence/../../etc/pass
   "STATUS: DONE" "VERDICT: PASS" "SUMMARY: x" "$GOOD_RUBRIC" \
   "EVIDENCE: agent-browser journey ok; artifact at evidence/../../etc/passwd"
 
+# multiple citations: first exists, second missing → still flagged
+run_case "multi-ref-one-missing" "thin:missing-artifact:evidence/qa/other.md" \
+  "STATUS: DONE" "VERDICT: PASS" "SUMMARY: x" "$GOOD_RUBRIC" \
+  "EVIDENCE: agent-browser journey ok; shots at evidence/qa/signup.png and evidence/qa/other.md"
+
 # clean PASS: freshness=A, no C/D, real e2e evidence
 run_case "ok-clean-pass" "ok" \
   "STATUS: DONE" "VERDICT: PASS" "SUMMARY: all flows green" "$GOOD_RUBRIC" "$GOOD_EVID"
