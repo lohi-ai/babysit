@@ -59,7 +59,7 @@ func (s *Store) EnsureDirs() {
 func (s *Store) LoadForMutate() Doc {
 	p := s.IndexPath()
 	doc := ReadDoc(p)
-	if _, err := os.Stat(p); err != nil {
+	if fi, err := os.Stat(p); err != nil || fi.IsDir() {
 		doc.EnsureDefaults(s.Env.Ticket)
 	}
 	return doc
@@ -131,7 +131,11 @@ type Sibling struct {
 // the file is missing or malformed — matching bash json_read, which prints
 // empty and exits 0 either way.
 func ReadIndex(path string) Index {
-	return ReadDoc(path).Index()
+	d, err := ReadDocStrict(path)
+	if err != nil {
+		return Index{}
+	}
+	return d.Index()
 }
 
 // Index decodes the record into the typed view. Fields whose stored type does
