@@ -256,6 +256,38 @@ T="$(mktemp -d)"
   [ "$(cat "$GD/bbs-serving")" = "bs-mbh" ] \
     || { echo "expected serving=bs-mbh after re-compose: $(cat "$GD/bbs-serving")"; exit 1; }
 ) && ok "serving-set" || fail "serving-set"
+
+# ── explicit-compose-from-other-worktree ──────────────────────────────
+# `surface compose <ticket>` run inside a DIFFERENT ticket's worktree must
+# still work: the explicit arg wins, the cwd's ticket is only the lease
+# actor, and the lease is released when the op ends.
+T="$(mktemp -d)"
+(
+  test_env "$T"
+  build_repo_with_worktree "$T" mbj
+  (
+    cd "$T/repo"
+    git worktree add -q --no-track -b "feat/bs-mbk_test" .babysit/worktrees/mbk main
+    cd .babysit/worktrees/mbk
+    echo change > change-mbk.txt
+    git add change-mbk.txt
+    git commit -q -m "feat: mbk change"
+  )
+  GD="$(git -C "$T/repo" rev-parse --absolute-git-dir)"
+
+  # From mbj's worktree, compose mbk explicitly.
+  out="$(cd "$T/repo/.babysit/worktrees/mbj" && "$BBS_TICKET_BIN" surface compose bs-mbk 2>"$T/err")"; rc=$?
+  [ "$rc" -eq 0 ] || { echo "explicit compose from other worktree failed rc=$rc: $(cat "$T/err")"; exit 1; }
+  printf '%s\n' "$out" | grep -q '^SERVING=bs-mbk$' \
+    || { echo "expected SERVING=bs-mbk; out: $out"; exit 1; }
+  [ -f "$T/repo/change-mbk.txt" ] || { echo "mbk change missing on primary"; exit 1; }
+  [ ! -d "$GD/bbs-qa-lease" ] || { echo "lease leaked after compose"; exit 1; }
+
+  # And a BLOCKED explicit compose (unknown ticket) leaves no lease either.
+  ( cd "$T/repo/.babysit/worktrees/mbj" && "$BBS_TICKET_BIN" surface compose bs-nope0000 >/dev/null 2>&1 ); rc=$?
+  [ "$rc" -eq 2 ] || { echo "expected rc=2 for unknown ticket, got $rc"; exit 1; }
+  [ ! -d "$GD/bbs-qa-lease" ] || { echo "lease leaked after blocked compose"; exit 1; }
+) && ok "explicit-compose-from-other-worktree" || fail "explicit-compose-from-other-worktree"
 rm -rf "$T"
 
 echo

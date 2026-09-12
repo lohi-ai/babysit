@@ -82,14 +82,18 @@ func baseOpsPrimary(cmd string) string {
 	return gitOut("rev-parse", "--show-toplevel")
 }
 
-// parseTicketsAndBase is the argument contract switch and land share: bare
+// parseTicketsAndBase is the argument contract compose and land share: bare
 // words are ticket ids, --base overrides the resolved base, anything else is a
 // typo worth refusing. ok=false means the reason is already on stderr.
 func parseTicketsAndBase(cmd string, args []string) (tickets []string, base string, ok bool) {
 	for i := 0; i < len(args); i++ {
 		switch {
 		case args[i] == "--base":
-			base, i = valueAt(args, i), i+1
+			if i+1 >= len(args) {
+				fmt.Fprintf(os.Stderr, "%s: --base needs a value\n", cmd)
+				return nil, "", false
+			}
+			base, i = args[i+1], i+1
 		case strings.HasPrefix(args[i], "-"):
 			fmt.Fprintf(os.Stderr, "%s: unknown flag '%s'\n", cmd, args[i])
 			return nil, "", false
@@ -282,7 +286,15 @@ func surfaceCompose(args []string) int {
 	if primary == "" {
 		return 2
 	}
-	env := resolveProject() // explicit tickets are args; env.Ticket is the default and the lease actor
+	// Explicit tickets are args — an ambiguous cwd must not reject them. Bare
+	// compose needs the in-scope ticket, so it takes the full ladder (the
+	// manifest cwd rung is how a worktree knows its ticket).
+	var env identity.Env
+	if len(tickets) > 0 {
+		env = resolveProject()
+	} else {
+		env = resolveEnv()
+	}
 	if len(tickets) == 0 {
 		if env.Ticket == "" {
 			fmt.Fprintln(os.Stderr, retarget("usage: bbs-ticket surface compose <ticket> [<ticket>...] [--base BRANCH]"))
@@ -322,25 +334,22 @@ func surfaceCompose(args []string) int {
 		}
 		branches = append(branches, b)
 	}
-	// One lease covers the reset and every merge. surfaceRevert below finds it
-	// already held by this process and is reentrant.
+	// One lease covers the reset and every merge. The reset runs in-process on
+	// the held surface — not through surfaceRevert, whose resolveEnv() can
+	// os.Exit past this defer and leak the lease.
 	s, ok := acquireSurface("surface compose", primary, env.Ticket)
 	if !ok {
 		return 2
 	}
 	defer s.release()
-	// Clean slate via revert (its safety checks BLOCK loudly, stderr passes).
-	rbArgs := []string{"--quiet"}
-	if base != "" {
-		rbArgs = append(rbArgs, "--base", base)
-	}
-	if rc := surfaceRevert(rbArgs); rc != 0 {
-		return rc
-	}
 	if base == "" {
 		base = baseBranchIn(primary)
 	}
-	for _, b := range branches {
+	// Clean slate via the engine's reset (its safety checks BLOCK loudly).
+	if !s.resetToOrigin(base, true, env) {
+		return 2
+	}
+	for i, b := range branches {
 		if m := s.merge(b, false); !m.ok {
 			fmt.Fprintln(os.Stderr, "STATUS: BLOCKED")
 			if !m.conflicted {
@@ -353,6 +362,11 @@ func surfaceCompose(args []string) int {
 			fmt.Fprintf(os.Stderr, "  If origin/%s merges clean, it conflicts with an earlier ticket in this compose — compose them separately or resolve the pair together.\n", base)
 			return 2
 		}
+		// The marker tracks the surface as it is built, not just at the end:
+		// a later merge failing leaves the earlier tickets on the primary, and
+		// an empty marker would tell board nothing is there — and tell land's
+		// noScratch guard the base is clean when it is not.
+		servingWrite(s.gitdir, "set", tickets[:i+1])
 	}
 	head := gitCOut(primary, "rev-parse", "HEAD")
 	servingWrite(s.gitdir, "set", tickets)
@@ -442,27 +456,28 @@ func runRefresh(args []string) {
 
 // ─── surface revert ──────────────────────────────────────────────────────────
 
-// surfaceRevert performs the reset and returns the exit code so compose can
-// invoke it in-process the way bash invoked the reset mid-compose.
-//
-// Its guards therefore fire for `compose` and `serve` too (serve shells out to
-// compose, whose stderr passes straight through). That is why the
+// surfaceRevert performs the reset half of the lifecycle as a standalone verb.
+// Its guards also fire for `compose` and `serve` — compose calls the engine's
+// resetToOrigin directly under its own held lease, and serve shells out to
+// compose, whose stderr passes straight through. That is why the
 // RECOMMENDATION lines below say "then re-run" rather than naming revert: the
 // operator ran serve, and telling them to re-run a command they never invoked
 // sends them somewhere else entirely.
-//
-// When compose calls it, the surface lease is already held by this process and
-// surfaceAcquire is reentrant — reset and merge have to be one step, or a
-// second compose resets the base between them and its merge lands on a tree
-// still carrying the first compose's ticket, while serving names only its own.
 func surfaceRevert(args []string) int {
 	base, quiet := "", false
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--base":
-			base, i = valueAt(args, i), i+1
+			if i+1 >= len(args) {
+				fmt.Fprintln(os.Stderr, "surface revert: --base needs a value")
+				return 2
+			}
+			base, i = args[i+1], i+1
 		case "--quiet":
 			quiet = true
+		default:
+			fmt.Fprintf(os.Stderr, "surface revert: unknown arg '%s'\n", args[i])
+			return 2
 		}
 	}
 	primary := baseOpsPrimary("surface revert")
@@ -913,13 +928,40 @@ func landTickets(args []string) int {
 // lease dir, same owner file, same contention rule.
 func surfaceLease(verb string, args []string) int {
 	qlTicket, ttl, force := "", "60", false
+	needValue := func(flag string, i int) (string, bool) {
+		if i+1 >= len(args) {
+			fmt.Fprintf(os.Stderr, "surface %s: %s needs a value\n", verb, flag)
+			return "", false
+		}
+		return args[i+1], true
+	}
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--ticket":
-			qlTicket, i = valueAt(args, i), i+1
+			if verb == "status" {
+				fmt.Fprintf(os.Stderr, "surface status: --ticket does not apply\n")
+				os.Exit(2)
+			}
+			v, ok := needValue("--ticket", i)
+			if !ok {
+				os.Exit(2)
+			}
+			qlTicket, i = v, i+1
 		case "--ttl-min":
-			ttl, i = valueAt(args, i), i+1
+			if verb != "acquire" {
+				fmt.Fprintf(os.Stderr, "surface %s: --ttl-min only applies to acquire\n", verb)
+				os.Exit(2)
+			}
+			v, ok := needValue("--ttl-min", i)
+			if !ok {
+				os.Exit(2)
+			}
+			ttl, i = v, i+1
 		case "--force":
+			if verb != "release" {
+				fmt.Fprintf(os.Stderr, "surface %s: --force only applies to release\n", verb)
+				os.Exit(2)
+			}
 			force = true
 		default:
 			fmt.Fprintf(os.Stderr, "surface %s: unknown arg '%s'\n", verb, args[i])

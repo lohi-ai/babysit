@@ -194,6 +194,12 @@ T="$(mktemp -d)"
   [ -z "$(git status --porcelain)" ] || { echo "primary left dirty after conflict"; exit 1; }
   [ -f a.txt ] || { echo "A's merge should have landed before the conflict"; exit 1; }
   [ ! -f b.txt ] || { echo "B's merge should have aborted"; exit 1; }
+  # The marker must name what actually landed: A is on the surface, so
+  # SERVING=A — an empty marker would tell board nothing is there and let
+  # land's noScratch guard pass over a scratch composition.
+  GD="$(git rev-parse --absolute-git-dir)"
+  [ "$(cat "$GD/bbs-serving")" = "$TK_A" ] \
+    || { echo "serving marker should name $TK_A after partial compose: $(cat "$GD/bbs-serving" 2>/dev/null)"; exit 1; }
 ) && ok "compose-conflict" || fail "compose-conflict"
 rm -rf "$T"
 

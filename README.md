@@ -243,9 +243,9 @@ Isolation is asked for per run, when you actually want it:
 - `bbs ticket ensure --slug-hint <slug> --mode=worktree` — this one ticket in its own worktree; then run autopilot inside it.
 - `bbs ticket ensure --slug-hint <slug> --mode=branch` — cut `feat/<id>_<slug>` in place.
 
-**Worktrees cost something, so know what you bought.** The inner loop is no longer 0-step: because the code lives in a worktree and the dev server serves the primary checkout, every test iteration is a commit plus `bbs ticket merge-base` instead of edit-and-refresh. What it buys is separable tickets — you can review one in isolation, drop a bad one, and land each as its own clean PR. A repo that wants that shape every time can write `mode: worktree` + `land: local` by hand; nothing writes it for you.
+**Worktrees cost something, so know what you bought.** The inner loop is no longer 0-step: because the code lives in a worktree and the dev server serves the primary checkout, every test iteration is a commit plus `bbs ticket surface compose` instead of edit-and-refresh. What it buys is separable tickets — you can review one in isolation, drop a bad one, and land each as its own clean PR. A repo that wants that shape every time can write `mode: worktree` + `land: local` by hand; nothing writes it for you.
 
-The commands that move work between a worktree and the shared surface — `merge-base`, `switch`, `reset-base`, plus the human layer `board`, `serve`, `/bbs:fix-pr` — are in [Working tickets in parallel](#working-tickets-in-parallel-worktree-mode). Details: [`references/git-flow.md`](.claude/skills/references/git-flow.md) and [`references/worktrees.md`](.claude/skills/references/worktrees.md).
+The commands that move work between a worktree and the shared surface — `bbs ticket surface <acquire|compose|revert|release|status>`, plus the human layer `board`, `serve`, `/bbs:fix-pr` — are in [Working tickets in parallel](#working-tickets-in-parallel-worktree-mode). Details: [`references/git-flow.md`](.claude/skills/references/git-flow.md) and [`references/worktrees.md`](.claude/skills/references/worktrees.md).
 
 ### 3. Run it
 
@@ -345,7 +345,7 @@ bbs ticket serve            # bare: compose every finished ticket (qa + review D
 3. Review in the browser. Ask the ticket's session for changes; it commits in its own worktree; re-run `serve` (reentrant — refreshes the hold, re-cuts the surface) and refresh the browser. Repeat until happy.
    Under Orca this whole loop fits in one worktree: `orca tab create --url <qa url>` puts the running app in the built-in browser, and `orca file open-changed --mode diff --worktree path:<ticket-worktree>` opens the ticket's diff beside it.
 4. Approved → `bbs ticket serve --release`, then `/bbs:create-pr` per repo. Reviewer comments later → `/bbs:fix-pr`.
-5. `bbs ticket board --pr` flags merged PRs and prints the exact cleanup commands (`reset-base`, `set-status done`).
+5. `bbs ticket board --pr` flags merged PRs and prints the exact cleanup commands (`surface revert`, `set-status done`).
 
 **One ticket, two repos** (a feature spanning frontend + backend): `/bbs:setup-project` records the sibling repos once; autopilot's builder crosses over on its own — creates the linked sibling ticket, implements and QAs both sides — and `serve` puts the whole pair in front of you with one command. Meanwhile other tickets' sessions keep implementing and reviewing in their own worktrees; `board` shows everyone who holds the surface and for how long. Full recipe: [`references/worktrees.md` § Attended parallel review](.claude/skills/references/worktrees.md).
 

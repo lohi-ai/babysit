@@ -50,11 +50,7 @@ const (
 	leaseWait = 30 * time.Second
 )
 
-// surfaceHeld names the lease this process already owns. It makes an op invoked
-// in-process by another (compose → revert) reentrant without threading a
-// "the caller already holds it" flag through every signature — and without it,
-// a ticketless compose would sit waiting on its own lease.
-var surfaceHeld string
+// ─── the lease directory ─────────────────────────────────────────────────────
 
 // ownerlessGrace bounds how long a lease directory may sit without a readable
 // owner before another run may take it over. leasePublish installs a lease
@@ -225,15 +221,12 @@ func leaseSteal(dir, owner, kind, ttl string) (stoleFrom, why string, ok bool) {
 }
 
 // surfaceAcquire takes the surface lease for one op and returns the release to
-// run when it is done. Reentrant two ways — for a QA session already holding the
-// lease under this ticket, and for an op this process invoked in-process — and
-// both give back a no-op release, because whoever took the lease releases it.
+// run when it is done. Reentrant for a QA session already holding the lease
+// under this ticket — that case gives back a no-op release, because whoever
+// took the lease releases it.
 //
 // ok=false means the reason is already on stderr and the caller should exit 2.
 func surfaceAcquire(gitdir, cmd, ticketID string) (release func(), ok bool) {
-	if surfaceHeld != "" {
-		return func() {}, true
-	}
 	dir := leaseDirOf(gitdir)
 	owner := ticketID
 	if owner == "" {
@@ -267,13 +260,11 @@ func surfaceAcquire(gitdir, cmd, ticketID string) (release func(), ok bool) {
 		fmt.Fprintf(os.Stderr, retarget("RECOMMENDATION: wait for '%s' to run 'bbs-ticket surface release', or 'bbs-ticket surface release --force' if that run is dead.\n"), b.owner)
 		return nil, false
 	}
-	surfaceHeld = owner
 	if res.refreshed {
 		// The QA session's lease, not ours to end.
-		return func() { surfaceHeld = "" }, true
+		return func() {}, true
 	}
 	return func() {
-		surfaceHeld = ""
 		// Only drop a lease still ours. Past shortTTLMin a peer may have judged
 		// this op dead and taken over, and removing theirs would hand the
 		// surface to a third run while they are using it.
