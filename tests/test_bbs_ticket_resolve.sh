@@ -77,6 +77,22 @@ T="$(mktemp -d)"
   [ -z "$out" ]   || { echo "expected empty stdout, got: $out"; exit 1; }
 ) && ok "no-resolution-exits-1" || fail "no-resolution-exits-1"
 rm -rf "$T"
+# ── env-prints-ticket-vars ─────────────────────────────────────────────
+T="$(mktemp -d)"
+(
+  HOME="$T/h"; export HOME; mkdir -p "$HOME"
+  unset BABYSIT_TICKET BBS_TICKET
+  mk_repo "$T/r" "feat/bs-env_topic"
+  cd "$T/r"
+  PATH="$SCRIPT_DIR/bin:$PATH"
+  out="$("$BBS_TICKET_BIN" env)"; rc=$?
+  [ "$rc" = "0" ] || { echo "expected rc=0, got rc=$rc"; exit 1; }
+  for want in '^SLUG=.' '^BRANCH=feat/bs-env_topic$' '^TICKET=bs-env$' '^BABYSIT_PROJECT_HOME=.' '^TICKET_HOME=.' '^INDEX=.'; do
+    printf '%s\n' "$out" | grep -q "$want" || { echo "missing $want in: $out"; exit 1; }
+  done
+) && ok "env-prints-ticket-vars" || fail "env-prints-ticket-vars"
+rm -rf "$T"
+
 
 echo
 if [ "$FAIL" -eq 0 ]; then
