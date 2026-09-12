@@ -15,6 +15,7 @@
 #                                         even in developer role
 #   trunk-mode-no-cut                     mode: trunk → no cut, export line
 #   mode-flag-overrides-config            mode: trunk in config + --mode worktree → divert
+#   mode-equals-form-diverts              --mode=worktree (= form) → divert; --mode=bogus → exit 2
 #   legacy-ticket-branch-optional         ticket_branch: optional maps to trunk
 #   invalid-config-mode                   mode: bogus → exit 2
 #   reset-base-after-merge-base           land a ticket via merge-base (fast-forward),
@@ -149,6 +150,7 @@ T="$(mktemp -d)"
 (
   export PATH="$SCRIPT_DIR/bin:$PATH"
   export HOME="$T/home"; mkdir -p "$HOME"
+  export BABYSIT_HOME="$HOME/.babysit"
   export AGENT_ROLE=mayor
   build_repo "$T"
   cd "$T/repo"
