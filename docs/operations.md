@@ -171,7 +171,10 @@ that stopped working also stopped reporting that it stopped.
 foreman's Orca terminal on an interval; if those bytes are identical for longer than
 `--idle`, it types a nudge into the pane — the same "check status" a human would
 send — and if the nudges stop landing, it says so and gives up rather than
-poking forever.
+poking forever. Independently of the pane, every `--status-interval` it sends
+the same skill prompt as an active status check, so a busy foreman still gets
+asked; a foreman whose record says `done` leaves the watch set even while its
+terminal stays open.
 
 ```bash
 bbs foreman watch                       # every foreman with an open workspace
@@ -184,6 +187,7 @@ bbs foreman watch --once                # one pass, for cron
 |---|---|---|
 | `--interval <sec>` | 60 | how often to capture the pane |
 | `--idle <sec>` | 600 | unchanged for this long → nudge |
+| `--status-interval <sec>` | 900 | periodic status prompt, even while the pane moves |
 | `--lines <n>` | 40 | how much of the pane forms the fingerprint |
 | `--nudge <text>` | `check status` | what gets typed in |
 | `--max-nudges <n>` | 3 | budget before it reports `STALLED` and stops |
@@ -195,6 +199,7 @@ Output is events only — a foreman that is working produces no output at all.
 
 ```text
 NUDGED fm-acme after 12m (1/3) — sent "check status"
+STATUS fm-acme after 15m — sent "check status"
 STALLED fm-acme — 3 nudges, no change in 41m; open "bbs foreman"
 GONE fm-acme — terminal "bbs foreman" is closed
 ```
@@ -204,7 +209,10 @@ by liveness** — a foreman wedged long enough to need a nudge is exactly the on
 whose heartbeat has gone stale, so selecting on `Live()` would drop every
 foreman this exists to catch. And the nudge's own echo in the pane does not
 refund the budget: real progress changes the pane on more than one tick, which
-is what keeps `--max-nudges` binding on a dead session.
+is what keeps `--max-nudges` binding on a dead session. The status clock is
+separate from the idle clock on purpose: a status prompt neither spends a
+nudge nor resets the idle window, so it can never let an unresponsive terminal
+slip past the stall bound.
 
 ## Health checks
 

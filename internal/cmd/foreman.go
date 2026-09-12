@@ -33,7 +33,7 @@ const foremanUsage = `Usage:
   bbs foreman worker-command --prompt <text> [--skill <name>] [--agent <name>] [--dir <path>]
   bbs foreman mailbox <status|bind|dispatch|wait|reply|done> ...
   bbs foreman watch [<id>] [--interval <sec>] [--idle <sec>] [--lines <n>]
-                    [--nudge <text>] [--max-nudges <n>] [--once]
+                    [--status-interval <sec>] [--nudge <text>] [--max-nudges <n>] [--once]
   bbs foreman retire <id> [--keep-workspace]
   bbs foreman hold <id>
   bbs foreman hold show <id>
