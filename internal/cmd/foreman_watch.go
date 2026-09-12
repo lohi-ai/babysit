@@ -284,7 +284,14 @@ func watchTick(client *orca.Client, r foreman.Record, o watchOpts, now time.Time
 		} else {
 			s.Nudges, s.Stalled = 0, false
 		}
-		s.Fingerprint, s.Since = fp, now.UTC().Format(time.RFC3339)
+		s.Fingerprint = fp
+		// The status echo is the one pane change that must not restart the
+		// idle clock: the prompt is a check, not proof of life, and resetting
+		// Since here would let a dead-but-echoing terminal slip the stall
+		// bound every --status-interval.
+		if moved != "STATUS-ECHO" {
+			s.Since = now.UTC().Format(time.RFC3339)
+		}
 		watchSave(r.ID, s)
 	}
 
@@ -340,7 +347,10 @@ func watchTick(client *orca.Client, r foreman.Record, o watchOpts, now time.Time
 
 	// A due status check that is not also a due nudge sends on its own; when
 	// both are due the nudge below carries it — one prompt, budget still spent.
-	if statusDue && !nudgeDue {
+	// It also waits while an echo claim is outstanding: fingerprint-only
+	// attribution cannot tell which of two prompts a pane change echoes, so at
+	// most one is ever armed.
+	if statusDue && !nudgeDue && !s.Pending && !s.PendingStatus {
 		prompt, err := watchSend(client, r, o.nudge)
 		if err != nil {
 			return fmt.Sprintf("UNREACHABLE %s — %s", r.ID, err)
@@ -350,13 +360,6 @@ func watchTick(client *orca.Client, r foreman.Record, o watchOpts, now time.Time
 		watchSave(r.ID, s)
 		return fmt.Sprintf("STATUS %s after %s — sent %q",
 			r.ID, roundMin(o.statusInterval), prompt)
-	}
-
-	if moved != "" {
-		if o.once {
-			return fmt.Sprintf("%s %s", moved, r.ID)
-		}
-		return ""
 	}
 	if idleFor < o.idle {
 		if o.once {
@@ -371,6 +374,10 @@ func watchTick(client *orca.Client, r foreman.Record, o watchOpts, now time.Time
 	}
 	s.Nudges++
 	s.Pending = true
+	// A nudge supersedes an outstanding status echo claim: the next pane
+	// change is attributed to the nudge, which spends the budget — the
+	// conservative call when two prompts could have produced it.
+	s.PendingStatus = false
 	s.Since = now.UTC().Format(time.RFC3339)
 	if statusDue {
 		s.StatusCheck = s.Since
