@@ -158,7 +158,7 @@ func prepareAttempt(a *apState, ticketID string, input map[string]interface{}) (
 		if err != nil {
 			return err
 		}
-		if control := nestedString(idx, "control", "state"); control != "" {
+		if control := idx.Get("control.state"); control != "" {
 			return fmt.Errorf("ticket is %s; no new attempt may dispatch", control)
 		}
 		now := isoNow()

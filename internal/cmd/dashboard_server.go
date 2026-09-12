@@ -250,7 +250,7 @@ func (s *dashServer) handleCreateTicket(w http.ResponseWriter, r *http.Request) 
 		if err := os.WriteFile(reqPath, []byte(requirementBody(title, req.Requirement)), 0o644); err != nil {
 			return err
 		}
-		doc := loadForMutate(st)
+		doc := st.LoadForMutate()
 		doc.EnsureDefaults(env.Ticket)
 		doc.Set("id", env.Ticket)
 		doc.Set("title", title)

@@ -705,7 +705,7 @@ func applyStatus(st *ticket.Store, target string) error {
 		return err
 	}
 	defer st.ReleaseLock()
-	doc := loadForMutate(st)
+	doc := st.LoadForMutate()
 	old := doc.Get("status")
 	doc.Set("status", target)
 	if err := ticket.WriteDoc(st.IndexPath(), doc); err != nil {
