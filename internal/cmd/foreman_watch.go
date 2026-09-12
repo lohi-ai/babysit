@@ -238,7 +238,7 @@ func watchTargets(client *orca.Client, id string) ([]foreman.Record, error) {
 	for _, r := range records {
 		// A foreman that reported itself done leaves the loop even while its
 		// terminal stays open — the batch closed, the pane is just a leftover.
-		if r.Status == "done" {
+		if strings.EqualFold(r.Status, "done") {
 			continue
 		}
 		if r.WorkspaceTitle == "" {
@@ -367,6 +367,9 @@ func watchTick(client *orca.Client, r foreman.Record, o watchOpts, now time.Time
 	}
 	if idleFor < o.idle {
 		if o.once {
+			if moved != "" {
+				return fmt.Sprintf("%s %s", moved, r.ID)
+			}
 			return fmt.Sprintf("IDLE %s %s (nudge at %s)", r.ID, roundMin(idleFor), roundMin(o.idle))
 		}
 		return ""
