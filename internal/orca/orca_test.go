@@ -139,6 +139,62 @@ func TestRefResolvesByTitle(t *testing.T) {
 		t.Errorf("got handle %q, want term_4", h)
 	}
 }
+func TestCurrentTerminalUsesEnvHandle(t *testing.T) {
+	log := fakeOrca(t, `case "$1" in
+  status) echo '{"ok":true,"result":{"runtime":{"reachable":true}}}' ;;
+  terminal)
+    case "$2" in
+      show) echo '{"ok":true,"result":{"terminal":{"handle":"term_env","title":"bbs worker"}}}' ;;
+    esac ;;
+esac`)
+	t.Setenv("ORCA_TERMINAL_HANDLE", "term_env")
+	c, err := Preflight()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	term, err := c.CurrentTerminal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if term.Handle != "term_env" {
+		t.Errorf("got handle %q, want term_env", term.Handle)
+	}
+	if calls := readLog(t, log); !strings.Contains(calls, "terminal show --terminal term_env --json") {
+		t.Errorf("show did not pass the env handle:\n%s", calls)
+	}
+}
+
+func TestCurrentTerminalFallsBackToBareShow(t *testing.T) {
+	log := fakeOrca(t, `case "$1" in
+  status) echo '{"ok":true,"result":{"runtime":{"reachable":true}}}' ;;
+  terminal)
+    case "$2" in
+      show) echo '{"ok":true,"result":{"terminal":{"handle":"term_active","title":"bbs worker"}}}' ;;
+    esac ;;
+esac`)
+	// The test process may itself run inside an Orca terminal; force unset.
+	t.Setenv("ORCA_TERMINAL_HANDLE", "")
+	c, err := Preflight()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	term, err := c.CurrentTerminal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if term.Handle != "term_active" {
+		t.Errorf("got handle %q, want term_active", term.Handle)
+	}
+	calls := readLog(t, log)
+	if !strings.Contains(calls, "terminal show --json") {
+		t.Errorf("bare show did not run:\n%s", calls)
+	}
+	if strings.Contains(calls, "terminal show --terminal") {
+		t.Errorf("unset env var must not pass --terminal:\n%s", calls)
+	}
+}
 
 func TestRefIgnoresUnrelatedTitle(t *testing.T) {
 	c, _ := fakeWithTerminals(t)

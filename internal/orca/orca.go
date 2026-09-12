@@ -289,7 +289,11 @@ func (c *Client) Ref(title string) (string, error) {
 // skill invocation uses this to adopt the already-running agent session rather
 // than requiring foreman spawn to create a second one.
 func (c *Client) CurrentTerminal() (Terminal, error) {
-	raw, err := c.run("terminal", "show")
+	args := []string{"terminal", "show"}
+	if h := os.Getenv("ORCA_TERMINAL_HANDLE"); h != "" {
+		args = append(args, "--terminal", h)
+	}
+	raw, err := c.run(args...)
 	if err != nil {
 		return Terminal{}, err
 	}
