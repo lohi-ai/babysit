@@ -59,7 +59,7 @@ has_all "agent-independent-design-gate" \
   'approval self-resolve'
 
 has_all "project-qa-gate" \
-  'Integration QA Task' 'bbs ticket switch' 'parent QA lease' \
+  'Integration QA Task' 'bbs ticket surface compose' 'parent surface lease' \
   'Integration QA is read-only'
 
 has_all "durable-resume-and-finish" \
@@ -71,8 +71,8 @@ has_all "ensure-before-init-ordering" \
   'never pre-create' 'fast-path no-op' 'origin-type sub_ticket' \
   'from inside its own worktree'
 
-has_all "reset-base-before-land" \
-  'reset-base' 'bbs-serving' 'BLOCKs' 'dependency order'
+has_all "revert-before-land" \
+  'surface revert' 'bbs-serving' 'BLOCKs' 'dependency order'
 
 has_all "native-task-list-init" \
   'native task list at entry' 'parent, children, and DAG' \

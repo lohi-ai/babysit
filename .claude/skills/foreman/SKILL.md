@@ -302,15 +302,16 @@ Edits after a gate invalidate it and require a new worker pass.
 
 Workers execute per-ticket QA; foreman owns when and where it runs.
 
-- The worktree `qa` skill owns `merge-base`, `qa-lease`, and the shared primary
-  surface protocol. Foreman treats lease contention as queued work and never
-  runs competing surface mutations.
+- The worktree `qa` skill owns the `bbs ticket surface` lifecycle and the
+  shared primary surface protocol. Foreman treats lease contention as queued
+  work and never runs competing surface mutations.
 - Independent tickets may complete per-ticket gates in any order. Dependents
   wait for prerequisite gates and branch integration.
 - When two or more tickets interact, or the parent criteria describe a
   cross-ticket journey, add one **Integration QA Task** depending on every
-  relevant Build Task. Acquire the parent QA lease, use `bbs ticket switch` to
-  compose exactly those child branches on the primary checkout, and dispatch a
+  relevant Build Task. Acquire the parent surface lease, use
+  `bbs ticket surface compose` to compose exactly those child branches on
+  the primary checkout, and dispatch a
   QA worker there against the parent requirement and plan.
 - Integration QA is read-only on the composed primary. It persists parent QA
   evidence but does not fix code there. A finding becomes a follow-up Dispatch
@@ -340,8 +341,9 @@ eval "$(bbs autopilot git-flow)"   # BBS_FINISH=review | land | pr
 
 - `review` — leave clean committed branches/worktrees for the human; optionally
   compose them with `bbs ticket serve` when asked.
-- `land` — if integration QA (or any `switch`/`serve`) left a scratch
-  composition on the primary, run `bbs ticket reset-base` first. `land`
+- `land` — if integration QA (or any `surface compose`/`serve`) left a
+  scratch composition on the primary, run `bbs ticket surface revert` first.
+  `land`
   itself BLOCKs when the `bbs-serving` marker is nonempty — scratch
   composition must be discarded, never merged onto. Then run
   `bbs ticket land` in dependency order. It merges locally and never pushes.

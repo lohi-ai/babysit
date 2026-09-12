@@ -1,24 +1,24 @@
 #!/usr/bin/env bash
-# tests/test_bbs_ticket_switch.sh — coverage for bin/bbs-ticket § switch.
+# tests/test_bbs_ticket_surface_switch.sh — coverage for bin/bbs-ticket § surface compose.
 #
-# switch <ticket>... = reset-base + merge each named ticket's branch into the
-# primary checkout: the fast QA hop that points the shared test surface at
+# surface compose <ticket>... = revert + merge each named ticket's branch into
+# the primary checkout: the fast QA hop that points the shared test surface at
 # exactly base + the named tickets, runnable from the primary (no cd into
 # worktrees).
 #
 # Scenarios:
-#   switch-single            switch A → primary has A's file, SERVING=A
-#   switch-swaps-tickets     switch A then switch B → primary has B, not A;
+#   compose-single            compose A → primary has A's file, SERVING=A
+#   compose-swaps-tickets     compose A then compose B → primary has B, not A;
 #                            A's worktree + branch survive
-#   switch-multiple          switch A B → both files on the primary
-#   switch-unknown-ticket    unknown id → BLOCKED exit 2, primary untouched
-#   switch-refuses-dirty-primary
+#   compose-multiple          compose A B → both files on the primary
+#   compose-unknown-ticket    unknown id → BLOCKED exit 2, primary untouched
+#   compose-refuses-dirty-primary
 #                            uncommitted changes on the test surface → BLOCKED
 #                            before anything moves; dirty file survives
-#   switch-refuses-off-base-primary
+#   compose-refuses-off-base-primary
 #                            primary sitting on feat/X (branch-mode in-place
 #                            ticket) → BLOCKED, checkout untouched
-#   switch-conflict          A and B touch the same file → BLOCKED naming the
+#   compose-conflict          A and B touch the same file → BLOCKED naming the
 #                            conflicting merge, no half-merged tree
 
 set -u
@@ -62,7 +62,7 @@ build_two_tickets() {
       && git -c user.email=t@t -c user.name=t commit -q -m "ticket b" ) || return 1
 }
 
-# ── switch-single ─────────────────────────────────────────────────────
+# ── compose-single ─────────────────────────────────────────────────────
 T="$(mktemp -d)"
 (
   export PATH="$SCRIPT_DIR/bin:$PATH"
@@ -70,18 +70,18 @@ T="$(mktemp -d)"
   export AGENT_ROLE=mayor
   build_two_tickets "$T" || { echo "fixture failed"; exit 1; }
 
-  out="$("$BBS_TICKET_BIN" switch "$TK_A" 2>"$T/err")"; rc=$?
-  [ "$rc" -eq 0 ] || { echo "switch failed rc=$rc: $(cat "$T/err")"; exit 1; }
-  [ -f a.txt ] || { echo "a.txt missing on primary after switch A"; exit 1; }
+  out="$("$BBS_TICKET_BIN" surface compose "$TK_A" 2>"$T/err")"; rc=$?
+  [ "$rc" -eq 0 ] || { echo "compose failed rc=$rc: $(cat "$T/err")"; exit 1; }
+  [ -f a.txt ] || { echo "a.txt missing on primary after compose A"; exit 1; }
   [ ! -f b.txt ] || { echo "b.txt unexpectedly on primary"; exit 1; }
   printf '%s\n' "$out" | grep -q "^SERVING=$TK_A$" \
     || { echo "expected SERVING=$TK_A; out: $out"; exit 1; }
   [ "$(git branch --show-current)" = "main" ] \
     || { echo "primary moved off main"; exit 1; }
-) && ok "switch-single" || fail "switch-single"
+) && ok "compose-single" || fail "compose-single"
 rm -rf "$T"
 
-# ── switch-swaps-tickets ──────────────────────────────────────────────
+# ── compose-swaps-tickets ──────────────────────────────────────────────
 T="$(mktemp -d)"
 (
   export PATH="$SCRIPT_DIR/bin:$PATH"
@@ -89,19 +89,19 @@ T="$(mktemp -d)"
   export AGENT_ROLE=mayor
   build_two_tickets "$T" || { echo "fixture failed"; exit 1; }
 
-  "$BBS_TICKET_BIN" switch "$TK_A" >/dev/null 2>&1 || { echo "switch A failed"; exit 1; }
-  "$BBS_TICKET_BIN" switch "$TK_B" >/dev/null 2>"$T/err" || {
-    echo "switch B failed: $(cat "$T/err")"; exit 1; }
-  [ -f b.txt ] || { echo "b.txt missing after switch B"; exit 1; }
-  [ ! -f a.txt ] || { echo "a.txt still on primary after switching to B"; exit 1; }
+  "$BBS_TICKET_BIN" surface compose "$TK_A" >/dev/null 2>&1 || { echo "compose A failed"; exit 1; }
+  "$BBS_TICKET_BIN" surface compose "$TK_B" >/dev/null 2>"$T/err" || {
+    echo "compose B failed: $(cat "$T/err")"; exit 1; }
+  [ -f b.txt ] || { echo "b.txt missing after compose B"; exit 1; }
+  [ ! -f a.txt ] || { echo "a.txt still on primary after composing B"; exit 1; }
   # Ticket A survives the swap: worktree file + branch intact.
   [ -f "$WT_A/a.txt" ] || { echo "A's worktree lost a.txt"; exit 1; }
   git -C "$WT_A" rev-parse --verify -q "$(git -C "$WT_A" branch --show-current)" >/dev/null \
     || { echo "A's branch gone"; exit 1; }
-) && ok "switch-swaps-tickets" || fail "switch-swaps-tickets"
+) && ok "compose-swaps-tickets" || fail "compose-swaps-tickets"
 rm -rf "$T"
 
-# ── switch-multiple ───────────────────────────────────────────────────
+# ── compose-multiple ───────────────────────────────────────────────────
 T="$(mktemp -d)"
 (
   export PATH="$SCRIPT_DIR/bin:$PATH"
@@ -109,35 +109,35 @@ T="$(mktemp -d)"
   export AGENT_ROLE=mayor
   build_two_tickets "$T" || { echo "fixture failed"; exit 1; }
 
-  out="$("$BBS_TICKET_BIN" switch "$TK_A" "$TK_B" 2>"$T/err")"; rc=$?
-  [ "$rc" -eq 0 ] || { echo "switch A B failed rc=$rc: $(cat "$T/err")"; exit 1; }
+  out="$("$BBS_TICKET_BIN" surface compose "$TK_A" "$TK_B" 2>"$T/err")"; rc=$?
+  [ "$rc" -eq 0 ] || { echo "compose A B failed rc=$rc: $(cat "$T/err")"; exit 1; }
   [ -f a.txt ] && [ -f b.txt ] || { echo "expected both a.txt and b.txt"; exit 1; }
   printf '%s\n' "$out" | grep -q "^SERVING=$TK_A,$TK_B$" \
     || { echo "expected SERVING=$TK_A,$TK_B; out: $out"; exit 1; }
-) && ok "switch-multiple" || fail "switch-multiple"
+) && ok "compose-multiple" || fail "compose-multiple"
 rm -rf "$T"
 
-# ── switch-unknown-ticket ─────────────────────────────────────────────
+# ── compose-unknown-ticket ─────────────────────────────────────────────
 T="$(mktemp -d)"
 (
   export PATH="$SCRIPT_DIR/bin:$PATH"
   export HOME="$T/home"; mkdir -p "$HOME"
   export AGENT_ROLE=mayor
   build_two_tickets "$T" || { echo "fixture failed"; exit 1; }
-  "$BBS_TICKET_BIN" switch "$TK_A" >/dev/null 2>&1 || { echo "switch A failed"; exit 1; }
+  "$BBS_TICKET_BIN" surface compose "$TK_A" >/dev/null 2>&1 || { echo "compose A failed"; exit 1; }
   pre="$(git rev-parse HEAD)"
 
-  "$BBS_TICKET_BIN" switch bs-nope0000 >/dev/null 2>"$T/err"; rc=$?
+  "$BBS_TICKET_BIN" surface compose bs-nope0000 >/dev/null 2>"$T/err"; rc=$?
   [ "$rc" -eq 2 ] || { echo "expected rc=2 on unknown ticket, got $rc"; exit 1; }
   grep -q "no local branch matches" "$T/err" \
     || { echo "expected unknown-ticket reason: $(cat "$T/err")"; exit 1; }
   # Pre-validation means the surface was not touched: A still served.
   [ "$(git rev-parse HEAD)" = "$pre" ] || { echo "primary changed despite BLOCK"; exit 1; }
   [ -f a.txt ] || { echo "a.txt lost despite BLOCK"; exit 1; }
-) && ok "switch-unknown-ticket" || fail "switch-unknown-ticket"
+) && ok "compose-unknown-ticket" || fail "compose-unknown-ticket"
 rm -rf "$T"
 
-# ── switch-refuses-dirty-primary ──────────────────────────────────────
+# ── compose-refuses-dirty-primary ──────────────────────────────────────
 T="$(mktemp -d)"
 (
   export PATH="$SCRIPT_DIR/bin:$PATH"
@@ -147,17 +147,17 @@ T="$(mktemp -d)"
   echo "uncommitted surface work" > dirty.txt
   pre="$(git rev-parse HEAD)"
 
-  "$BBS_TICKET_BIN" switch "$TK_A" >/dev/null 2>"$T/err"; rc=$?
+  "$BBS_TICKET_BIN" surface compose "$TK_A" >/dev/null 2>"$T/err"; rc=$?
   [ "$rc" -eq 2 ] || { echo "expected rc=2 on dirty surface, got $rc"; exit 1; }
   grep -q "uncommitted changes" "$T/err" \
     || { echo "expected dirty-tree reason: $(cat "$T/err")"; exit 1; }
   [ -f dirty.txt ] || { echo "dirty.txt destroyed despite BLOCK"; exit 1; }
   [ "$(git rev-parse HEAD)" = "$pre" ] || { echo "HEAD moved despite BLOCK"; exit 1; }
   [ ! -f a.txt ] || { echo "ticket A merged despite BLOCK"; exit 1; }
-) && ok "switch-refuses-dirty-primary" || fail "switch-refuses-dirty-primary"
+) && ok "compose-refuses-dirty-primary" || fail "compose-refuses-dirty-primary"
 rm -rf "$T"
 
-# ── switch-refuses-off-base-primary ───────────────────────────────────
+# ── compose-refuses-off-base-primary ───────────────────────────────────
 T="$(mktemp -d)"
 (
   export PATH="$SCRIPT_DIR/bin:$PATH"
@@ -166,15 +166,15 @@ T="$(mktemp -d)"
   build_two_tickets "$T" || { echo "fixture failed"; exit 1; }
   git checkout -q -b feat/manual-work
 
-  "$BBS_TICKET_BIN" switch "$TK_A" >/dev/null 2>"$T/err"; rc=$?
+  "$BBS_TICKET_BIN" surface compose "$TK_A" >/dev/null 2>"$T/err"; rc=$?
   [ "$rc" -eq 2 ] || { echo "expected rc=2 off base, got $rc"; exit 1; }
   grep -q "not base" "$T/err" || { echo "expected off-base reason: $(cat "$T/err")"; exit 1; }
   [ "$(git branch --show-current)" = "feat/manual-work" ] \
     || { echo "checkout moved despite BLOCK"; exit 1; }
-) && ok "switch-refuses-off-base-primary" || fail "switch-refuses-off-base-primary"
+) && ok "compose-refuses-off-base-primary" || fail "compose-refuses-off-base-primary"
 rm -rf "$T"
 
-# ── switch-conflict ───────────────────────────────────────────────────
+# ── compose-conflict ───────────────────────────────────────────────────
 T="$(mktemp -d)"
 (
   export PATH="$SCRIPT_DIR/bin:$PATH"
@@ -187,18 +187,18 @@ T="$(mktemp -d)"
   ( cd "$WT_B" && echo "B version" > clash.txt && git add clash.txt \
       && git -c user.email=t@t -c user.name=t commit -q -m "b clash" )
 
-  "$BBS_TICKET_BIN" switch "$TK_A" "$TK_B" >/dev/null 2>"$T/err"; rc=$?
+  "$BBS_TICKET_BIN" surface compose "$TK_A" "$TK_B" >/dev/null 2>"$T/err"; rc=$?
   [ "$rc" -eq 2 ] || { echo "expected rc=2 on conflict, got $rc"; exit 1; }
   grep -q "merge conflict" "$T/err" || { echo "expected conflict reason: $(cat "$T/err")"; exit 1; }
   # No half-merged state left behind: tree clean, A landed, B's merge aborted.
   [ -z "$(git status --porcelain)" ] || { echo "primary left dirty after conflict"; exit 1; }
   [ -f a.txt ] || { echo "A's merge should have landed before the conflict"; exit 1; }
   [ ! -f b.txt ] || { echo "B's merge should have aborted"; exit 1; }
-) && ok "switch-conflict" || fail "switch-conflict"
+) && ok "compose-conflict" || fail "compose-conflict"
 rm -rf "$T"
 
-# ── switch-persists-serving ───────────────────────────────────────────
-# switch writes <gitdir>/bbs-serving with set semantics: exactly the named
+# ── compose-persists-serving ───────────────────────────────────────────
+# compose writes <gitdir>/bbs-serving with set semantics: exactly the named
 # tickets, replacing whatever was there (board reads this file).
 T="$(mktemp -d)"
 (
@@ -208,18 +208,18 @@ T="$(mktemp -d)"
   build_two_tickets "$T" || { echo "fixture failed"; exit 1; }
   GD="$(git rev-parse --absolute-git-dir)"
 
-  "$BBS_TICKET_BIN" switch "$TK_A" >/dev/null 2>&1 || { echo "switch A failed"; exit 1; }
+  "$BBS_TICKET_BIN" surface compose "$TK_A" >/dev/null 2>&1 || { echo "compose A failed"; exit 1; }
   [ "$(cat "$GD/bbs-serving")" = "$TK_A" ] || { echo "expected serving=$TK_A: $(cat "$GD/bbs-serving")"; exit 1; }
-  "$BBS_TICKET_BIN" switch "$TK_B" >/dev/null 2>&1 || { echo "switch B failed"; exit 1; }
+  "$BBS_TICKET_BIN" surface compose "$TK_B" >/dev/null 2>&1 || { echo "compose B failed"; exit 1; }
   [ "$(cat "$GD/bbs-serving")" = "$TK_B" ] || { echo "set semantics: A should be replaced"; exit 1; }
-  "$BBS_TICKET_BIN" switch "$TK_A" "$TK_B" >/dev/null 2>&1 || { echo "switch A B failed"; exit 1; }
+  "$BBS_TICKET_BIN" surface compose "$TK_A" "$TK_B" >/dev/null 2>&1 || { echo "compose A B failed"; exit 1; }
   [ "$(cat "$GD/bbs-serving")" = "$TK_A,$TK_B" ] || { echo "expected $TK_A,$TK_B: $(cat "$GD/bbs-serving")"; exit 1; }
-  "$BBS_TICKET_BIN" reset-base >/dev/null 2>&1 || { echo "reset-base failed"; exit 1; }
-  [ -z "$(cat "$GD/bbs-serving")" ] || { echo "reset-base should clear serving"; exit 1; }
-) && ok "switch-persists-serving" || fail "switch-persists-serving"
+  "$BBS_TICKET_BIN" surface revert >/dev/null 2>&1 || { echo "revert failed"; exit 1; }
+  [ -z "$(cat "$GD/bbs-serving")" ] || { echo "revert should clear serving"; exit 1; }
+) && ok "compose-persists-serving" || fail "compose-persists-serving"
 rm -rf "$T"
 
-# ── switch-merge-failure-is-not-a-conflict ────────────────────────────
+# ── compose-merge-failure-is-not-a-conflict ────────────────────────────
 # A merge can exit non-zero without a single file conflicting — no committer
 # identity, a rejected hook, a stale index.lock. Reporting those as "merge
 # conflict" sends the operator into a worktree to resolve nothing. This is the
@@ -238,7 +238,7 @@ T="$(mktemp -d)"
   git config --local --unset user.name  2>/dev/null || true
   unset GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL
 
-  out="$("$BBS_TICKET_BIN" switch "$TK_A" "$TK_B" 2>&1)"; rc=$?
+  out="$("$BBS_TICKET_BIN" surface compose "$TK_A" "$TK_B" 2>&1)"; rc=$?
   [ "$rc" -ne 0 ] || { echo "expected a non-zero exit; out: $out"; exit 1; }
   printf '%s\n' "$out" | grep -q "no files conflicted" \
     || { echo "blamed a conflict for a merge that never conflicted; out: $out"; exit 1; }
@@ -248,7 +248,7 @@ T="$(mktemp -d)"
   printf '%s\n' "$out" | grep -q "resolve, commit" \
     && { echo "still telling the operator to resolve a conflict; out: $out"; exit 1; }
   exit 0
-) && ok "switch-merge-failure-is-not-a-conflict" || fail "switch-merge-failure-is-not-a-conflict"
+) && ok "compose-merge-failure-is-not-a-conflict" || fail "compose-merge-failure-is-not-a-conflict"
 rm -rf "$T"
 
 echo

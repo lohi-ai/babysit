@@ -16,12 +16,13 @@ import (
 )
 
 // This file ports the git-mutating base-ops family of bin/bbs-ticket.bash:
-// merge-base, refresh, reset-base, switch, serve, and qa-lease. These land
-// ticket-worktree branches on the shared primary checkout, keep the surface
-// stable across parallel QA sessions (the qa-lease), and drive the human-review
-// compose (serve). Every git mutation the bash did is reproduced exactly,
-// including the merge-base lock in the shared git dir and the loud BLOCK
-// messages on any unsafe position.
+// refresh, surface, serve, and land. `surface` is the one public lifecycle for
+// the shared test surface — acquire → compose → verify/review → revert/release
+// — replacing the scripted per-op sequences the bash callers ran by hand.
+// `serve` (scratch review) and `land` (retained local land) are explicit modes
+// on top of it. Every git mutation the bash did
+// is reproduced exactly, including the loud BLOCK messages on any unsafe
+// position.
 
 // ─── dir-aware git + shared helpers ──────────────────────────────────────────
 
@@ -62,7 +63,7 @@ func mergeFailure(dir, gitSaid string) (conflicted bool, detail string) {
 
 func insideWorkTree() bool { return gitOK("rev-parse", "--is-inside-work-tree") }
 
-// baseOpsPrimary resolves the primary checkout that reset-base/switch/serve/land
+// baseOpsPrimary resolves the primary checkout that surface/serve/land
 // all mutate, behind the two guards they all need first. It prints the reason
 // and returns "" when there is nothing to work on, so every caller is one
 // `if primary == "" { return 2 }`.
@@ -232,103 +233,134 @@ func ticketExec(dir string, extraEnv map[string]string, captureOut, quietErr boo
 	return strings.TrimRight(out.String(), "\n"), rc
 }
 
-// ─── merge-base ──────────────────────────────────────────────────────────────
+// ─── surface ─────────────────────────────────────────────────────────────────
 
-func runMergeBase(args []string) { os.Exit(mergeBase(args)) }
+func runSurface(args []string) { os.Exit(surfaceCmd(args)) }
 
-// mergeBase returns the exit code rather than calling os.Exit, so the surface
-// lease can be released by a defer instead of by hand at each of the eight ways
-// out. Releasing by hand is how a lock gets leaked.
-func mergeBase(args []string) int {
-	base := ""
-	for i := 0; i < len(args); i++ {
-		if args[i] == "--base" {
-			base, i = valueAt(args, i), i+1
+// surfaceCmd is the one public lifecycle over the shared test surface. The
+// verbs map one-to-one onto the stages a QA session or review runs:
+//
+//	acquire  take the long lease (one QA session at a time)
+//	compose  reset the primary to origin/base, then merge exactly the named
+//	         ticket branches — the surface is never observably half-built
+//	revert   reset the primary to origin/base, discarding the composition
+//	release  drop the lease
+//	status   who holds the lease, for how long, under which ttl
+//
+// `serve` and `land` are modes on top of this, not extra stages: serve is a
+// long acquire + compose for human review; land is the retained merge that
+// keeps the composition instead of reverting it.
+func surfaceCmd(args []string) int {
+	verb := ""
+	if len(args) > 0 {
+		verb = args[0]
+		args = args[1:]
+	}
+	switch verb {
+	case "acquire", "release", "status":
+		return surfaceLease(verb, args)
+	case "compose":
+		return surfaceCompose(args)
+	case "revert":
+		return surfaceRevert(args)
+	default:
+		fmt.Fprintln(os.Stderr, retarget("usage: bbs-ticket surface <acquire|compose|revert|release|status> [<ticket>...] [--base BRANCH] [--ticket ID] [--ttl-min N] [--force]"))
+		return 2
+	}
+}
+
+// surfaceCompose is the exact-composition op: the primary ends up serving
+// base + exactly the named tickets. With no ticket args it composes the
+// ticket in scope — the shape a worktree QA loop wants — and keeps the
+// clean-worktree guard so QA never tests uncommitted work.
+func surfaceCompose(args []string) int {
+	tickets, base, ok := parseTicketsAndBase("surface compose", args)
+	if !ok {
+		return 2
+	}
+	primary := baseOpsPrimary("surface compose")
+	if primary == "" {
+		return 2
+	}
+	env := resolveProject() // explicit tickets are args; env.Ticket is the default and the lease actor
+	if len(tickets) == 0 {
+		if env.Ticket == "" {
+			fmt.Fprintln(os.Stderr, retarget("usage: bbs-ticket surface compose <ticket> [<ticket>...] [--base BRANCH]"))
+			return 2
+		}
+		tickets = []string{env.Ticket}
+		// The clean-worktree guard, kept for the worktree-side default: the compose
+		// lands commits, so a dirty ticket worktree would test a lie. Only
+		// fires when cwd is a linked worktree of this same repo — a dirty
+		// primary is resetToOrigin's own guard below. --git-common-dir answers
+		// relative to each repo dir, so both sides are absolutized against
+		// their own root before comparing.
+		absCommon := func(dir string) string {
+			c := gitCOut(dir, "rev-parse", "--git-common-dir")
+			if c == "" {
+				return ""
+			}
+			if !filepath.IsAbs(c) {
+				c = filepath.Join(dir, c)
+			}
+			return filepath.Clean(c)
+		}
+		if top := gitOut("rev-parse", "--show-toplevel"); top != "" && top != primary &&
+			absCommon(top) == absCommon(primary) && gitOut("status", "--porcelain") != "" {
+			fmt.Fprintln(os.Stderr, "STATUS: BLOCKED")
+			fmt.Fprintln(os.Stderr, "REASON: worktree has uncommitted changes — the compose lands commits, not the working tree.")
+			fmt.Fprintln(os.Stderr, "RECOMMENDATION: commit (or stash) in the worktree, then re-run surface compose.")
+			return 2
 		}
 	}
-	if !haveGit() {
-		fmt.Fprintln(os.Stderr, "merge-base: git not found")
-		return 2
+	// Resolve every ticket to a branch before touching anything.
+	var branches []string
+	for _, t := range tickets {
+		b := ticketBranch(t)
+		if b == "" {
+			return 2
+		}
+		branches = append(branches, b)
 	}
-	if !insideWorkTree() {
-		fmt.Fprintln(os.Stderr, "merge-base: not in a git work tree")
-		return 2
-	}
-	top := gitOut("rev-parse", "--show-toplevel")
-	primary := gitPrimary()
-	if primary == "" || primary == top {
-		fmt.Fprintln(os.Stderr, "STATUS: BLOCKED")
-		fmt.Fprintln(os.Stderr, "REASON: merge-base must run from a linked ticket worktree — cwd is the primary checkout.")
-		fmt.Fprintln(os.Stderr, "RECOMMENDATION: cd into the ticket worktree (.babysit/worktrees/<ticket>_<slug>/) and re-run.")
-		return 2
-	}
-	branch := gitOut("branch", "--show-current")
-	if branch == "" {
-		fmt.Fprintln(os.Stderr, "merge-base: detached HEAD in worktree — checkout the ticket branch first")
-		return 2
-	}
-	if gitOut("status", "--porcelain") != "" {
-		fmt.Fprintln(os.Stderr, "STATUS: BLOCKED")
-		fmt.Fprintln(os.Stderr, "REASON: worktree has uncommitted changes — the merge lands commits, not the working tree.")
-		fmt.Fprintln(os.Stderr, "RECOMMENDATION: commit (or stash) in the worktree, then re-run merge-base.")
-		return 2
-	}
-	if base == "" {
-		base = baseBranchIn(primary)
-	}
-	if branch == base {
-		fmt.Fprintf(os.Stderr, "merge-base: worktree is on the base branch '%s' — nothing to land\n", base)
-		return 2
-	}
-	env := resolveEnv()
-	s, ok := acquireSurface("merge-base", primary, env.Ticket)
+	// One lease covers the reset and every merge. surfaceRevert below finds it
+	// already held by this process and is reentrant.
+	s, ok := acquireSurface("surface compose", primary, env.Ticket)
 	if !ok {
 		return 2
 	}
 	defer s.release()
-	// Everything that reads the primary belongs under the lease. A peer's merge
-	// leaves that checkout mid-write for as long as it runs, and reading it from
-	// outside the lease sees the peer's half-written tree as the operator's own
-	// uncommitted work — the ticket then fails to land, told to stash changes
-	// that are not theirs.
-	if !s.guardOnBase(base, ".",
-		fmt.Sprintf("RECOMMENDATION: checkout '%s' in the primary checkout (or pass --base), then re-run.", base)) {
-		return 2
+	// Clean slate via revert (its safety checks BLOCK loudly, stderr passes).
+	rbArgs := []string{"--quiet"}
+	if base != "" {
+		rbArgs = append(rbArgs, "--base", base)
 	}
-	if !s.guardClean(" — merging would tangle them with the ticket.",
-		"RECOMMENDATION: commit or stash the primary checkout's changes, then re-run merge-base.") {
-		return 2
+	if rc := surfaceRevert(rbArgs); rc != 0 {
+		return rc
 	}
-	pre := gitCOut(primary, "rev-parse", "HEAD")
-	if m := s.merge(branch, false); !m.ok {
-		fmt.Fprintln(os.Stderr, "STATUS: BLOCKED")
-		if !m.conflicted {
-			fmt.Fprintf(os.Stderr, "REASON: could not merge '%s' onto '%s' (%s) — no files conflicted; git said: %s\n", branch, base, primary, m.detail)
-			fmt.Fprintln(os.Stderr, "RECOMMENDATION: fix what git reported (commonly an unset user.email/user.name, or a leftover index.lock), then re-run.")
+	if base == "" {
+		base = baseBranchIn(primary)
+	}
+	for _, b := range branches {
+		if m := s.merge(b, false); !m.ok {
+			fmt.Fprintln(os.Stderr, "STATUS: BLOCKED")
+			if !m.conflicted {
+				fmt.Fprintf(os.Stderr, "REASON: could not merge '%s' onto '%s' — no files conflicted; git said: %s\n", b, base, m.detail)
+				fmt.Fprintln(os.Stderr, "RECOMMENDATION: fix what git reported (commonly an unset user.email/user.name, or a leftover index.lock), then re-run.")
+				return 2
+			}
+			fmt.Fprintf(os.Stderr, "REASON: merge conflict landing '%s' on '%s' in %s — that merge aborted; earlier tickets in this compose are already on the surface.\n", b, base, m.detail)
+			fmt.Fprintf(os.Stderr, "RECOMMENDATION: in that ticket's worktree, merge 'origin/%s' in (never local '%s'), resolve, commit, re-run surface compose.\n", base, base)
+			fmt.Fprintf(os.Stderr, "  If origin/%s merges clean, it conflicts with an earlier ticket in this compose — compose them separately or resolve the pair together.\n", base)
 			return 2
 		}
-		fmt.Fprintf(os.Stderr, "REASON: merge conflict landing '%s' on '%s' (%s) in %s; merge aborted, primary untouched.\n", branch, base, primary, m.detail)
-		fmt.Fprintf(os.Stderr, "RECOMMENDATION: in the worktree, merge 'origin/%s' into '%s' (never local '%s' — it carries other tickets), resolve, commit, re-run merge-base.\n", base, branch, base)
-		fmt.Fprintf(os.Stderr, retarget("  If origin/%s merges clean, the conflict is with another in-flight ticket — QA solo via 'bbs-ticket switch %s' and land the PRs in sequence.\n"), base, env.Ticket)
-		return 2
 	}
-	post := gitCOut(primary, "rev-parse", "HEAD")
-	if env.Ticket != "" {
-		servingWrite(s.gitdir, "append", []string{env.Ticket})
-		ticket.New(env).HistoryAppendExtra("merge_base", actorRole(),
-			fmt.Sprintf(`{"base":"%s","head":"%s"}`, base, post))
-	}
-	if pre == post {
-		fmt.Println("MERGED=0")
-	} else {
-		fmt.Println("MERGED=1")
-	}
+	head := gitCOut(primary, "rev-parse", "HEAD")
+	servingWrite(s.gitdir, "set", tickets)
 	fmt.Printf("BASE=%s\n", base)
-	fmt.Printf("BRANCH=%s\n", branch)
 	fmt.Printf("PRIMARY=%s\n", primary)
-	fmt.Printf("HEAD=%s\n", post)
-	fmt.Fprintf(os.Stderr, "merge-base: primary checkout now includes '%s' — test against the server there;\n", branch)
-	fmt.Fprintln(os.Stderr, "  fix in this worktree, commit, and re-run merge-base after every QA fix.")
+	fmt.Printf("HEAD=%s\n", head)
+	fmt.Printf("SERVING=%s\n", strings.Join(tickets, ","))
+	fmt.Fprintf(os.Stderr, "surface compose: test surface now serves '%s' + %s — fixes go in the ticket worktree(s), then re-run surface compose.\n", base, strings.Join(tickets, " "))
 	return 0
 }
 
@@ -358,7 +390,7 @@ func runRefresh(args []string) {
 		base = baseBranchIn("")
 	}
 	if branch == base {
-		fmt.Fprintf(os.Stderr, "refresh: on the base branch '%s' — nothing to refresh (reset-base maintains the primary)\n", base)
+		fmt.Fprintf(os.Stderr, "refresh: on the base branch '%s' — nothing to refresh (surface revert maintains the primary)\n", base)
 		os.Exit(2)
 	}
 	if gitOut("status", "--porcelain") != "" {
@@ -392,7 +424,7 @@ func runRefresh(args []string) {
 			os.Exit(2)
 		}
 		fmt.Fprintf(os.Stderr, "REASON: merge conflict bringing origin/%s into '%s' in %s; merge aborted, branch untouched.\n", base, branch, detail)
-		fmt.Fprintf(os.Stderr, "RECOMMENDATION: run 'git merge origin/%s' here, resolve, commit; then re-run merge-base/switch if this ticket is on the test surface.\n", base)
+		fmt.Fprintf(os.Stderr, "RECOMMENDATION: run 'git merge origin/%s' here, resolve, commit; then re-run surface compose if this ticket is on the test surface.\n", base)
 		os.Exit(2)
 	}
 	env := resolveEnv()
@@ -404,28 +436,26 @@ func runRefresh(args []string) {
 	fmt.Println("UPDATED=1")
 	fmt.Printf("BASE=%s\n", base)
 	fmt.Printf("HEAD=%s\n", head)
-	fmt.Fprintf(os.Stderr, "refresh: merged origin/%s into '%s' — if this ticket is on the test surface, re-run merge-base/switch.\n", base, branch)
+	fmt.Fprintf(os.Stderr, "refresh: merged origin/%s into '%s' — if this ticket is on the test surface, re-run surface compose.\n", base, branch)
 	os.Exit(0)
 }
 
-// ─── reset-base ──────────────────────────────────────────────────────────────
+// ─── surface revert ──────────────────────────────────────────────────────────
 
-func runResetBase(args []string) { os.Exit(resetBase(args)) }
-
-// resetBase performs the reset and returns the exit code so switch can invoke it
-// in-process the way bash calls `"$0" reset-base --quiet`.
+// surfaceRevert performs the reset and returns the exit code so compose can
+// invoke it in-process the way bash invoked the reset mid-compose.
 //
-// Its guards therefore fire for `switch` and `serve` too (serve shells out to
-// switch, whose stderr passes straight through). That is why the RECOMMENDATION
-// lines below say "then re-run" rather than naming reset-base: the operator ran
-// serve, and telling them to re-run a command they never invoked sends them
-// somewhere else entirely.
+// Its guards therefore fire for `compose` and `serve` too (serve shells out to
+// compose, whose stderr passes straight through). That is why the
+// RECOMMENDATION lines below say "then re-run" rather than naming revert: the
+// operator ran serve, and telling them to re-run a command they never invoked
+// sends them somewhere else entirely.
 //
-// When switch calls it, the surface lease is already held by this process and
-// surfaceAcquire is reentrant — reset and merge have to be one step, or a second
-// switch resets the base between them and its merge lands on a tree still
-// carrying the first switch's ticket, while serving names only its own.
-func resetBase(args []string) int {
+// When compose calls it, the surface lease is already held by this process and
+// surfaceAcquire is reentrant — reset and merge have to be one step, or a
+// second compose resets the base between them and its merge lands on a tree
+// still carrying the first compose's ticket, while serving names only its own.
+func surfaceRevert(args []string) int {
 	base, quiet := "", false
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -435,7 +465,7 @@ func resetBase(args []string) int {
 			quiet = true
 		}
 	}
-	primary := baseOpsPrimary("reset-base")
+	primary := baseOpsPrimary("surface revert")
 	if primary == "" {
 		return 2
 	}
@@ -443,7 +473,7 @@ func resetBase(args []string) int {
 		base = baseBranchIn(primary)
 	}
 	env := resolveEnv()
-	s, ok := acquireSurface("reset-base", primary, env.Ticket)
+	s, ok := acquireSurface("surface revert", primary, env.Ticket)
 	if !ok {
 		return 2
 	}
@@ -454,75 +484,6 @@ func resetBase(args []string) int {
 	if !s.resetToOrigin(base, quiet, env) {
 		return 2
 	}
-	return 0
-}
-
-// ─── switch ──────────────────────────────────────────────────────────────────
-
-func runSwitch(args []string) { os.Exit(switchSurface(args)) }
-
-func switchSurface(args []string) int {
-	tickets, base, ok := parseTicketsAndBase("switch", args)
-	if !ok {
-		return 2
-	}
-	if len(tickets) == 0 {
-		fmt.Fprintln(os.Stderr, retarget("usage: bbs-ticket switch <ticket> [<ticket>...] [--base BRANCH]"))
-		return 2
-	}
-	primary := baseOpsPrimary("switch")
-	if primary == "" {
-		return 2
-	}
-	env := resolveProject() // tickets are explicit args; env.Ticket is only the lease actor
-	// Resolve every ticket to a branch before touching anything.
-	var branches []string
-	for _, t := range tickets {
-		b := ticketBranch(t)
-		if b == "" {
-			return 2
-		}
-		branches = append(branches, b)
-	}
-	// One lease covers the reset and every merge. reset-base below finds it
-	// already held by this process and is reentrant.
-	s, ok := acquireSurface("switch", primary, env.Ticket)
-	if !ok {
-		return 2
-	}
-	defer s.release()
-	// Clean slate via reset-base (its safety checks BLOCK loudly, stderr passes).
-	rbArgs := []string{"--quiet"}
-	if base != "" {
-		rbArgs = append(rbArgs, "--base", base)
-	}
-	if rc := resetBase(rbArgs); rc != 0 {
-		return rc
-	}
-	if base == "" {
-		base = baseBranchIn(primary)
-	}
-	for _, b := range branches {
-		if m := s.merge(b, false); !m.ok {
-			fmt.Fprintln(os.Stderr, "STATUS: BLOCKED")
-			if !m.conflicted {
-				fmt.Fprintf(os.Stderr, "REASON: could not merge '%s' onto '%s' — no files conflicted; git said: %s\n", b, base, m.detail)
-				fmt.Fprintln(os.Stderr, "RECOMMENDATION: fix what git reported (commonly an unset user.email/user.name, or a leftover index.lock), then re-run.")
-				return 2
-			}
-			fmt.Fprintf(os.Stderr, "REASON: merge conflict landing '%s' on '%s' in %s — that merge aborted; earlier tickets in this switch are already on the surface.\n", b, base, m.detail)
-			fmt.Fprintf(os.Stderr, "RECOMMENDATION: in that ticket's worktree, merge 'origin/%s' in (never local '%s'), resolve, commit, re-run switch.\n", base, base)
-			fmt.Fprintf(os.Stderr, "  If origin/%s merges clean, it conflicts with an earlier ticket in this switch — switch them separately or resolve the pair together.\n", base)
-			return 2
-		}
-	}
-	head := gitCOut(primary, "rev-parse", "HEAD")
-	servingWrite(s.gitdir, "set", tickets)
-	fmt.Printf("BASE=%s\n", base)
-	fmt.Printf("PRIMARY=%s\n", primary)
-	fmt.Printf("HEAD=%s\n", head)
-	fmt.Printf("SERVING=%s\n", strings.Join(tickets, ","))
-	fmt.Fprintf(os.Stderr, "switch: test surface now serves '%s' + %s — fixes go in the ticket worktree(s), then re-run switch.\n", base, strings.Join(tickets, " "))
 	return 0
 }
 
@@ -576,7 +537,7 @@ func runServe(args []string) {
 		owner := leaseOwner(gitdir)
 		if owner != "" {
 			if _, rc := ticketExec(primary, map[string]string{"BABYSIT_TICKET": owner}, false, false,
-				"qa-lease", "release", "--ticket", owner); rc != 0 {
+				"surface", "release", "--ticket", owner); rc != 0 {
 				os.Exit(rc)
 			}
 			fmt.Printf("RELEASED: %s %s\n", repo, owner)
@@ -606,7 +567,7 @@ func runServe(args []string) {
 					continue
 				}
 				if _, rc := ticketExec(sp, map[string]string{"BABYSIT_TICKET": sowner}, false, true,
-					"qa-lease", "release", "--ticket", sowner); rc == 0 {
+					"surface", "release", "--ticket", sowner); rc == 0 {
 					fmt.Printf("RELEASED: %s %s\n", filepath.Base(sp), sowner)
 				} else {
 					fmt.Fprintf(os.Stderr, "serve: sibling release failed in %s for %s\n", sp, sowner)
@@ -657,19 +618,19 @@ func runServe(args []string) {
 		}
 		return ts[0]
 	}
-	// serveSet: long lease + composed switch; a lease this call created (not one
-	// refreshed) is released if the switch BLOCKs.
+	// serveSet: long lease + compose; a lease this call created (not one
+	// refreshed) is released if the compose BLOCKs.
 	serveSet := func(dir, owner string, ts []string) int {
 		out, rc := ticketExec(dir, map[string]string{"BABYSIT_TICKET": owner}, true, false,
-			"qa-lease", "acquire", "--ticket", owner, "--ttl-min", ttl)
+			"surface", "acquire", "--ticket", owner, "--ttl-min", ttl)
 		if rc != 0 {
 			return 2
 		}
 		if _, rc := ticketExec(dir, map[string]string{"BABYSIT_TICKET": owner}, false, false,
-			append([]string{"switch"}, ts...)...); rc != 0 {
+			append([]string{"surface", "compose"}, ts...)...); rc != 0 {
 			if !strings.Contains(out, "REFRESHED=1") {
 				ticketExec(dir, map[string]string{"BABYSIT_TICKET": owner}, false, true,
-					"qa-lease", "release", "--ticket", owner)
+					"surface", "release", "--ticket", owner)
 			}
 			return 2
 		}
@@ -686,7 +647,7 @@ func runServe(args []string) {
 		fmt.Sprintf(`{"tickets":"%s","ttl_min":%s}`, list, ttl))
 
 	// Sibling fan-out: group served siblings by repo path (two tickets sharing a
-	// sibling repo land there together), then one lease + one switch per repo.
+	// sibling repo land there together), then one lease + one compose per repo.
 	type sibRow struct{ path, ticket string }
 	var rows []sibRow
 	// One resolver for the whole fan-out: primary is constant across the loop,
@@ -787,10 +748,10 @@ func siblingSourceName(r *workspace.Resolver) string {
 func runLand(args []string) { os.Exit(landTickets(args)) }
 
 // landTickets merges finished ticket branches into the LOCAL base branch and
-// keeps the merge. It is the deliberate opposite of `switch`, which resets the
-// base first and treats the composition as scratch: land is what a repo running
-// `land: local` (or `land: none`, where the base branch is the only venue there
-// is) does when review is over and the work should stay.
+// keeps the merge. It is the deliberate opposite of `surface compose`, which
+// resets the base first and treats the composition as scratch: land is what a
+// repo running `land: local` (or `land: none`, where the base branch is the
+// only venue there is) does when review is over and the work should stay.
 //
 // Three things make it safe enough to run unattended behind `finish: land`:
 //
@@ -799,16 +760,17 @@ func runLand(args []string) { os.Exit(landTickets(args)) }
 //     hazard, and a `--force` here would be the thing every stuck run reaches
 //     for. A human who genuinely wants it has `git merge` one line away.
 //   - It takes the surface lease, because moving local base races every
-//     merge-base/switch/reset-base in flight.
+//     surface compose/revert in flight.
 //   - It never resets, never force-updates and never pushes. The worst outcome
 //     of a wrong land is a merge commit on a local branch, recoverable from the
 //     ticket branch that still holds every commit.
 //
-// The interaction worth knowing: a later `reset-base` (or the `serve` that
-// calls it) hard-resets base to origin and DISCARDS these merges. That is not a
-// bug in either — the ticket branches still hold the work, and the stray-commit
-// guard stays quiet precisely because they do — but it means a landed base is
-// only durable once pushed. Hence the closing note on stdout.
+// The interaction worth knowing: a later `surface revert` (or the `serve` that
+// calls it through compose) hard-resets base to origin and DISCARDS these
+// merges. That is not a bug in either — the ticket branches still hold the
+// work, and the stray-commit guard stays quiet precisely because they do —
+// but it means a landed base is only durable once pushed. Hence the closing
+// note on stdout.
 func landTickets(args []string) int {
 	tickets, base, ok := parseTicketsAndBase("land", args)
 	if !ok {
@@ -884,7 +846,7 @@ func landTickets(args []string) int {
 	}
 	defer s.release()
 
-	// The same two guards reset-base applies, for the same reasons: a primary
+	// The same two guards surface revert applies, for the same reasons: a primary
 	// that wandered off base would land onto whatever it is standing on, and a
 	// dirty tree turns a conflicted merge into an unrecoverable mess.
 	if !s.guardOnBase(base, " — landing there would merge into the wrong branch.",
@@ -938,20 +900,18 @@ func landTickets(args []string) int {
 	fmt.Printf("HEAD=%s\n", head)
 	fmt.Printf("LANDED=%d ALREADY=%d\n", landed, already)
 	if landed > 0 {
-		fmt.Fprintf(os.Stderr, "land: '%s' is now ahead of origin — push it. A later reset-base (or serve, which calls it)\n", base)
+		fmt.Fprintf(os.Stderr, "land: '%s' is now ahead of origin — push it. A later surface revert (or serve, which calls it through compose)\n", base)
 		fmt.Fprintf(os.Stderr, "  resets '%s' to origin and would discard these merges; the ticket branches keep the work either way.\n", base)
 	}
 	return 0
 }
 
-// ─── qa-lease ────────────────────────────────────────────────────────────────
+// ─── surface lease verbs ─────────────────────────────────────────────────────
 
-func runQALease(args []string) {
-	verb := ""
-	if len(args) > 0 {
-		verb = args[0]
-		args = args[1:]
-	}
+// surfaceLease runs the lease verbs of `bbs ticket surface`: acquire, release,
+// status — the lease handler under the lifecycle name: same
+// lease dir, same owner file, same contention rule.
+func surfaceLease(verb string, args []string) int {
 	qlTicket, ttl, force := "", "60", false
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -962,7 +922,7 @@ func runQALease(args []string) {
 		case "--force":
 			force = true
 		default:
-			fmt.Fprintf(os.Stderr, "qa-lease: unknown arg '%s'\n", args[i])
+			fmt.Fprintf(os.Stderr, "surface %s: unknown arg '%s'\n", verb, args[i])
 			os.Exit(2)
 		}
 	}
@@ -979,11 +939,11 @@ func runQALease(args []string) {
 		qlTicket = env.Ticket
 	}
 	if !haveGit() {
-		fmt.Fprintln(os.Stderr, "qa-lease: git not found")
+		fmt.Fprintln(os.Stderr, "surface: git not found")
 		os.Exit(2)
 	}
 	if !insideWorkTree() {
-		fmt.Fprintln(os.Stderr, "qa-lease: not in a git work tree")
+		fmt.Fprintln(os.Stderr, "surface: not in a git work tree")
 		os.Exit(2)
 	}
 	primary := gitPrimary()
@@ -997,7 +957,7 @@ func runQALease(args []string) {
 	switch verb {
 	case "acquire":
 		if qlTicket == "" {
-			fmt.Fprintln(os.Stderr, "qa-lease: no owner — no ticket in scope and no --ticket given")
+			fmt.Fprintln(os.Stderr, "surface acquire: no owner — no ticket in scope and no --ticket given")
 			os.Exit(2)
 		}
 		// A QA session is a long hold of the same lease every surface op takes,
@@ -1009,7 +969,7 @@ func runQALease(args []string) {
 		if b := res.blocked; b != nil {
 			fmt.Fprintln(os.Stderr, "STATUS: BLOCKED")
 			if b.owner == "" {
-				fmt.Fprintln(os.Stderr, "REASON: another run is taking the qa-lease right now — one QA session at a time on the shared surface.")
+				fmt.Fprintln(os.Stderr, "REASON: another run is taking the surface lease right now — one QA session at a time on the shared surface.")
 				fmt.Fprintln(os.Stderr, "RECOMMENDATION: re-run acquire in a moment; a lease still ownerless after two minutes is treated as stale and stolen.")
 				os.Exit(2)
 			}
@@ -1018,14 +978,14 @@ func runQALease(args []string) {
 				fmt.Fprintf(os.Stderr, "RECOMMENDATION: re-run acquire; if that run died, its lease lapses %d minutes after it started.\n", shortTTLMin)
 				os.Exit(2)
 			}
-			fmt.Fprintf(os.Stderr, "REASON: qa-lease held by '%s' (%dmin into a %dmin lease) — one QA session at a time on the shared surface.\n", b.owner, b.age, b.ttl)
-			fmt.Fprintln(os.Stderr, retarget("RECOMMENDATION: wait and re-run acquire, or 'bbs-ticket qa-lease release --force' if that run is dead."))
+			fmt.Fprintf(os.Stderr, "REASON: surface lease held by '%s' (%dmin into a %dmin lease) — one QA session at a time on the shared surface.\n", b.owner, b.age, b.ttl)
+			fmt.Fprintln(os.Stderr, retarget("RECOMMENDATION: wait and re-run acquire, or 'bbs-ticket surface release --force' if that run is dead."))
 			os.Exit(2)
 		}
 		if res.stoleOwner != "" {
-			fmt.Fprintf(os.Stderr, "qa-lease: stole stale lease from '%s' (%s)\n", res.stoleOwner, res.stoleWhy)
+			fmt.Fprintf(os.Stderr, "surface acquire: stole stale lease from '%s' (%s)\n", res.stoleOwner, res.stoleWhy)
 			if env.Ticket != "" {
-				ticket.New(env).HistoryAppendExtra("qa_lease_steal", actorRole(),
+				ticket.New(env).HistoryAppendExtra("surface_lease_steal", actorRole(),
 					fmt.Sprintf(`{"owner":"%s","stolen_from":"%s","ttl_min":%s}`, qlTicket, res.stoleOwner, ttl))
 			}
 			fmt.Printf("OWNER=%s\nTTL_MIN=%s\nACQUIRED=1\nSTOLE_FROM=%s\n", qlTicket, ttl, res.stoleOwner)
@@ -1036,7 +996,7 @@ func runQALease(args []string) {
 			os.Exit(0)
 		}
 		if env.Ticket != "" {
-			ticket.New(env).HistoryAppendExtra("qa_lease_acquire", actorRole(),
+			ticket.New(env).HistoryAppendExtra("surface_lease_acquire", actorRole(),
 				fmt.Sprintf(`{"owner":"%s","ttl_min":%s}`, qlTicket, ttl))
 		}
 		fmt.Printf("OWNER=%s\nTTL_MIN=%s\nACQUIRED=1\n", qlTicket, ttl)
@@ -1053,13 +1013,13 @@ func runQALease(args []string) {
 			if ticketDisp == "" {
 				ticketDisp = "<none>"
 			}
-			fmt.Fprintf(os.Stderr, "REASON: qa-lease belongs to '%s', not '%s' — releasing someone else's lease mid-QA corrupts their verdict.\n", owner, ticketDisp)
+			fmt.Fprintf(os.Stderr, "REASON: surface lease belongs to '%s', not '%s' — releasing someone else's lease mid-QA corrupts their verdict.\n", owner, ticketDisp)
 			fmt.Fprintln(os.Stderr, "RECOMMENDATION: let the owner release it, or pass --force if that run is dead.")
 			os.Exit(2)
 		}
 		_ = os.RemoveAll(qlDir)
 		if env.Ticket != "" {
-			ticket.New(env).HistoryAppendExtra("qa_lease_release", actorRole(),
+			ticket.New(env).HistoryAppendExtra("surface_lease_release", actorRole(),
 				fmt.Sprintf(`{"owner":"%s"}`, orUnknown(owner)))
 		}
 		fmt.Printf("RELEASED=1\nOWNER=%s\n", orUnknown(owner))
@@ -1074,8 +1034,6 @@ func runQALease(args []string) {
 		fmt.Printf("AGE_MIN=%d\n", age)
 		fmt.Printf("TTL_MIN=%s\n", read("ttl_min"))
 		os.Exit(0)
-	default:
-		fmt.Fprintln(os.Stderr, retarget("usage: bbs-ticket qa-lease <acquire|release|status> [--ticket ID] [--ttl-min N] [--force]"))
-		os.Exit(2)
 	}
+	return 2
 }

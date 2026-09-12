@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# tests/test_bbs_ticket_qa_lease.sh — coverage for bin/bbs-ticket § qa-lease.
+# tests/test_bbs_ticket_surface_lease.sh — coverage for bin/bbs-ticket § surface lease verbs.
 #
-# qa-lease = exclusive QA-session lease on the shared test surface. While a
-# ticket holds it, merge-base / switch / reset-base from any OTHER ticket
-# BLOCK (qa_lease_guard), so a QA verdict always describes the surface it was
+# `surface acquire` = exclusive QA-session lease on the shared test
+# surface. While a ticket holds it, `surface compose` / `surface revert` from
+# any OTHER ticket BLOCK, so a QA verdict always describes the surface it was
 # measured on. Reentrant for the owner; stale leases (age > ttl) are stolen.
 #
 # Scenarios:
@@ -15,11 +15,11 @@
 #                              STOLE_FROM=A
 #   lease-release-owner-only   B can't release A's lease (exit 2), --force
 #                              can; release when free → FREE=1 exit 0
-#   lease-blocks-merge-base    A holds → B's merge-base BLOCKs naming A;
-#                              after A releases, the same merge-base lands
-#   lease-blocks-surface-ops   A holds → switch/reset-base as B BLOCK; switch
+#   lease-blocks-compose    A holds → B's surface compose BLOCKs naming A;
+#                              after A releases, the same compose lands
+#   lease-blocks-surface-ops   A holds → compose/revert as B BLOCK; compose
 #                              as A (own lease) passes
-#   lease-stale-guard-clears   stale lease → B's merge-base clears it with a
+#   lease-stale-guard-clears   stale lease → B's surface compose clears it with a
 #                              warning and proceeds
 
 set -u
@@ -80,17 +80,17 @@ T="$(mktemp -d)"
   export AGENT_ROLE=mayor
   build_two_tickets "$T" || { echo "fixture failed"; exit 1; }
 
-  out="$(cd "$WT_A" && "$BBS_TICKET_BIN" qa-lease acquire 2>"$T/err")"; rc=$?
+  out="$(cd "$WT_A" && "$BBS_TICKET_BIN" surface acquire 2>"$T/err")"; rc=$?
   [ "$rc" -eq 0 ] || { echo "acquire failed rc=$rc: $(cat "$T/err")"; exit 1; }
   printf '%s\n' "$out" | grep -q "^ACQUIRED=1$" || { echo "no ACQUIRED=1; out: $out"; exit 1; }
   printf '%s\n' "$out" | grep -q "^OWNER=$TK_A$" || { echo "expected OWNER=$TK_A; out: $out"; exit 1; }
 
-  out="$("$BBS_TICKET_BIN" qa-lease status)"
+  out="$("$BBS_TICKET_BIN" surface status)"
   printf '%s\n' "$out" | grep -q "^OWNER=$TK_A$" || { echo "status lacks owner; out: $out"; exit 1; }
   printf '%s\n' "$out" | grep -q "^TTL_MIN=60$" || { echo "status lacks default ttl; out: $out"; exit 1; }
 
-  (cd "$WT_A" && "$BBS_TICKET_BIN" qa-lease release >/dev/null) || { echo "release failed"; exit 1; }
-  [ "$("$BBS_TICKET_BIN" qa-lease status)" = "FREE" ] || { echo "expected FREE after release"; exit 1; }
+  (cd "$WT_A" && "$BBS_TICKET_BIN" surface release >/dev/null) || { echo "release failed"; exit 1; }
+  [ "$("$BBS_TICKET_BIN" surface status)" = "FREE" ] || { echo "expected FREE after release"; exit 1; }
 ) && ok "lease-acquire-status" || fail "lease-acquire-status"
 rm -rf "$T"
 
@@ -102,8 +102,8 @@ T="$(mktemp -d)"
   export AGENT_ROLE=mayor
   build_two_tickets "$T" || { echo "fixture failed"; exit 1; }
 
-  (cd "$WT_A" && "$BBS_TICKET_BIN" qa-lease acquire >/dev/null 2>&1) || { echo "first acquire failed"; exit 1; }
-  out="$(cd "$WT_A" && "$BBS_TICKET_BIN" qa-lease acquire 2>"$T/err")"; rc=$?
+  (cd "$WT_A" && "$BBS_TICKET_BIN" surface acquire >/dev/null 2>&1) || { echo "first acquire failed"; exit 1; }
+  out="$(cd "$WT_A" && "$BBS_TICKET_BIN" surface acquire 2>"$T/err")"; rc=$?
   [ "$rc" -eq 0 ] || { echo "re-acquire failed rc=$rc: $(cat "$T/err")"; exit 1; }
   printf '%s\n' "$out" | grep -q "^REFRESHED=1$" || { echo "expected REFRESHED=1; out: $out"; exit 1; }
 ) && ok "lease-reentrant" || fail "lease-reentrant"
@@ -117,12 +117,12 @@ T="$(mktemp -d)"
   export AGENT_ROLE=mayor
   build_two_tickets "$T" || { echo "fixture failed"; exit 1; }
 
-  (cd "$WT_A" && "$BBS_TICKET_BIN" qa-lease acquire >/dev/null 2>&1) || { echo "A acquire failed"; exit 1; }
-  (cd "$WT_B" && "$BBS_TICKET_BIN" qa-lease acquire >/dev/null 2>"$T/err"); rc=$?
+  (cd "$WT_A" && "$BBS_TICKET_BIN" surface acquire >/dev/null 2>&1) || { echo "A acquire failed"; exit 1; }
+  (cd "$WT_B" && "$BBS_TICKET_BIN" surface acquire >/dev/null 2>"$T/err"); rc=$?
   [ "$rc" -eq 2 ] || { echo "expected rc=2 for B, got $rc"; exit 1; }
   grep -q "held by '$TK_A'" "$T/err" || { echo "expected reason naming $TK_A: $(cat "$T/err")"; exit 1; }
   # A still owns it.
-  "$BBS_TICKET_BIN" qa-lease status | grep -q "^OWNER=$TK_A$" || { echo "A lost the lease"; exit 1; }
+  "$BBS_TICKET_BIN" surface status | grep -q "^OWNER=$TK_A$" || { echo "A lost the lease"; exit 1; }
 ) && ok "lease-blocked-other-owner" || fail "lease-blocked-other-owner"
 rm -rf "$T"
 
@@ -134,12 +134,12 @@ T="$(mktemp -d)"
   export AGENT_ROLE=mayor
   build_two_tickets "$T" || { echo "fixture failed"; exit 1; }
 
-  (cd "$WT_A" && "$BBS_TICKET_BIN" qa-lease acquire >/dev/null 2>&1) || { echo "A acquire failed"; exit 1; }
+  (cd "$WT_A" && "$BBS_TICKET_BIN" surface acquire >/dev/null 2>&1) || { echo "A acquire failed"; exit 1; }
   backdate_lease "$T/repo" 3900   # 65min old > 60min ttl
-  out="$(cd "$WT_B" && "$BBS_TICKET_BIN" qa-lease acquire 2>"$T/err")"; rc=$?
+  out="$(cd "$WT_B" && "$BBS_TICKET_BIN" surface acquire 2>"$T/err")"; rc=$?
   [ "$rc" -eq 0 ] || { echo "steal failed rc=$rc: $(cat "$T/err")"; exit 1; }
   printf '%s\n' "$out" | grep -q "^STOLE_FROM=$TK_A$" || { echo "expected STOLE_FROM=$TK_A; out: $out"; exit 1; }
-  "$BBS_TICKET_BIN" qa-lease status | grep -q "^OWNER=$TK_B$" || { echo "B not the owner after steal"; exit 1; }
+  "$BBS_TICKET_BIN" surface status | grep -q "^OWNER=$TK_B$" || { echo "B not the owner after steal"; exit 1; }
 ) && ok "lease-stale-steal" || fail "lease-stale-steal"
 rm -rf "$T"
 
@@ -152,20 +152,20 @@ T="$(mktemp -d)"
   build_two_tickets "$T" || { echo "fixture failed"; exit 1; }
 
   # Release when free is a no-op, not an error.
-  out="$("$BBS_TICKET_BIN" qa-lease release)"; rc=$?
+  out="$("$BBS_TICKET_BIN" surface release)"; rc=$?
   [ "$rc" -eq 0 ] && printf '%s\n' "$out" | grep -q "^FREE=1$" \
     || { echo "release-when-free should FREE=1 rc=0; rc=$rc out: $out"; exit 1; }
 
-  (cd "$WT_A" && "$BBS_TICKET_BIN" qa-lease acquire >/dev/null 2>&1) || { echo "A acquire failed"; exit 1; }
-  (cd "$WT_B" && "$BBS_TICKET_BIN" qa-lease release >/dev/null 2>"$T/err"); rc=$?
+  (cd "$WT_A" && "$BBS_TICKET_BIN" surface acquire >/dev/null 2>&1) || { echo "A acquire failed"; exit 1; }
+  (cd "$WT_B" && "$BBS_TICKET_BIN" surface release >/dev/null 2>"$T/err"); rc=$?
   [ "$rc" -eq 2 ] || { echo "B released A's lease (rc=$rc)"; exit 1; }
   grep -q "belongs to '$TK_A'" "$T/err" || { echo "expected ownership reason: $(cat "$T/err")"; exit 1; }
-  (cd "$WT_B" && "$BBS_TICKET_BIN" qa-lease release --force >/dev/null 2>&1) || { echo "--force release failed"; exit 1; }
-  [ "$("$BBS_TICKET_BIN" qa-lease status)" = "FREE" ] || { echo "lease survived --force release"; exit 1; }
+  (cd "$WT_B" && "$BBS_TICKET_BIN" surface release --force >/dev/null 2>&1) || { echo "--force release failed"; exit 1; }
+  [ "$("$BBS_TICKET_BIN" surface status)" = "FREE" ] || { echo "lease survived --force release"; exit 1; }
 ) && ok "lease-release-owner-only" || fail "lease-release-owner-only"
 rm -rf "$T"
 
-# ── lease-blocks-merge-base ───────────────────────────────────────────
+# ── lease-blocks-compose ───────────────────────────────────────────
 T="$(mktemp -d)"
 (
   export PATH="$SCRIPT_DIR/bin:$PATH"
@@ -173,23 +173,23 @@ T="$(mktemp -d)"
   export AGENT_ROLE=mayor
   build_two_tickets "$T" || { echo "fixture failed"; exit 1; }
 
-  (cd "$WT_A" && "$BBS_TICKET_BIN" qa-lease acquire >/dev/null 2>&1) || { echo "A acquire failed"; exit 1; }
-  (cd "$WT_B" && "$BBS_TICKET_BIN" merge-base >/dev/null 2>"$T/err"); rc=$?
-  [ "$rc" -eq 2 ] || { echo "B's merge-base should BLOCK, rc=$rc"; exit 1; }
-  grep -q "qa-leased by '$TK_A'" "$T/err" || { echo "expected lease reason: $(cat "$T/err")"; exit 1; }
+  (cd "$WT_A" && "$BBS_TICKET_BIN" surface acquire >/dev/null 2>&1) || { echo "A acquire failed"; exit 1; }
+  (cd "$WT_B" && "$BBS_TICKET_BIN" surface compose >/dev/null 2>"$T/err"); rc=$?
+  [ "$rc" -eq 2 ] || { echo "B's surface compose should BLOCK, rc=$rc"; exit 1; }
+  grep -q "leased by '$TK_A'" "$T/err" || { echo "expected lease reason: $(cat "$T/err")"; exit 1; }
   [ ! -f b.txt ] || { echo "b.txt landed on primary despite lease"; exit 1; }
 
-  # Owner's own merge-base passes through the guard.
-  (cd "$WT_A" && "$BBS_TICKET_BIN" merge-base >/dev/null 2>"$T/err") || {
-    echo "A's own merge-base failed under its lease: $(cat "$T/err")"; exit 1; }
-  [ -f a.txt ] || { echo "a.txt missing after A's merge-base"; exit 1; }
+  # Owner's own compose passes through the guard.
+  (cd "$WT_A" && "$BBS_TICKET_BIN" surface compose >/dev/null 2>"$T/err") || {
+    echo "A's own compose failed under its lease: $(cat "$T/err")"; exit 1; }
+  [ -f a.txt ] || { echo "a.txt missing after A's surface compose"; exit 1; }
 
   # Release, then B lands cleanly.
-  (cd "$WT_A" && "$BBS_TICKET_BIN" qa-lease release >/dev/null) || { echo "release failed"; exit 1; }
-  (cd "$WT_B" && "$BBS_TICKET_BIN" merge-base >/dev/null 2>"$T/err") || {
-    echo "B's merge-base failed after release: $(cat "$T/err")"; exit 1; }
-  [ -f b.txt ] || { echo "b.txt missing after B's merge-base"; exit 1; }
-) && ok "lease-blocks-merge-base" || fail "lease-blocks-merge-base"
+  (cd "$WT_A" && "$BBS_TICKET_BIN" surface release >/dev/null) || { echo "release failed"; exit 1; }
+  (cd "$WT_B" && "$BBS_TICKET_BIN" surface compose >/dev/null 2>"$T/err") || {
+    echo "B's surface compose failed after release: $(cat "$T/err")"; exit 1; }
+  [ -f b.txt ] || { echo "b.txt missing after B's surface compose"; exit 1; }
+) && ok "lease-blocks-compose" || fail "lease-blocks-compose"
 rm -rf "$T"
 
 # ── lease-blocks-surface-ops ──────────────────────────────────────────
@@ -200,22 +200,22 @@ T="$(mktemp -d)"
   export AGENT_ROLE=mayor
   build_two_tickets "$T" || { echo "fixture failed"; exit 1; }
 
-  (cd "$WT_A" && "$BBS_TICKET_BIN" qa-lease acquire >/dev/null 2>&1) || { echo "A acquire failed"; exit 1; }
+  (cd "$WT_A" && "$BBS_TICKET_BIN" surface acquire >/dev/null 2>&1) || { echo "A acquire failed"; exit 1; }
   pre="$(git rev-parse HEAD)"
 
-  BABYSIT_TICKET="$TK_B" "$BBS_TICKET_BIN" switch "$TK_B" >/dev/null 2>"$T/err"; rc=$?
-  [ "$rc" -eq 2 ] || { echo "switch as B should BLOCK, rc=$rc"; exit 1; }
-  grep -q "qa-leased by '$TK_A'" "$T/err" || { echo "expected lease reason: $(cat "$T/err")"; exit 1; }
+  BABYSIT_TICKET="$TK_B" "$BBS_TICKET_BIN" surface compose "$TK_B" >/dev/null 2>"$T/err"; rc=$?
+  [ "$rc" -eq 2 ] || { echo "compose as B should BLOCK, rc=$rc"; exit 1; }
+  grep -q "leased by '$TK_A'" "$T/err" || { echo "expected lease reason: $(cat "$T/err")"; exit 1; }
   [ "$(git rev-parse HEAD)" = "$pre" ] || { echo "surface moved despite BLOCK"; exit 1; }
 
-  BABYSIT_TICKET="$TK_B" "$BBS_TICKET_BIN" reset-base >/dev/null 2>"$T/err"; rc=$?
-  [ "$rc" -eq 2 ] || { echo "reset-base as B should BLOCK, rc=$rc"; exit 1; }
+  BABYSIT_TICKET="$TK_B" "$BBS_TICKET_BIN" surface revert >/dev/null 2>"$T/err"; rc=$?
+  [ "$rc" -eq 2 ] || { echo "revert as B should BLOCK, rc=$rc"; exit 1; }
 
   # The owner may re-point the surface under its own lease.
-  out="$(BABYSIT_TICKET="$TK_A" "$BBS_TICKET_BIN" switch "$TK_A" 2>"$T/err")" || {
-    echo "switch as owner failed: $(cat "$T/err")"; exit 1; }
+  out="$(BABYSIT_TICKET="$TK_A" "$BBS_TICKET_BIN" surface compose "$TK_A" 2>"$T/err")" || {
+    echo "compose as owner failed: $(cat "$T/err")"; exit 1; }
   printf '%s\n' "$out" | grep -q "^SERVING=$TK_A$" || { echo "expected SERVING=$TK_A; out: $out"; exit 1; }
-  [ -f a.txt ] || { echo "a.txt missing after owner switch"; exit 1; }
+  [ -f a.txt ] || { echo "a.txt missing after owner compose"; exit 1; }
 ) && ok "lease-blocks-surface-ops" || fail "lease-blocks-surface-ops"
 rm -rf "$T"
 
@@ -227,13 +227,13 @@ T="$(mktemp -d)"
   export AGENT_ROLE=mayor
   build_two_tickets "$T" || { echo "fixture failed"; exit 1; }
 
-  (cd "$WT_A" && "$BBS_TICKET_BIN" qa-lease acquire >/dev/null 2>&1) || { echo "A acquire failed"; exit 1; }
+  (cd "$WT_A" && "$BBS_TICKET_BIN" surface acquire >/dev/null 2>&1) || { echo "A acquire failed"; exit 1; }
   backdate_lease "$T/repo" 3900
-  (cd "$WT_B" && "$BBS_TICKET_BIN" merge-base >/dev/null 2>"$T/err") || {
-    echo "B's merge-base should clear the stale lease and land: $(cat "$T/err")"; exit 1; }
-  grep -q "stale qa-lease" "$T/err" || { echo "expected stale-clear warning: $(cat "$T/err")"; exit 1; }
-  [ -f b.txt ] || { echo "b.txt missing after stale-clear merge-base"; exit 1; }
-  [ "$("$BBS_TICKET_BIN" qa-lease status)" = "FREE" ] || { echo "stale lease not cleared"; exit 1; }
+  (cd "$WT_B" && "$BBS_TICKET_BIN" surface compose >/dev/null 2>"$T/err") || {
+    echo "B's surface compose should clear the stale lease and land: $(cat "$T/err")"; exit 1; }
+  grep -q "stale surface lease" "$T/err" || { echo "expected stale-clear warning: $(cat "$T/err")"; exit 1; }
+  [ -f b.txt ] || { echo "b.txt missing after stale-clear compose"; exit 1; }
+  [ "$("$BBS_TICKET_BIN" surface status)" = "FREE" ] || { echo "stale lease not cleared"; exit 1; }
 ) && ok "lease-stale-guard-clears" || fail "lease-stale-guard-clears"
 rm -rf "$T"
 
@@ -255,7 +255,7 @@ T="$(mktemp -d)"
     rm -rf "$T/repo/.git/bbs-qa-lease" "$T/go"
     for i in $(seq 1 8); do
       ( while [ ! -f "$T/go" ]; do :; done      # start barrier: collide, don't queue
-        "$BBS_TICKET_BIN" qa-lease acquire --ticket "race-$i" >"$T/r$i" 2>&1 ) &
+        "$BBS_TICKET_BIN" surface acquire --ticket "race-$i" >"$T/r$i" 2>&1 ) &
     done
     : > "$T/go"; wait
     won=$(grep -l "ACQUIRED=1" "$T"/r[1-8] 2>/dev/null | wc -l | tr -d ' ')
@@ -282,19 +282,19 @@ T="$(mktemp -d)"
   # collide some of the time. Six racers × six trials caught the unlocked
   # version every time it was measured.
   for trial in 1 2 3 4 5 6; do
-    (cd "$WT_A" && "$BBS_TICKET_BIN" qa-lease acquire >/dev/null 2>&1) || { echo "A acquire failed"; exit 1; }
+    (cd "$WT_A" && "$BBS_TICKET_BIN" surface acquire >/dev/null 2>&1) || { echo "A acquire failed"; exit 1; }
     backdate_lease "$T/repo" 3900
     rm -f "$T/go"
     for i in 1 2 3 4 5 6; do
       ( while [ ! -f "$T/go" ]; do :; done
-        "$BBS_TICKET_BIN" qa-lease acquire --ticket "steal-$i" >"$T/s$i" 2>&1 ) &
+        "$BBS_TICKET_BIN" surface acquire --ticket "steal-$i" >"$T/s$i" 2>&1 ) &
     done
     : > "$T/go"; wait
     won=$(grep -l "ACQUIRED=1" "$T"/s[1-6] 2>/dev/null | wc -l | tr -d ' ')
     [ "$won" -eq 1 ] || { echo "trial $trial: $won owners, want 1: $(cat "$T"/s[1-6])"; exit 1; }
     # the one that claimed it is the one holding it
     claimed=$(grep -l "ACQUIRED=1" "$T"/s[1-6] | head -1)
-    grep -q "^OWNER=$("$BBS_TICKET_BIN" qa-lease status | sed -n 's|^OWNER=||p')$" "$claimed" \
+    grep -q "^OWNER=$("$BBS_TICKET_BIN" surface status | sed -n 's|^OWNER=||p')$" "$claimed" \
       || { echo "trial $trial: winner disagrees with the lease on disk: $(cat "$claimed")"; exit 1; }
     rm -rf "$T/repo/.git/bbs-qa-lease"
   done
@@ -313,12 +313,12 @@ T="$(mktemp -d)"
   build_two_tickets "$T" || { echo "fixture failed"; exit 1; }
 
   mkdir -p "$T/repo/.git/bbs-qa-lease"          # exactly the mid-acquire state
-  (cd "$WT_B" && "$BBS_TICKET_BIN" merge-base >/dev/null 2>"$T/err"); rc=$?
-  [ "$rc" -ne 0 ] || { echo "merge-base landed on a lease that was mid-acquire: $(cat "$T/err")"; exit 1; }
+  (cd "$WT_B" && "$BBS_TICKET_BIN" surface compose >/dev/null 2>"$T/err"); rc=$?
+  [ "$rc" -ne 0 ] || { echo "compose landed on a lease that was mid-acquire: $(cat "$T/err")"; exit 1; }
   [ ! -f "$T/repo/b.txt" ] || { echo "b.txt landed despite the held lease"; exit 1; }
   [ -d "$T/repo/.git/bbs-qa-lease" ] || { echo "guard deleted a lease that was mid-acquire"; exit 1; }
 
-  out="$(cd "$WT_B" && "$BBS_TICKET_BIN" qa-lease acquire 2>&1)"; rc=$?
+  out="$(cd "$WT_B" && "$BBS_TICKET_BIN" surface acquire 2>&1)"; rc=$?
   [ "$rc" -ne 0 ] || { echo "acquire stole a lease that was mid-acquire: $out"; exit 1; }
 ) && ok "lease-ownerless-not-stale" || fail "lease-ownerless-not-stale"
 rm -rf "$T"

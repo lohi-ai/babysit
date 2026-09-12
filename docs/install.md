@@ -30,8 +30,8 @@ core bins are now Go and ship inside this one binary, reachable as `bbs <sub>`:
 (`env`, `get`, `set-status`, `set-phase`, `set-parent`, `add-child`,
 `add-relation`, `set-sibling`, `add-label`, `set-pointer`, `get-pointer`,
 `ensure-size`, `append-history`), the file-only manifest.yaml ops
-(`init`, `get-manifest`, `set-branch`), the base-ops family (`merge-base`,
-`switch`, `reset-base`, `qa-lease`, `serve`, `refresh`), `ensure`, and
+(`init`, `get-manifest`, `set-branch`), the base-ops family (`refresh`,
+`surface`, `serve`, `land`), `ensure`, and
 `path`/`list`/`reconcile`/`find-similar`. `bbs ticket` is now entirely
 self-contained in the binary — a brew-only install runs every subcommand
 without the skill pack.

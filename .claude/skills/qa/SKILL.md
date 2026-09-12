@@ -47,8 +47,8 @@ Exercise the application like a user and leave reproducible evidence.
    Running inside a ticket worktree (a foreman batch) is the exception: the
    dev server lives in the repo's **primary checkout only** (one heavy tree
    per repo — never npm-install or boot a server in a worktree), so this
-   skill runs the surface protocol itself — `merge-base`, the qa-lease, and
-   `QA_ENV_REVERT` before releasing it — see
+   skill runs the surface protocol itself — `surface acquire`, `surface
+   compose`, and `QA_ENV_REVERT` before `surface release` — see
    `../references/worktrees.md § QA loop`.
 3. Code-level checks (tests, typecheck, lint) first — they gate, they don't
    prove.
@@ -113,10 +113,10 @@ cases, not zero.
 that URL in the handoff's `NEXT` — the human's review is a browser look, so
 handing back a live URL plus the screenshots below collapses "QA browses,
 releases, human re-serves and browses again" into one. Under `strict` the
-review happens on GitHub: release the surface before handing off and let the
-evidence travel in the PR body. Exception: in a ticket worktree always
-release, lease included — the surface is shared, and composing the batch for
-review is `serve`'s job, not a QA session's.
+review happens on GitHub: `bbs ticket surface release` before handing off
+and let the evidence travel in the PR body. Exception: in a ticket worktree
+always release, lease included — the surface is shared, and composing the
+batch for review is `serve`'s job, not a QA session's.
 ## Coverage rubric
 Grade every dimension A–D against the change's risk surface; a dimension the
 change can't touch is `N/A` **with a one-line reason** — never a silent skip.

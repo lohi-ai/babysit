@@ -1,20 +1,21 @@
 #!/usr/bin/env bash
 # tests/test_bbs_ticket_serve.sh — coverage for bin/bbs-ticket § serve.
 #
-# serve <ticket> = the human-review lever: long qa-lease (240 min default)
-# + switch, in this repo and in each linked sibling repo, so the human can
+# serve <ticket> = the human-review lever: long surface lease (240 min
+# default) + compose, in this repo and in each linked sibling repo, so the
+# human can
 # review the running feature while parallel agents keep working their own
 # worktrees. Reentrant — re-run after each fix. serve --release frees the
 # leases without touching the surface.
 #
 # Scenarios:
-#   serve-acquires-and-switches   serve A → lease OWNER=A ttl 240, primary has
+#   serve-acquires-and-composes   serve A → lease OWNER=A ttl 240, primary has
 #                                 A's file; re-run is reentrant (rc 0, owner kept)
 #   serve-blocked-by-other-lease  B holds the lease → rc 2 BLOCKED, owner
 #                                 unchanged, primary untouched
 #   serve-release-keeps-surface   --release frees the lease; surface still
-#                                 serves A (no reset-base)
-#   serve-switch-block-lease-hygiene
+#                                 serves A (no revert)
+#   serve-compose-block-lease-hygiene
 #                                 dirty primary → rc 2; a lease minted by this
 #                                 serve is rolled back, a pre-existing (refreshed)
 #                                 lease is kept
@@ -97,7 +98,7 @@ build_sibling_repo() {
   cd "$here"
 }
 
-# ── serve-acquires-and-switches ───────────────────────────────────────
+# ── serve-acquires-and-composes ───────────────────────────────────────
 T="$(mktemp -d)"
 (
   export PATH="$SCRIPT_DIR/bin:$PATH"
@@ -110,14 +111,14 @@ T="$(mktemp -d)"
   [ -f a.txt ] || { echo "a.txt missing on primary after serve"; exit 1; }
   printf '%s\n' "$out" | grep -q "^SERVED: repo $TK_A$" \
     || { echo "expected SERVED: repo $TK_A; out: $out"; exit 1; }
-  st="$("$BBS_TICKET_BIN" qa-lease status)"
+  st="$("$BBS_TICKET_BIN" surface status)"
   printf '%s\n' "$st" | grep -q "^OWNER=$TK_A$" || { echo "lease owner wrong: $st"; exit 1; }
   printf '%s\n' "$st" | grep -q "^TTL_MIN=240$" || { echo "expected ttl 240: $st"; exit 1; }
   # Reentrant: the review-fix loop re-runs serve after each fix.
   "$BBS_TICKET_BIN" serve "$TK_A" >/dev/null 2>"$T/err" || { echo "re-serve failed: $(cat "$T/err")"; exit 1; }
-  "$BBS_TICKET_BIN" qa-lease status | grep -q "^OWNER=$TK_A$" \
+  "$BBS_TICKET_BIN" surface status | grep -q "^OWNER=$TK_A$" \
     || { echo "owner lost on re-serve"; exit 1; }
-) && ok "serve-acquires-and-switches" || fail "serve-acquires-and-switches"
+) && ok "serve-acquires-and-composes" || fail "serve-acquires-and-composes"
 rm -rf "$T"
 
 # ── serve-blocked-by-other-lease ──────────────────────────────────────
@@ -127,13 +128,13 @@ T="$(mktemp -d)"
   export HOME="$T/home"; mkdir -p "$HOME"
   export AGENT_ROLE=mayor
   build_two_tickets "$T" || { echo "fixture failed"; exit 1; }
-  "$BBS_TICKET_BIN" qa-lease acquire --ticket "$TK_B" >/dev/null 2>&1 || { echo "seed lease failed"; exit 1; }
+  "$BBS_TICKET_BIN" surface acquire --ticket "$TK_B" >/dev/null 2>&1 || { echo "seed lease failed"; exit 1; }
   pre="$(git rev-parse HEAD)"
 
   "$BBS_TICKET_BIN" serve "$TK_A" >/dev/null 2>"$T/err"; rc=$?
   [ "$rc" -eq 2 ] || { echo "expected rc=2 while B holds lease, got $rc"; exit 1; }
-  grep -q "qa-lease held by" "$T/err" || { echo "expected lease-held reason: $(cat "$T/err")"; exit 1; }
-  "$BBS_TICKET_BIN" qa-lease status | grep -q "^OWNER=$TK_B$" \
+  grep -q "surface lease held by" "$T/err" || { echo "expected lease-held reason: $(cat "$T/err")"; exit 1; }
+  "$BBS_TICKET_BIN" surface status | grep -q "^OWNER=$TK_B$" \
     || { echo "B's lease disturbed"; exit 1; }
   [ "$(git rev-parse HEAD)" = "$pre" ] || { echo "primary changed despite BLOCK"; exit 1; }
   [ ! -f a.txt ] || { echo "A merged despite BLOCK"; exit 1; }
@@ -153,13 +154,13 @@ T="$(mktemp -d)"
   [ "$rc" -eq 0 ] || { echo "release failed rc=$rc: $(cat "$T/err")"; exit 1; }
   printf '%s\n' "$out" | grep -q "^RELEASED: repo $TK_A$" \
     || { echo "expected RELEASED line; out: $out"; exit 1; }
-  [ "$("$BBS_TICKET_BIN" qa-lease status)" = "FREE" ] || { echo "lease not freed"; exit 1; }
-  # --release never reset-bases: the surface still serves A.
+  [ "$("$BBS_TICKET_BIN" surface status)" = "FREE" ] || { echo "lease not freed"; exit 1; }
+  # --release never reverts: the surface still serves A.
   [ -f a.txt ] || { echo "release reset the surface"; exit 1; }
 ) && ok "serve-release-keeps-surface" || fail "serve-release-keeps-surface"
 rm -rf "$T"
 
-# ── serve-switch-block-lease-hygiene ──────────────────────────────────
+# ── serve-compose-block-lease-hygiene ──────────────────────────────────
 T="$(mktemp -d)"
 (
   export PATH="$SCRIPT_DIR/bin:$PATH"
@@ -167,12 +168,12 @@ T="$(mktemp -d)"
   export AGENT_ROLE=mayor
   build_two_tickets "$T" || { echo "fixture failed"; exit 1; }
 
-  # Fresh lease minted by a serve whose switch BLOCKs → rolled back.
+  # Fresh lease minted by a serve whose compose BLOCKs → rolled back.
   echo "uncommitted" > dirty.txt
   "$BBS_TICKET_BIN" serve "$TK_A" >/dev/null 2>"$T/err"; rc=$?
   [ "$rc" -eq 2 ] || { echo "expected rc=2 on dirty primary, got $rc"; exit 1; }
   grep -q "uncommitted changes" "$T/err" || { echo "expected dirty reason: $(cat "$T/err")"; exit 1; }
-  [ "$("$BBS_TICKET_BIN" qa-lease status)" = "FREE" ] \
+  [ "$("$BBS_TICKET_BIN" surface status)" = "FREE" ] \
     || { echo "stray lease left by failed serve"; exit 1; }
 
   # Pre-existing lease (this serve only refreshed it) → kept on failure.
@@ -181,9 +182,9 @@ T="$(mktemp -d)"
   echo "uncommitted again" > dirty.txt
   "$BBS_TICKET_BIN" serve "$TK_A" >/dev/null 2>&1; rc=$?
   [ "$rc" -eq 2 ] || { echo "expected rc=2 on re-serve over dirty, got $rc"; exit 1; }
-  "$BBS_TICKET_BIN" qa-lease status | grep -q "^OWNER=$TK_A$" \
+  "$BBS_TICKET_BIN" surface status | grep -q "^OWNER=$TK_A$" \
     || { echo "refreshed lease wrongly released"; exit 1; }
-) && ok "serve-switch-block-lease-hygiene" || fail "serve-switch-block-lease-hygiene"
+) && ok "serve-compose-block-lease-hygiene" || fail "serve-compose-block-lease-hygiene"
 rm -rf "$T"
 
 # ── serve-sibling-fanout ──────────────────────────────────────────────
@@ -205,14 +206,14 @@ T="$(mktemp -d)"
   printf '%s\n' "$out" | grep -q "^SERVED: repo2 $TK_S$" || { echo "sibling not served; out: $out"; exit 1; }
   [ -f a.txt ] || { echo "a.txt missing on primary"; exit 1; }
   [ -f "$T/repo2/s.txt" ] || { echo "s.txt missing on sibling primary"; exit 1; }
-  ( cd "$T/repo2" && "$BBS_TICKET_BIN" qa-lease status | grep -q "^OWNER=$TK_S$" ) \
+  ( cd "$T/repo2" && "$BBS_TICKET_BIN" surface status | grep -q "^OWNER=$TK_S$" ) \
     || { echo "sibling lease not held"; exit 1; }
 
   out="$("$BBS_TICKET_BIN" serve --release "$TK_A" 2>"$T/err")"; rc=$?
   [ "$rc" -eq 0 ] || { echo "release failed rc=$rc: $(cat "$T/err")"; exit 1; }
   printf '%s\n' "$out" | grep -q "^RELEASED: repo2 $TK_S$" || { echo "sibling not released; out: $out"; exit 1; }
-  [ "$("$BBS_TICKET_BIN" qa-lease status)" = "FREE" ] || { echo "primary lease not freed"; exit 1; }
-  [ "$(cd "$T/repo2" && "$BBS_TICKET_BIN" qa-lease status)" = "FREE" ] \
+  [ "$("$BBS_TICKET_BIN" surface status)" = "FREE" ] || { echo "primary lease not freed"; exit 1; }
+  [ "$(cd "$T/repo2" && "$BBS_TICKET_BIN" surface status)" = "FREE" ] \
     || { echo "sibling lease not freed"; exit 1; }
 ) && ok "serve-sibling-fanout" || fail "serve-sibling-fanout"
 rm -rf "$T"
@@ -232,7 +233,7 @@ T="$(mktemp -d)"
   grep -q "STATUS: NEEDS_CONTEXT" "$T/err" || { echo "expected NEEDS_CONTEXT: $(cat "$T/err")"; exit 1; }
   # Partial success: the primary side is served and its lease held.
   [ -f a.txt ] || { echo "primary not served despite partial success"; exit 1; }
-  "$BBS_TICKET_BIN" qa-lease status | grep -q "^OWNER=$TK_A$" \
+  "$BBS_TICKET_BIN" surface status | grep -q "^OWNER=$TK_A$" \
     || { echo "primary lease missing"; exit 1; }
 ) && ok "serve-sibling-unresolved" || fail "serve-sibling-unresolved"
 rm -rf "$T"
@@ -251,13 +252,13 @@ T="$(mktemp -d)"
     || { echo "expected SERVED: repo $TK_A,$TK_B; out: $out"; exit 1; }
   [ -f a.txt ] || { echo "a.txt missing after composed serve"; exit 1; }
   [ -f b.txt ] || { echo "b.txt missing after composed serve"; exit 1; }
-  st="$("$BBS_TICKET_BIN" qa-lease status)"
+  st="$("$BBS_TICKET_BIN" surface status)"
   printf '%s\n' "$st" | grep -q "^OWNER=$TK_A$" || { echo "expected first ticket to own: $st"; exit 1; }
   printf '%s\n' "$st" | grep -q "^TTL_MIN=240$" || { echo "expected ttl 240: $st"; exit 1; }
   # Reordered re-serve stays reentrant: the live owner is in the set → kept.
   "$BBS_TICKET_BIN" serve "$TK_B" "$TK_A" >/dev/null 2>"$T/err" \
     || { echo "reordered re-serve failed: $(cat "$T/err")"; exit 1; }
-  "$BBS_TICKET_BIN" qa-lease status | grep -q "^OWNER=$TK_A$" \
+  "$BBS_TICKET_BIN" surface status | grep -q "^OWNER=$TK_A$" \
     || { echo "owner changed on reordered re-serve"; exit 1; }
   [ -f a.txt ] && [ -f b.txt ] || { echo "surface lost a ticket on re-serve"; exit 1; }
 ) && ok "serve-multi-composes" || fail "serve-multi-composes"
@@ -275,7 +276,7 @@ T="$(mktemp -d)"
   out="$("$BBS_TICKET_BIN" serve 2>"$T/err")"; rc=$?
   [ "$rc" -eq 0 ] || { echo "bare serve with nothing finished rc=$rc"; exit 1; }
   grep -q "nothing finished" "$T/err" || { echo "expected nothing-finished note: $(cat "$T/err")"; exit 1; }
-  [ "$("$BBS_TICKET_BIN" qa-lease status)" = "FREE" ] || { echo "lease taken with nothing to serve"; exit 1; }
+  [ "$("$BBS_TICKET_BIN" surface status)" = "FREE" ] || { echo "lease taken with nothing to serve"; exit 1; }
 
   # A finished (qa + review-pr DONE), B only qa → bare serve = A alone.
   BABYSIT_TICKET="$TK_A" "$BBS_TICKET_BIN" set-verdict --skill qa --body "STATUS: DONE" >/dev/null
@@ -296,12 +297,12 @@ T="$(mktemp -d)"
   printf '%s\n' "$out" | grep "^SERVED: repo " | grep -q "$TK_A" || { echo "A missing from batch; out: $out"; exit 1; }
   printf '%s\n' "$out" | grep "^SERVED: repo " | grep -q "$TK_B" || { echo "B missing from batch; out: $out"; exit 1; }
   [ -f a.txt ] && [ -f b.txt ] || { echo "composed surface incomplete"; exit 1; }
-  "$BBS_TICKET_BIN" qa-lease status | grep -q "^OWNER=$TK_A$" \
+  "$BBS_TICKET_BIN" surface status | grep -q "^OWNER=$TK_A$" \
     || { echo "owner changed when batch grew"; exit 1; }
 
   # Bare release frees the lease and leaves the surface alone.
   "$BBS_TICKET_BIN" serve --release >/dev/null 2>"$T/err" || { echo "bare release failed: $(cat "$T/err")"; exit 1; }
-  [ "$("$BBS_TICKET_BIN" qa-lease status)" = "FREE" ] || { echo "lease not freed"; exit 1; }
+  [ "$("$BBS_TICKET_BIN" surface status)" = "FREE" ] || { echo "lease not freed"; exit 1; }
   [ -f a.txt ] && [ -f b.txt ] || { echo "release reset the surface"; exit 1; }
 ) && ok "serve-bare-finished-batch" || fail "serve-bare-finished-batch"
 rm -rf "$T"

@@ -66,10 +66,10 @@ Autopilot is the only layer that has that context: it ran `bbs ticket
 ensure`, so it knows the mode (trunk/branch/worktree), which checkout is
 the worktree vs. the shared test surface, and what `push:` policy allows.
 Putting every mutation there (repo init → branch cut → commit per
-milestone → `merge-base` landing → push) means:
+milestone → `surface compose` → push) means:
 
 - **One writer, one protocol.** The worktree QA loop ("fix in the
-  worktree, commit, re-run `merge-base`, never fix in base") only holds if
+  worktree, commit, re-run `surface compose`, never fix in base") only holds if
   a single layer performs it. When `qa` also committed, the skill could
   commit in the checkout under test — which in worktree mode is the *base*
   checkout, exactly the state the loop forbids.

@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
-# tests/test_bbs_ticket_baseops_differential.sh — the Go base-ops + ensure port
-# (internal/cmd/ticket_baseops.go, ticket_ensure.go) must behave identically to
-# the frozen bash oracle for the git-mutating Slice C family.
+# tests/test_bbs_ticket_ensure_differential.sh — the Go ensure port
+# (internal/cmd/ticket_ensure.go) must behave identically to the frozen bash
+# oracle.
 #
-# Covers: qa-lease (acquire/refresh/release/status/steal/block-by-other),
-# ensure (trunk mode = no cut, worktree divert, safe-cut NEEDS_CONFIRM gate),
-# and the base-ops lock/base-branch plumbing (merge-base, reset-base, switch,
-# refresh) over a real git repo.
+# Covers: ensure (trunk mode = no cut, worktree divert, safe-cut NEEDS_CONFIRM
+# gate) over a real git repo. The surface-verb scenarios that used to live
+# here moved out with the command cutover: the Go side speaks `surface`, the
+# oracle still speaks `qa-lease`, so there is nothing left to diff — the
+# direct surface tests cover that lifecycle now.
 #
 # Determinism: pinned author + commit dates make two fresh `git init` trees
 # produce identical SHAs; random ticket ids (bs-<8>), pids, and timestamps are
@@ -75,72 +76,7 @@ newrepo() {
   git -C "$d" commit -q -m init
 }
 
-# ── Scenario 1: qa-lease full lifecycle ──────────────────────────────
-# Pure file I/O at $gitdir/bbs-qa-lease/owner. Run identical verb sequences
-# against a per-impl repo and diff masked output + the resulting owner file.
-qa_lease_scenario() {
-  local impl="$1"; local wd="$ROOT/$impl-qa"
-  newrepo "$wd"
-  export BABYSIT_PROJECT_HOME="$ROOT/$impl-qa-home"
-  local log="$ROOT/$impl.qa"
-  step() {
-    local out err rc
-    out="$( cd "$wd" && BABYSIT_TICKET="$1" "$ROOT/$impl-cmd" "${@:2}" 2>"$ROOT/.e" )"; rc=$?
-    err="$(cat "$ROOT/.e")"
-    { printf '### T=%s %s\nRC=%s\nOUT=%s\nERR=%s\n' "$1" "${*:2}" "$rc" "$out" "$err"; } >> "$log"
-  }
-  step bs-aaa11111 qa-lease acquire --ttl-min 30   # fresh acquire
-  step bs-aaa11111 qa-lease status                 # owner sees itself
-  step bs-aaa11111 qa-lease acquire --ttl-min 30   # reentrant → REFRESHED
-  step bs-bbb22222 qa-lease acquire --ttl-min 30   # other ticket → BLOCK (held)
-  step bs-bbb22222 qa-lease status                 # status while held by other
-  step bs-aaa11111 qa-lease release                # owner releases
-  step bs-bbb22222 qa-lease acquire --ttl-min 30   # now free → acquires
-  step bs-bbb22222 qa-lease release
-  step bs-ccc33333 qa-lease status                 # no lease → status none
-}
-qa_lease_scenario bash
-qa_lease_scenario go
-if diff -u <(mask "$ROOT/bash-qa" < "$ROOT/bash.qa") \
-           <(mask "$ROOT/go-qa"   < "$ROOT/go.qa") > "$ROOT/qa.diff"; then
-  ok "qa-lease lifecycle (acquire/refresh/block/release/status) identical"
-else
-  fail "qa-lease diverged" "$(head -50 "$ROOT/qa.diff")"
-fi
-
-# ── Scenario 2: stale-lease steal ────────────────────────────────────
-# Plant a lease whose since_epoch is older than its ttl, then a different
-# ticket must steal it loudly (STOLE_FROM).
-stale_scenario() {
-  local impl="$1"; local wd="$ROOT/$impl-stale"
-  newrepo "$wd"
-  export BABYSIT_PROJECT_HOME="$ROOT/$impl-stale-home"
-  local gd; gd="$(git -C "$wd" rev-parse --absolute-git-dir)"
-  mkdir -p "$gd/bbs-qa-lease"
-  # since_epoch 2h ago, ttl 30m → stale
-  local old=$(( $(date +%s) - 7200 ))
-  cat > "$gd/bbs-qa-lease/owner" <<EOF
-owner=bs-old00000
-pid=99999
-since=2026-01-01T00:00:00Z
-since_epoch=$old
-ttl_min=30
-EOF
-  local out err rc
-  out="$( cd "$wd" && BABYSIT_TICKET=bs-new11111 "$ROOT/$impl-cmd" qa-lease acquire --ttl-min 30 2>"$ROOT/.e" )"; rc=$?
-  err="$(cat "$ROOT/.e")"
-  { printf 'RC=%s\nOUT=%s\nERR=%s\n' "$rc" "$out" "$err"; } >> "$ROOT/$impl.stale"
-}
-stale_scenario bash
-stale_scenario go
-if diff -u <(mask "$ROOT/bash-stale" < "$ROOT/bash.stale") \
-           <(mask "$ROOT/go-stale"   < "$ROOT/go.stale") > "$ROOT/stale.diff"; then
-  ok "qa-lease stale-steal (STOLE_FROM) identical"
-else
-  fail "qa-lease stale-steal diverged" "$(cat "$ROOT/stale.diff")"
-fi
-
-# ── Scenario 3: ensure — trunk mode (no cut) ─────────────────────────
+# ── Scenario 1: ensure — trunk mode (no cut) ─────────────────────────
 # git-flow.yaml mode: trunk → ensure creates ticket state without cutting a
 # branch. Random ticket id masked.
 ensure_trunk_scenario() {
@@ -164,7 +100,7 @@ else
   fail "ensure trunk-mode diverged" "$(cat "$ROOT/trunk.diff")"
 fi
 
-# ── Scenario 4: ensure — safe-cut NEEDS_CONFIRM gate ─────────────────
+# ── Scenario 2: ensure — safe-cut NEEDS_CONFIRM gate ─────────────────
 # branch mode + developer role + dirty tree (unsafe base) → the safe-cut gate
 # must refuse in place with STATUS: NEEDS_CONFIRM (exit 3) rather than divert.
 ensure_safecut_scenario() {

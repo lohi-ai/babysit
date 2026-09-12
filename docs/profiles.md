@@ -169,8 +169,8 @@ into that ticket's PR. To pull in upstream changes, use:
 bbs ticket refresh          # fetch + merge origin/<base>; BLOCKs on dirty tree or conflict
 ```
 
-Only four commands touch local base — `merge-base`, `switch`, `reset-base`,
-`serve` — and none of them writes to a ticket branch.
+Only four commands touch local base — `surface compose`, `surface revert`,
+`serve`, `land` — and none of them writes to a ticket branch.
 
 `ensure` fetches `origin/<base>` before cutting, then forks from the
 remote-tracking ref with `--no-track`. Two fallbacks, in this order:
@@ -187,7 +187,7 @@ so drift is visible before it bites:
 ```
 BASE: main — 3 ahead / 12 behind origin/main (last fetch 2h ago)
   ↑ 3 commit(s) on local 'main' are not on origin/main — mode: trunk cuts no branch, so tickets build on them; they are only unpushed
-  ↓ origin/main moved on — bbs ticket refresh (in a ticket) or bbs ticket reset-base (on the primary)
+  ↓ origin/main moved on — bbs ticket refresh (in a ticket) or bbs ticket surface revert (on the primary)
 ```
 
 It never blocks — a diverged base is normal mid-flight. Board doesn't fetch, so
@@ -203,8 +203,8 @@ they are invisible to every ticket cut after them.
 Several sessions in one checkout means all changes interleave on one branch: you
 **cannot review one ticket in isolation, drop a bad one, or attribute a
 regression**. Worktrees buy exactly that separation, and cost a commit +
-`bbs ticket merge-base` per test iteration instead of edit-and-refresh. That
-trade is why nothing turns them on for you.
+`bbs ticket surface compose` per test iteration instead of edit-and-refresh.
+That trade is why nothing turns them on for you.
 
 ### The one rule
 
@@ -269,10 +269,10 @@ can leave a bad one out and each still lands as its own clean PR.
 
 | command | what it does |
 |---|---|
-| `bbs ticket merge-base` | run **from a worktree** — lands that ticket on the shared surface for QA |
-| `bbs ticket switch <t…>` | run **from the primary** — resets to base, then merges exactly the named tickets |
-| `bbs ticket reset-base` | after PRs merge upstream, snap local base back to `origin/<base>` |
-| `bbs ticket qa-lease` | one QA session at a time on the shared surface; others BLOCK naming the owner |
+| `bbs ticket surface compose` | run **bare from a worktree** — lands that ticket on the shared surface for QA |
+| `bbs ticket surface compose <t…>` | run **from the primary** — resets to base, then merges exactly the named tickets |
+| `bbs ticket surface revert` | after PRs merge upstream, snap local base back to `origin/<base>` |
+| `bbs ticket surface acquire` | one QA session at a time on the shared surface; others BLOCK naming the owner |
 | `bbs ticket land <t…>` | merge finished tickets into local base and **keep** the merge (see below) |
 
 All of them refuse loudly rather than losing work.
@@ -280,18 +280,19 @@ All of them refuse loudly rather than losing work.
 ### The QA loop, when tickets live in worktrees
 
 1. Implement and **commit in the worktree**.
-2. `bbs ticket merge-base` from the worktree.
-3. QA finds a problem → fix **in the worktree**, commit, re-run `merge-base`.
-   Never fix in the base checkout — QA must test a committed ticket state.
+2. `bbs ticket surface compose` from the worktree.
+3. QA finds a problem → fix **in the worktree**, commit, re-run
+   `surface compose`. Never fix in the base checkout — QA must test a
+   committed ticket state.
 4. Push the ticket branch; `create-pr` targets `base_branch`.
-5. After PRs merge: `bbs ticket reset-base` from the primary; in-flight
-   worktrees re-run `merge-base`.
+5. After PRs merge: `bbs ticket surface revert` from the primary; in-flight
+   worktrees re-run `surface compose`.
 
 ### `finish` — let a verified ticket close itself out
 
 `serve` is a *look*, not a landing: it resets base and re-composes from scratch
-each time, so nothing it puts there survives the next `reset-base`. `land` is
-the opposite — a `--no-ff` merge into local base that stays.
+each time, so nothing it puts there survives the next `surface revert`. `land`
+is the opposite — a `--no-ff` merge into local base that stays.
 
 A repo can ask for that to happen by itself:
 
@@ -327,9 +328,9 @@ watch survivable:
 `finish: pr` is the one that does push — that is what opening a PR is — but it
 opens a PR and nothing more: the review, and the merge, stay human.
 
-Don't run `serve` after landing: `serve` calls `reset-base`, which snaps base to
-origin and discards the merges — the ticket branches keep the work, but your
-review surface vanishes.
+Don't run `serve` after landing: `serve` re-composes from `origin/<base>`,
+which snaps base to origin and discards the merges — the ticket branches keep
+the work, but your review surface vanishes.
 
 ---
 
@@ -353,7 +354,7 @@ out by hand stops tracking its profile. `mode:` is read at branch-cut time, so
 adding or removing it affects new tickets only; before moving *into* worktree
 work the primary must end clean on `base_branch`, and before moving out of it,
 finish or park in-flight worktrees (`bbs ticket board`) and release any
-qa-lease.
+surface lease.
 
 Full schema and the derivation table: [`.claude/skills/references/git-flow.md`](../.claude/skills/references/git-flow.md);
 the worktree machinery: [`references/worktrees.md`](../.claude/skills/references/worktrees.md).

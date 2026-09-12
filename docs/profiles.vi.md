@@ -172,8 +172,8 @@ dở khác vào PR của ticket đó. Muốn lấy thay đổi mới từ upstre
 bbs ticket refresh          # fetch + merge origin/<base>; BLOCK nếu cây bẩn hoặc conflict
 ```
 
-Chỉ bốn lệnh động vào base ở máy — `merge-base`, `switch`, `reset-base`,
-`serve` — và không lệnh nào ghi lên branch ticket.
+Chỉ bốn lệnh động vào base ở máy — `surface compose`, `surface revert`,
+`serve`, `land` — và không lệnh nào ghi lên branch ticket.
 
 `ensure` fetch `origin/<base>` trước khi cắt, rồi fork từ ref remote-tracking
 với `--no-track`. Hai đường lui, theo thứ tự:
@@ -189,7 +189,7 @@ hiện ra trước khi nó cắn:
 ```
 BASE: main — 3 ahead / 12 behind origin/main (last fetch 2h ago)
   ↑ 3 commit(s) on local 'main' are not on origin/main — mode: trunk cuts no branch, so tickets build on them; they are only unpushed
-  ↓ origin/main moved on — bbs ticket refresh (in a ticket) or bbs ticket reset-base (on the primary)
+  ↓ origin/main moved on — bbs ticket refresh (in a ticket) or bbs ticket surface revert (on the primary)
 ```
 
 Nó không bao giờ chặn — base lệch giữa chừng là chuyện bình thường. Board không
@@ -205,8 +205,8 @@ vô hình với mọi ticket cắt sau đó.
 Nhiều session trong một checkout nghĩa là mọi thay đổi đan vào nhau trên một
 branch: bạn **không thể review riêng một ticket, không thể bỏ một cái tồi, không
 thể quy trách nhiệm cho một regression**. Worktree mua đúng sự tách bạch đó, và
-trả giá bằng một commit + `bbs ticket merge-base` cho mỗi vòng test thay vì
-sửa-rồi-refresh. Chính vì cái giá đó mà không ai tự bật nó cho bạn.
+trả giá bằng một commit + `bbs ticket surface compose` cho mỗi vòng test thay
+vì sửa-rồi-refresh. Chính vì cái giá đó mà không ai tự bật nó cho bạn.
 
 ### Luật duy nhất
 
@@ -270,10 +270,10 @@ bỏ một cái tồi ra ngoài mà mỗi cái còn lại vẫn về đích bằ
 
 | lệnh | làm gì |
 |---|---|
-| `bbs ticket merge-base` | chạy **từ worktree** — đưa ticket đó lên bề mặt dùng chung để QA |
-| `bbs ticket switch <t…>` | chạy **từ checkout chính** — reset về base rồi merge đúng các ticket được gọi tên |
-| `bbs ticket reset-base` | sau khi PR merge trên remote, kéo base ở máy về đúng `origin/<base>` |
-| `bbs ticket qa-lease` | mỗi lúc một phiên QA trên bề mặt dùng chung; người khác BLOCK kèm tên chủ lease |
+| `bbs ticket surface compose` | chạy **trần từ worktree** — đưa ticket đó lên bề mặt dùng chung để QA |
+| `bbs ticket surface compose <t…>` | chạy **từ checkout chính** — reset về base rồi merge đúng các ticket được gọi tên |
+| `bbs ticket surface revert` | sau khi PR merge trên remote, kéo base ở máy về đúng `origin/<base>` |
+| `bbs ticket surface acquire` | mỗi lúc một phiên QA trên bề mặt dùng chung; người khác BLOCK kèm tên chủ lease |
 | `bbs ticket land <t…>` | merge các ticket đã xong vào base ở máy và **giữ** merge đó (xem dưới) |
 
 Tất cả đều từ chối lớn tiếng chứ không làm mất việc.
@@ -281,18 +281,19 @@ Tất cả đều từ chối lớn tiếng chứ không làm mất việc.
 ### Vòng QA khi ticket sống trong worktree
 
 1. Code và **commit trong worktree**.
-2. `bbs ticket merge-base` từ worktree.
-3. QA thấy lỗi → sửa **trong worktree**, commit, chạy lại `merge-base`. Đừng bao
-   giờ sửa trong checkout base — QA phải test một trạng thái ticket đã commit.
+2. `bbs ticket surface compose` từ worktree.
+3. QA thấy lỗi → sửa **trong worktree**, commit, chạy lại `surface compose`.
+   Đừng bao giờ sửa trong checkout base — QA phải test một trạng thái ticket
+   đã commit.
 4. Push branch ticket; `create-pr` nhắm vào `base_branch`.
-5. Sau khi PR merge: `bbs ticket reset-base` từ checkout chính; các worktree còn
-   dang dở chạy lại `merge-base`.
+5. Sau khi PR merge: `bbs ticket surface revert` từ checkout chính; các
+   worktree còn dang dở chạy lại `surface compose`.
 
 ### `finish` — để ticket đã kiểm chứng tự khép lại
 
 `serve` là một lượt *nhìn*, không phải một lượt hạ cánh: nó reset base rồi gộp
-lại từ đầu mỗi lần, nên không gì nó đặt ở đó sống sót qua lần `reset-base` kế
-tiếp. `land` thì ngược lại — một merge `--no-ff` vào base ở máy và ở lại đó.
+lại từ đầu mỗi lần, nên không gì nó đặt ở đó sống sót qua lần `surface revert`
+kế tiếp. `land` thì ngược lại — một merge `--no-ff` vào base ở máy và ở lại đó.
 
 Repo có thể xin cho việc đó tự xảy ra:
 
@@ -330,9 +331,9 @@ bạn không ngồi xem vẫn sống được:
 `finish: pr` là giá trị có push — mở PR thì phải push — nhưng nó chỉ mở PR chứ
 không hơn: phần review, và cú merge, vẫn là của con người.
 
-Đừng chạy `serve` sau khi đã land: `serve` gọi `reset-base`, kéo base về origin và
-vứt hết các merge — branch ticket vẫn giữ việc, nhưng bề mặt review của bạn biến
-mất.
+Đừng chạy `serve` sau khi đã land: `serve` gộp lại từ `origin/<base>`, kéo base
+về origin và vứt hết các merge — branch ticket vẫn giữ việc, nhưng bề mặt
+review của bạn biến mất.
 
 ---
 
@@ -356,7 +357,7 @@ là một cái núm thôi bám theo profile của nó. `mode:` được đọc t
 branch, nên thêm hay bỏ nó chỉ ảnh hưởng ticket mới; trước khi chuyển *vào* lối
 làm việc worktree thì checkout chính phải sạch và đứng trên `base_branch`, còn
 trước khi chuyển ra thì phải xong hoặc gác các worktree dang dở (`bbs ticket
-board`) và trả mọi qa-lease.
+board`) và trả mọi surface lease.
 
 Schema đầy đủ và bảng suy dẫn: [`.claude/skills/references/git-flow.md`](../.claude/skills/references/git-flow.md);
 phần máy móc worktree: [`references/worktrees.md`](../.claude/skills/references/worktrees.md).

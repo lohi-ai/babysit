@@ -48,8 +48,8 @@ verified-clean non-primary worktree. Failed, blocked, held, or default
 - **Foreman** owns isolation and close-out. It creates the ticket worktree
   (`bbs ticket ensure --mode=worktree`), starts the worker inside it, and
   applies the repo's `finish:` policy (`review` | `land` | `pr`) once the
-  verdicts read DONE. The machinery that shape needs — `merge-base`,
-  qa-lease, `switch`/`serve`, `land` — lives in [worktrees.md](worktrees.md).
+  verdicts read DONE. The machinery that shape needs — the `bbs ticket
+  surface` lifecycle, `serve`, `land` — lives in [worktrees.md](worktrees.md).
 - **A human** can still ask for isolation directly:
   `bbs ticket ensure --mode=branch` cuts `feat/<id>_<slug>` in place
   (diverts to a worktree if the checkout is dirty or off base);

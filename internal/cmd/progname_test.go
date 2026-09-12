@@ -25,7 +25,7 @@ func TestRetarget(t *testing.T) {
 			{"bbs-env resolve: requires a varname", "bbs secrets resolve: requires a varname"},
 			// Adjacent matches share a boundary char — the fixed-point loop
 			// exists so the second one is not skipped.
-			{"run bbs-ticket reset-base; bbs-ticket set-status done", "run bbs ticket reset-base; bbs ticket set-status done"},
+			{"run bbs-ticket surface revert; bbs-ticket set-status done", "run bbs ticket surface revert; bbs ticket set-status done"},
 			// Not commands: lock/state identifiers that merely look like aliases.
 			{"held by bbs-qa-lease", "held by bbs-qa-lease"},
 			{"session bbs-serving is live", "session bbs-serving is live"},
@@ -51,7 +51,7 @@ func TestRetarget(t *testing.T) {
 			for _, in := range []string{
 				"usage: bbs-ticket path <kind>",
 				"bbs-env resolve: requires a varname",
-				"run bbs-ticket reset-base; bbs-ticket set-status done",
+				"run bbs-ticket surface revert; bbs-ticket set-status done",
 			} {
 				if got := retarget(in); got != in {
 					t.Errorf("argv0=%s: retarget(%q) = %q, want unchanged", argv0, in, got)
