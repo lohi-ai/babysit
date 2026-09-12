@@ -140,6 +140,7 @@ T="$(mktemp -d)"
   [ "$(git branch --show-current)" = "main" ] \
     || { echo "primary checkout moved off main"; exit 1; }
 ) && ok "mode-flag-overrides-config" || fail "mode-flag-overrides-config"
+rm -rf "$T"
 
 # ── mode-equals-form-diverts ─────────────────────────────────────────
 # The foreman skill mandates `ensure --mode=worktree`; the hand-rolled
