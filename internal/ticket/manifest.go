@@ -95,7 +95,7 @@ func ManifestAnyPushed(path string) bool {
 
 // TicketIDs returns the sorted directory names under <projectHome>/tickets —
 // the one scan every "walk all tickets" caller (resolve ladder, board,
-// reconcile --all, find-similar, dashboard reconcile) shares.
+// reconcile --all, dashboard reconcile) shares.
 func TicketIDs(projectHome string) ([]string, error) {
 	entries, err := os.ReadDir(filepath.Join(projectHome, "tickets"))
 	if err != nil {

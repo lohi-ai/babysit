@@ -14,10 +14,10 @@ which is why skills and docs always use the space form.
 Every subcommand is now native Go, behaving identically to the bash it
 replaced (guarded by the differential harnesses in `tests/`). `ticket` was the
 last strangler: identity/verdict/session/board, the index.json state-accessors
-(`get`/`set-*`/`add-*`/`ensure-size`/`append-history`/`env`), the file-only
+(`get`/`set-*`/`ensure-size`/`append-history`/`env`), the file-only
 manifest.yaml ops (`init`/`get-manifest`/`set-branch`), the git-mutating
 base-ops (`refresh`/`surface`/`serve`/`land`),
-`ensure`, and `path`/`list`/`reconcile`/`find-similar`. No bash remains in
+`ensure`, and `path`/`list`/`reconcile`. No bash remains in
 production; a frozen byte-identical copy of the old script lives at
 `tests/fixtures/bbs-ticket.reference` purely as the differential oracle.
 

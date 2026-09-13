@@ -69,6 +69,9 @@ func NewRootCmd() *cobra.Command {
 		SilenceErrors: true,
 	}
 	root.SetVersionTemplate("bbs {{.Version}}\n")
+	// The supported surface is exactly the commands below — cobra's generated
+	// `completion` command is not part of it.
+	root.CompletionOptions.DisableDefaultCmd = true
 	root.AddCommand(
 		newConfigCmd(), newEnvCmd(), newSlugCmd(), newTicketCmd(), newQAConfigCmd(),
 		newSecretsCmd(), newDesignCmd(), newDashboardCmd(),

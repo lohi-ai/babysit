@@ -101,9 +101,9 @@ keys off `worktree`. `.` is the special skipped value — a shared-checkout
 (trunk) row is not a claim on the cwd — while absolute paths and other
 relative paths (resolved against cwd) participate in the manifest
 cwd-match rung. Trunk tickets therefore cannot be recovered by the
-manifest rung; bare autopilot Resume instead reads the active pair in
-`current.txt` (`bbs autopilot current`), validated against the ticket dir
-and a checkpoint naming that ticket.
+manifest rung; bare autopilot resume resolves the ticket through the
+identity ladder (env → manifest → branch) and the ticket's own
+checkpoint.
 
 `manifest.yaml` is **eagerly written** by `bbs ticket ensure` — there is
 no `if file_exists` branch in resolve.
@@ -256,7 +256,7 @@ on its own.
   only (`ticket.ResolveProject`): an unrelated manifest ambiguity in the
   cwd must not reject a fully explicit command. The env-conflict abort
   still applies.
-- **Project-only commands** — `board`, `find-similar` — use
+- **Project-only commands** — `board` — use
   `identity.Resolve()` directly; they never need ticket inference.
 - **Direct CLI** — `bbs ticket resolve` (and `--explain` for debugging),
   user scripts.

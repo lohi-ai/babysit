@@ -166,8 +166,7 @@
     ],
     "seed_files": {"plan.md": "# Plan\nResume test"},
     "autopilot_setup": [
-      ["checkpoint", "--ticket", "$TICKET", "--workflow", "builder", "--step", "requirement-review", "--status", "done_step", "--note", "test"],
-      ["set-current", "builder", "$TICKET"]
+      ["checkpoint", "--ticket", "$TICKET", "--workflow", "builder", "--step", "requirement-review", "--status", "done_step", "--note", "test"]
     ],
     "assert_paths": ["checkpoint.json"],
     "assert_decisions": {"workflow": "builder"}
