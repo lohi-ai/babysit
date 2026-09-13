@@ -121,7 +121,7 @@ export function Home({ snapshot }: { snapshot: Snapshot }) {
                 // is the v1 fallback for snapshots that predate per-ticket run.
                 const pair = meta.active_pair?.ticket === t.id ? meta.active_pair : null;
                 const run = t.run;
-                const step = run
+                const step = run?.workflow && run?.step
                   ? `${run.workflow} / ${run.step}${run.status ? ` · ${run.status}` : ''}`
                   : pair ? `${pair.workflow} / ${pair.step}` : t.phase ?? '—';
                 const kids = childProgress.get(t.id);
