@@ -3,6 +3,7 @@ package ticket
 import (
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -45,6 +46,69 @@ func ReadManifest(path string) (*Manifest, error) {
 		return nil, err
 	}
 	return &m, nil
+}
+
+// FindRepo returns the first repos[] row matching match, or nil. Callers that
+// need "the row for this repo/branch/worktree" share this instead of
+// re-implementing the scan.
+func (m *Manifest) FindRepo(match func(Repo) bool) *Repo {
+	for i := range m.Repos {
+		if match(m.Repos[i]) {
+			return &m.Repos[i]
+		}
+	}
+	return nil
+}
+
+// RepoByName is the board/path lookup: the row whose name matches, else the
+// first row — bash `next((x for x in repos if x.name == repo), repos[0])`.
+// nil when the manifest has no repos.
+func (m *Manifest) RepoByName(name string) *Repo {
+	for i := range m.Repos {
+		if m.Repos[i].Name == name {
+			return &m.Repos[i]
+		}
+	}
+	if len(m.Repos) > 0 {
+		return &m.Repos[0]
+	}
+	return nil
+}
+
+// ManifestAnyPushed reports whether manifest.yaml records any repo row as
+// pushed. It is a raw line scan, not a parse: reconcile's in_review rung
+// inherited bash's `ln.startswith("    pushed:")` grep, which still fires on a
+// manifest yaml.Unmarshal would reject — malformed manifests keep their
+// documented result instead of silently losing the rung.
+func ManifestAnyPushed(path string) bool {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	for _, ln := range strings.Split(string(b), "\n") {
+		if strings.HasPrefix(ln, "    pushed:") && strings.TrimSpace(strings.SplitN(ln, ":", 2)[1]) == "true" {
+			return true
+		}
+	}
+	return false
+}
+
+// TicketIDs returns the sorted directory names under <projectHome>/tickets —
+// the one scan every "walk all tickets" caller (resolve ladder, board,
+// reconcile --all, find-similar, dashboard reconcile) shares.
+func TicketIDs(projectHome string) ([]string, error) {
+	entries, err := os.ReadDir(filepath.Join(projectHome, "tickets"))
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]string, 0, len(entries))
+	for _, e := range entries {
+		if e.IsDir() {
+			ids = append(ids, e.Name())
+		}
+	}
+	sort.Strings(ids)
+	return ids, nil
 }
 
 // ManifestPath is <ticket home>/manifest.yaml — mirrors bash manifest_path.

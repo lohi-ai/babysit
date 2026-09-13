@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/reallongnguyen/babysit/internal/git"
 	"github.com/reallongnguyen/babysit/internal/identity"
 	"github.com/reallongnguyen/babysit/internal/ticket"
 )
@@ -248,11 +249,10 @@ func collectAutopilotSnapshotOnce(a *apState, ticketID, ticketHome string) (*aut
 	st := ticket.New(identity.Env{Slug: a.slug, Branch: a.branch, Ticket: ticketID, ProjectHome: a.stateRoot})
 	canonical, worktree := top, top
 	if m, err := ticket.ReadManifest(manifestPath); err == nil {
-		for _, r := range m.Repos {
-			if r.Branch == a.branch || samePath(r.Worktree, top) {
-				canonical, worktree = r.Canonical, r.Worktree
-				break
-			}
+		if r := m.FindRepo(func(r ticket.Repo) bool {
+			return r.Branch == a.branch || samePath(r.Worktree, top)
+		}); r != nil {
+			canonical, worktree = r.Canonical, r.Worktree
 		}
 	} else if !os.IsNotExist(err) {
 		return nil, &snapshotError{Code: "STATE_MALFORMED", Message: "malformed required state: " + manifestPath, Details: map[string]string{"path": manifestPath}, Exit: 3}
@@ -290,7 +290,7 @@ func readStrictObject(path string, required bool) (ticket.Doc, error) {
 		return d, nil
 	}
 	var re *ticket.ReadError
-	if errors.As(err, &re) && re.Kind == ticket.KindMissing && os.IsNotExist(re.Err) && !required {
+	if errors.As(err, &re) && re.Kind == ticket.KindMissing && !required {
 		return ticket.Doc{}, nil
 	}
 	if errors.As(err, &re) && re.Kind == ticket.KindMalformed {
@@ -366,11 +366,8 @@ func snapshotGitStateOnce(dir, base string) (snapshotGit, error) {
 	observedAt := ""
 	if upstream != "" {
 		remoteHead = gitOutIn(dir, "rev-parse", upstream)
-		if gitDir := gitOutIn(dir, "rev-parse", "--git-common-dir"); gitDir != "" {
-			if !filepath.IsAbs(gitDir) {
-				gitDir = filepath.Join(dir, gitDir)
-			}
-			refPath := filepath.Join(filepath.Clean(gitDir), "refs", "remotes", filepath.FromSlash(upstream))
+		if gitDir := git.CommonDirIn(dir); gitDir != "" {
+			refPath := filepath.Join(gitDir, "refs", "remotes", filepath.FromSlash(upstream))
 			if fi, statErr := os.Stat(refPath); statErr == nil {
 				observedAt = fi.ModTime().UTC().Format(time.RFC3339)
 			}

@@ -38,10 +38,10 @@ func ReadDoc(path string) Doc {
 	return d
 }
 
-// ReadError distinguishes the two ways a strict index.json read fails so a
-// caller can keep its own error contract: KindMissing means the file is absent
-// (or otherwise unreadable), KindMalformed means the bytes are not exactly one
-// JSON object.
+// ReadError distinguishes the ways a strict index.json read fails so a caller
+// can keep its own error contract: KindMissing means the file is absent,
+// KindUnreadable means it exists but could not be read, KindMalformed means
+// the bytes are not exactly one JSON object.
 type ReadError struct {
 	Path string
 	Kind ReadErrorKind
@@ -52,6 +52,7 @@ type ReadErrorKind int
 
 const (
 	KindMissing ReadErrorKind = iota
+	KindUnreadable
 	KindMalformed
 )
 
@@ -66,7 +67,11 @@ func (e *ReadError) Unwrap() error { return e.Err }
 func ReadDocStrict(path string) (Doc, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
-		return nil, &ReadError{Path: path, Kind: KindMissing, Err: err}
+		kind := KindUnreadable
+		if os.IsNotExist(err) {
+			kind = KindMissing
+		}
+		return nil, &ReadError{Path: path, Kind: kind, Err: err}
 	}
 	d := Doc{}
 	dec := json.NewDecoder(bytes.NewReader(b))
