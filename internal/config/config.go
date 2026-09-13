@@ -46,6 +46,12 @@ const configHeader = `# babysit configuration — edit freely, changes take effe
 #                           #   off   — no data recorded
 #                           #   local — JSONL to ~/.babysit/analytics/ (never leaves machine)
 # ─── Foreman ─────────────────────────────────────────────────────────
+# parallel_max_workers: 8         # hard ceiling for one Foreman; host safety
+#                                 # is enforced by the global weighted pool.
+# parallel_global_units: auto     # machine-global weighted worker capacity
+#                                 # shared by every Foreman. auto derives a
+#                                 # conservative CPU/RAM budget; a positive
+#                                 # value may only lower that budget.
 # foreman_status_interval: 3600   # seconds between full reconciliation ticks:
 #                                 #   the Foreman skill's bounded orca
 #                                 #   orchestration check --wait timeout and

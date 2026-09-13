@@ -38,8 +38,19 @@ has_all "finish-cleans-worker-workspace" \
   'keep the worktree'
 
 has_all "bounded-worker-pool" \
-  'bbs config get parallel_max_workers' 'MAX_WORKERS=16' \
+  'bbs config get parallel_max_workers' 'MAX_WORKERS=8' \
   'positive integer' 'one writer per child worktree'
+
+has_all "global-weighted-admission" \
+  'machine-global weighted' 'bbs foreman resource reserve' \
+  'parallel_global_units' 'ADMISSION' 'no time-based expiry' \
+  'resource backpressure'
+
+
+has_all "child-slice-sizing" \
+  'independent, testable, releasable units' \
+  'never split one coherent change across siblings' \
+  'split the work into sub-tickets' 'explicit' 'phases inside its own ticket'
 
 has_all "autopilot-worker-execution-envelope" \
   '`AGENT_ROLE=orca`' 'already spawned' \

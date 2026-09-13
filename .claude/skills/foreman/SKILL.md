@@ -140,17 +140,20 @@ a full project reconciliation, never a liveness-only reply. One tick:
    `paused` or `cancelled` means no new dispatch; leave current files and
    commits in place.
 2. Bind the recorded Orca Run and read the live state of every project Task,
-   its current Dispatch, and its supervised worker.
+   its current Dispatch, and its supervised worker. Run
+   `bbs foreman resource status` and cross-check every global resource lease
+   against those live Dispatches; a lease has no time-based expiry.
 3. Cross-check each child against disk: checkpoint freshness, current
    `review-pr`/`qa` verdicts, `bbs ticket readiness --json`, and the finish
    policy. Never infer completion from worker prose or a `worker_done`
    message alone.
-4. Report the status of every project Task and supervised worker — the full
-   TICKETS/INTEGRATION_QA snapshot, not only state changes.
-5. Dispatch only newly ready work, retry only proven failed/stopped
-   Dispatches, and release settled workers not immediately reused. Then stay
-   active for the next bounded check: a tick with work remaining is not a
-   terminal outcome.
+4. Report the status of every project Task and supervised worker plus global
+   resource use — the full TICKETS/INTEGRATION_QA/RESOURCES snapshot, not only
+   state changes.
+5. Dispatch only newly ready work that passes resource admission, retry only
+   proven failed/stopped Dispatches, and release settled workers and their
+   resource leases when not immediately reused. Remain active for the next bounded check;
+   a tick with work remaining is not a terminal outcome.
 6. When every required ticket and integration gate passes, run the Finish
    and cleanup sequence, report the user-facing terminal result, and only
    then write the terminal `done` heartbeat described there.
@@ -213,9 +216,23 @@ the coordinator, but it is not accepted scope until represented on disk.
 
 ## Decompose and prepare topology
 
-1. Run the real `plan-draft` skill against the parent. Prefer vertical slices
-   that are independently implementable and verifiable. Keep genuine ordering
-   as `blocked_by`/`blocks`; avoid artificial chains deeper than 3–4 tasks.
+1. Run the real `plan-draft` skill against the parent. Slice into
+   **independent, testable, releasable units**: a child must stand alone as a
+   reviewable change — its own branch, its own `review-pr` + `qa`, its own
+   revert. Size each child to the smallest unit that still satisfies those
+   three, and never split one coherent change across siblings to widen the DAG
+   or fill the worker bound: over-decomposition pays a whole plan/build/QA
+   cycle per child and invents ordering the code does not have. If the slices
+   only land together, they are one ticket.
+   A slice too large for one worker pass is equally not a reason to grow the
+   project graph. Dispatch it with a Task spec that tells the `autopilot`
+   worker to split the work into sub-tickets or to implement it in explicit
+   phases inside its own ticket, and gate on that child's single branch,
+   verdict set, and handoff. Any sub-ticket needing its own worktree is linked
+   on both sides to the parent and added to the DAG like any other child, so
+   foreman stays the only owner of topology.
+   Keep genuine ordering as `blocked_by`/`blocks`; avoid artificial chains
+   deeper than 3–4 tasks.
 2. For each accepted seed, run `bbs ticket ensure --mode=worktree
    --from-input-file "$SEED_PATH" --reason foreman-decompose` from the
    canonical repo/base. `ensure` owns the ticket id, branch naming, and
@@ -243,23 +260,61 @@ Resolve the worker bound on every fresh invocation or resume:
 
 ```bash
 MAX_WORKERS="$(bbs config get parallel_max_workers 2>/dev/null || true)"
-[ -n "$MAX_WORKERS" ] || MAX_WORKERS=16
+[ -n "$MAX_WORKERS" ] || MAX_WORKERS=8
 ```
 
-An explicit value must be a positive integer; otherwise report `BLOCKED` with
-the invalid value. Create all Orca Tasks and their dependency edges before
-starting the first ready wave. Orca does not infer scheduling or filesystem
-conflicts: foreman dispatches only ready Tasks up to `MAX_WORKERS` and keeps
-one writer per child worktree. The bound is per foreman: `F` concurrent foremen
-can request up to `F × MAX_WORKERS`, so each still respects actual Orca/host
-capacity rather than treating 16 as a launch quota.
+An explicit `MAX_WORKERS` value must be a positive integer; otherwise report
+`BLOCKED` with the invalid value. It is a per-foreman ceiling, not the host
+safety limit. Every ready Task must also reserve machine-global weighted
+capacity through `bbs foreman resource` before `worker-start`; the broker
+atomically serializes all foremen and derives a conservative CPU/RAM budget
+from the current host. `parallel_global_units` may lower that automatic budget
+but never raise it. Current CPU or memory pressure queues new work without
+stopping a running worker.
+
+Classify the Task from its requirement, plan, and acceptance commands:
+
+| Profile | Use for |
+|---|---|
+| `plan` | planning, design feedback, and other read-only work |
+| `standard` | ordinary implementation, compilation, and tests |
+| `android-simulator` | Android emulator/device acceptance |
+| `ios-simulator` | iOS simulator acceptance |
+| `local-ml` | local model loading, training, or inference |
+
+If workload evidence is ambiguous between `standard` and a heavy profile, use
+the heavy profile. Simulator profiles reserve the shared mobile stack and GPU;
+`local-ml` reserves the GPU. Before each new or reused Dispatch:
+
+```bash
+RESOURCE_OUT="$(bbs foreman resource reserve "$FOREMAN_ID" \
+  --ticket "$TICKET" --task "$ORCA_TASK_ID" --profile "$RESOURCE_PROFILE")"
+```
+
+Parse `ADMISSION` and `LEASE` from the output; never `eval` it. `queued` means
+leave that Task pending and dispatch other admitted work: resource backpressure
+is not a failed attempt. `reserved` means immediately persist the lease id as
+`pointers.resource_lease` on that ticket, then call `worker-start`. If worker
+creation fails, release the lease before retrying. Keep one writer per child worktree;
+never exceed `MAX_WORKERS` even when global capacity remains.
+
+A reservation is keyed by Foreman + Orca Task and is idempotent across resume.
+It deliberately never expires on a clock: a sleeping laptop can resume a live
+worker hours later. Release it with
+`bbs foreman resource release "$RESOURCE_LEASE"` only after Orca proves the
+Dispatch terminal, then clear `pointers.resource_lease`. When reusing a settled
+worker for a new Dispatch, release the old Task's lease and reserve the new
+Task's profile first. On cold resume, reconcile each durable lease to its
+recorded Task/Dispatch; an uncertain lease stays held and blocks capacity
+rather than risking duplicate heavy work.
 
 Every worker Task spec must establish the execution envelope before naming its
 ticket work: this is a supervised Orca Dispatch, its effective
-`AGENT_ROLE=orca`, and it is already spawned. The worker invokes the installed
-skill directly in that turn, skips any developer `/goal` copy/paste handoff,
-uses Orca `ask` for a genuine User Challenge, and follows the injected
-lifecycle through exactly one `worker_done`. This statement in the Task spec is
+`AGENT_ROLE=orca`, and it is already spawned. It also names the resource
+profile Foreman reserved for this Task. The worker invokes the installed skill
+directly in that turn, skips any developer `/goal` copy/paste handoff, uses
+Orca `ask` for a genuine User Challenge, and follows the injected lifecycle
+through exactly one `worker_done`. This statement in the Task spec is
 load-bearing because `worker-start --agent` does not expose an environment
 option; never assume a coordinator shell export reached the worker process.
 
@@ -311,8 +366,9 @@ Workers execute per-ticket QA; foreman owns when and where it runs.
   cross-ticket journey, add one **Integration QA Task** depending on every
   relevant Build Task. Acquire the parent surface lease, use
   `bbs ticket surface compose` to compose exactly those child branches on
-  the primary checkout, and dispatch a
-  QA worker there against the parent requirement and plan.
+  the primary checkout, classify and reserve the Integration QA Task's global
+  resource profile, and dispatch a QA worker there against the parent
+  requirement and plan.
 - Integration QA is read-only on the composed primary. It persists parent QA
   evidence but does not fix code there. A finding becomes a follow-up Dispatch
   to the owning child worktree; rerun that child's review/QA and then rebuild
@@ -407,6 +463,7 @@ STATUS: DONE | DONE_WITH_CONCERNS | NEEDS_CONTEXT | BLOCKED | IN_PROGRESS
 VERDICT: ORCHESTRATED(<completed>/<total>)
 PROJECT: <parent>  RUN: <orca-run>  FINISH: <review|land|pr>
 TICKETS: <ticket branch QA review readiness result; one row each>
+RESOURCES: <global used/budget, host pressure, queued heavy Tasks>
 INTEGRATION_QA: <PASS evidence | N/A reason | BLOCKED evidence>
 SUMMARY: <project outcome and remaining concern>
 NEXT: <only the action left by finish policy>

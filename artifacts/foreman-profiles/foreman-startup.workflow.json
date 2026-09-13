@@ -64,7 +64,7 @@
       "title": "Startup operating model",
       "items": [
         "Standard QA covers 5–10 cases; review-pr runs at medium effort",
-        "N comes from parallel_max_workers; default 16 per foreman",
+        "N comes from parallel_max_workers; default 8 per foreman",
         "Different parent projects may run under distinct Foreman IDs"
       ]
     },

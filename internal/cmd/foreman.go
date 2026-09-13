@@ -31,6 +31,7 @@ const foremanUsage = `Usage:
   bbs foreman spawn [<id>] [--dir <path>] [--command <text>] [--agent <name>]
   bbs foreman ensure <id>
   bbs foreman worker-command --prompt <text> [--skill <name>] [--agent <name>] [--dir <path>]
+  bbs foreman resource <status|reserve|release> ...
   bbs foreman mailbox <status|bind|dispatch|wait|reply|done> ...
   bbs foreman watch [<id>] [--interval <sec>] [--idle <sec>] [--lines <n>]
                     [--status-interval <sec>] [--nudge <text>] [--max-nudges <n>] [--once]
@@ -115,6 +116,8 @@ func dispatchForeman(args []string) error {
 		return foremanEnsure(rest)
 	case "worker-command":
 		return foremanWorkerCommand(rest)
+	case "resource":
+		return foremanResource(rest)
 	case "mailbox":
 		return foremanMailbox(rest)
 	case "watch":

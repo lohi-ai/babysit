@@ -10,8 +10,48 @@ bbs config set update_check true     # false silences upgrade notifications
 bbs config set auto_upgrade false    # true runs bbs update on session start
 bbs config set proactive true        # false = only run skills typed explicitly
 bbs config set foreman_status_interval 3600  # seconds between foreman reconciliation ticks
+bbs config set parallel_max_workers 8     # per-Foreman worker ceiling
+bbs config set parallel_global_units auto  # global weighted Foreman capacity
 bbs config list                      # show all keys + annotated docs
 ```
+
+### Machine-global worker admission
+
+`parallel_max_workers` remains a per-Foreman ceiling. It cannot protect one
+machine running several Foremen: three coordinators with a ceiling of eight
+could otherwise launch 24 workers. Every Foreman therefore also reserves from
+one atomic weighted pool under `~/.babysit/resources/`.
+
+With `parallel_global_units: auto`, the pool uses the smaller of half the
+machine's CPUs and one unit per 2 GiB after a 6 GiB OS reserve, with a minimum
+of one unit. A configured positive value can lower, but not raise, that
+host-derived budget. New work also queues while available memory is below 20%
+or one-minute load reaches 80% of the machine's CPUs. Running workers are never
+preempted.
+
+| Profile | Units | Exclusive host resources |
+|---------|------:|--------------------------|
+| `plan` | 1 | — |
+| `standard` | 2 | — |
+| `android-simulator` | 4 | mobile simulator, GPU |
+| `ios-simulator` | 4 | mobile simulator, GPU |
+| `local-ml` | 4 | GPU |
+
+Reservations are global across repositories and Foremen sharing the same
+`BABYSIT_HOME`. They are keyed by Foreman and Orca Task, making a retry
+idempotent. They do not expire by time: after sleep or a coordinator crash,
+Foreman reconciles them against Orca and releases only a proven terminal
+Dispatch.
+
+```bash
+bbs foreman resource status
+bbs foreman resource reserve fm-project \
+  --ticket bs-child --task orca-task-id --profile ios-simulator
+bbs foreman resource release rsc-0123456789abcdef
+```
+
+`ADMISSION=queued` is backpressure, not a failed Task. Foreman may dispatch
+other admitted work and retries the queued Task on its next reconcile tick.
 
 ### Which coding agent runs the work
 
