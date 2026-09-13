@@ -15,17 +15,17 @@ import (
 // This file is the worktree surface engine: the one lifecycle that owns the
 // shared test surface — lease acquisition, reentrancy and staleness, the
 // reset/compose mechanics, the scratch marker, and release. The command
-// handlers in ticket_baseops.go (merge-base, reset-base, switch, serve, land,
-// qa-lease) select policy and mode on top of it and own their own wording;
-// everything that touches <gitdir>/bbs-qa-lease, <gitdir>/bbs-serving, or the
-// primary checkout's position lives here so the mechanics cannot diverge.
+// handlers in ticket_baseops.go (surface, serve, land) select policy and mode
+// on top of it and own their own wording; everything that touches
+// <gitdir>/bbs-qa-lease, <gitdir>/bbs-serving, or the primary checkout's
+// position lives here so the mechanics cannot diverge.
 
 // ─── the surface lease ───────────────────────────────────────────────────────
 //
 // One lock guards the shared test surface: the lease at <gitdir>/bbs-qa-lease.
-// Every op that changes what the primary checkout serves — merge-base, switch,
-// reset-base — holds it for the length of its work, and a QA session holds the
-// same lease across many such ops.
+// Every op that changes what the primary checkout serves — surface compose,
+// surface revert — holds it for the length of its work, and a QA session holds
+// the same lease across many such ops.
 //
 // There used to be a second mutex (bbs-merge-base.lock) for the merge itself,
 // with the lease layered over it as an advisory guard. Guard and action then
@@ -50,11 +50,7 @@ const (
 	leaseWait = 30 * time.Second
 )
 
-// surfaceHeld names the lease this process already owns. It makes an op invoked
-// in-process by another (switch → reset-base) reentrant without threading a
-// "the caller already holds it" flag through every signature — and without it,
-// a ticketless switch would sit waiting on its own lease.
-var surfaceHeld string
+// ─── the lease directory ─────────────────────────────────────────────────────
 
 // ownerlessGrace bounds how long a lease directory may sit without a readable
 // owner before another run may take it over. leasePublish installs a lease
@@ -225,33 +221,30 @@ func leaseSteal(dir, owner, kind, ttl string) (stoleFrom, why string, ok bool) {
 }
 
 // surfaceAcquire takes the surface lease for one op and returns the release to
-// run when it is done. Reentrant two ways — for a QA session already holding the
-// lease under this ticket, and for an op this process invoked in-process — and
-// both give back a no-op release, because whoever took the lease releases it.
+// run when it is done. Reentrant for a QA session already holding the lease
+// under this ticket — that case gives back a no-op release, because whoever
+// took the lease releases it.
 //
 // ok=false means the reason is already on stderr and the caller should exit 2.
 func surfaceAcquire(gitdir, cmd, ticketID string) (release func(), ok bool) {
-	if surfaceHeld != "" {
-		return func() {}, true
-	}
 	dir := leaseDirOf(gitdir)
 	owner := ticketID
 	if owner == "" {
-		// switch and reset-base can run from the primary with no ticket in
+		// compose and revert can run from the primary with no ticket in
 		// scope. They still need the lease, so give them an owner unique to the
 		// run — two of them are peers, not one reentrant session.
 		owner = fmt.Sprintf("%s-%d", cmd, os.Getpid())
 	}
 	res := leaseAcquire(dir, owner, leaseShort, strconv.Itoa(shortTTLMin))
 	if res.stoleOwner != "" {
-		fmt.Fprintf(os.Stderr, "%s: warning — cleared stale qa-lease from '%s' (%s).\n",
+		fmt.Fprintf(os.Stderr, "%s: warning — cleared stale surface lease from '%s' (%s).\n",
 			cmd, res.stoleOwner, res.stoleWhy)
 	}
 	if b := res.blocked; b != nil {
 		fmt.Fprintln(os.Stderr, "STATUS: BLOCKED")
 		if b.owner == "" {
 			// Within ownerlessGrace: a peer is publishing its lease right now.
-			fmt.Fprintf(os.Stderr, "REASON: another run is taking the qa-lease right now — %s would change the surface mid-QA.\n", cmd)
+			fmt.Fprintf(os.Stderr, "REASON: another run is taking the surface lease right now — %s would change the surface mid-QA.\n", cmd)
 			fmt.Fprintln(os.Stderr, "RECOMMENDATION: re-run in a moment; a lease still ownerless after two minutes is treated as stale and cleared.")
 			return nil, false
 		}
@@ -263,17 +256,15 @@ func surfaceAcquire(gitdir, cmd, ticketID string) (release func(), ok bool) {
 			fmt.Fprintf(os.Stderr, "RECOMMENDATION: re-run; if that run died, its lease lapses %d minutes after it started and the next op clears it.\n", shortTTLMin)
 			return nil, false
 		}
-		fmt.Fprintf(os.Stderr, "REASON: shared test surface is qa-leased by '%s' (%dmin into a %dmin lease) — %s would change it mid-QA.\n", b.owner, b.age, b.ttl, cmd)
-		fmt.Fprintf(os.Stderr, retarget("RECOMMENDATION: wait for '%s' to run 'bbs-ticket qa-lease release', or 'bbs-ticket qa-lease release --force' if that run is dead.\n"), b.owner)
+		fmt.Fprintf(os.Stderr, "REASON: shared test surface is leased by '%s' (%dmin into a %dmin lease) — %s would change it mid-QA.\n", b.owner, b.age, b.ttl, cmd)
+		fmt.Fprintf(os.Stderr, retarget("RECOMMENDATION: wait for '%s' to run 'bbs-ticket surface release', or 'bbs-ticket surface release --force' if that run is dead.\n"), b.owner)
 		return nil, false
 	}
-	surfaceHeld = owner
 	if res.refreshed {
 		// The QA session's lease, not ours to end.
-		return func() { surfaceHeld = "" }, true
+		return func() {}, true
 	}
 	return func() {
-		surfaceHeld = ""
 		// Only drop a lease still ours. Past shortTTLMin a peer may have judged
 		// this op dead and taken over, and removing theirs would hand the
 		// surface to a third run while they are using it.
@@ -285,9 +276,9 @@ func surfaceAcquire(gitdir, cmd, ticketID string) (release func(), ok bool) {
 
 // ─── the scratch marker ──────────────────────────────────────────────────────
 //
-// <gitdir>/bbs-serving records what the primary checkout serves. switch and
-// merge-base write it (scratch composition), reset-base clears it, land refuses
-// to merge while it is nonempty, and serve/board read it.
+// <gitdir>/bbs-serving records what the primary checkout serves. compose writes
+// it (scratch composition), revert clears it, land refuses to merge while it
+// is nonempty, and serve/board read it.
 
 // servingWrite ports _serving_write: persist what the primary serves as a comma
 // list in <gitdir>/bbs-serving. set = exactly these tickets (none → 0 bytes);
@@ -410,12 +401,12 @@ func (s *surface) merge(target string, noFF bool) mergeResult {
 // resetToOrigin is the reset half of the lifecycle: fetch, prove the reset is
 // safe (origin ref exists, no stray commits, on base, clean tree), hard-reset,
 // then clear the scratch marker. quiet suppresses the post-reset operator
-// note. Its guards fire for switch and serve too (serve shells out to switch,
-// whose stderr passes straight through), which is why the messages say
-// "then re-run" rather than naming reset-base.
+// note. Its guards fire for compose and serve too (serve shells out to
+// compose, whose stderr passes straight through), which is why the messages
+// say "then re-run" rather than naming revert.
 func (s *surface) resetToOrigin(base string, quiet bool, env identity.Env) bool {
 	if !gitCOK(s.primary, "fetch", "origin", base) {
-		fmt.Fprintf(os.Stderr, "reset-base: warning — fetch failed, using the last-known origin/%s\n", base)
+		fmt.Fprintf(os.Stderr, "surface revert: warning — fetch failed, using the last-known origin/%s\n", base)
 	}
 	if !gitCOK(s.primary, "rev-parse", "--verify", "-q", "origin/"+base) {
 		fmt.Fprintln(os.Stderr, "STATUS: BLOCKED")
@@ -450,13 +441,13 @@ func (s *surface) resetToOrigin(base string, quiet bool, env identity.Env) bool 
 	}
 	pre := gitCOut(s.primary, "rev-parse", "HEAD")
 	if !gitCOK(s.primary, "reset", "--hard", "origin/"+base) {
-		fmt.Fprintf(os.Stderr, "reset-base: git reset --hard origin/%s failed\n", base)
+		fmt.Fprintf(os.Stderr, "surface revert: git reset --hard origin/%s failed\n", base)
 		return false
 	}
 	post := gitCOut(s.primary, "rev-parse", "HEAD")
 	servingWrite(s.gitdir, "set", nil)
 	if env.Ticket != "" {
-		ticket.New(env).HistoryAppendExtra("reset_base", actorRole(),
+		ticket.New(env).HistoryAppendExtra("surface_revert", actorRole(),
 			fmt.Sprintf(`{"base":"%s","head":"%s"}`, base, post))
 	}
 	if pre == post {
@@ -468,22 +459,22 @@ func (s *surface) resetToOrigin(base string, quiet bool, env identity.Env) bool 
 	fmt.Printf("PRIMARY=%s\n", s.primary)
 	fmt.Printf("HEAD=%s\n", post)
 	if !quiet {
-		fmt.Fprintf(os.Stderr, "reset-base: '%s' now matches origin — re-run merge-base from any in-flight worktree\n", base)
+		fmt.Fprintf(os.Stderr, "surface revert: '%s' now matches origin — re-run surface compose from any in-flight worktree\n", base)
 		fmt.Fprintln(os.Stderr, "  so the shared server serves those tickets again.")
 	}
 	return true
 }
 
 // noScratch enforces the scratch-versus-retained invariant: a nonempty serving
-// marker means the base carries a scratch composition (switch/serve/merge-base)
-// that reset-base is expected to discard. Landing on top of it either no-ops
+// marker means the base carries a scratch composition (compose/serve) that
+// revert is expected to discard. Landing on top of it either no-ops
 // ("already on base") or mixes scratch commits into real history — refuse and
 // name the recovery.
 func (s *surface) noScratch() bool {
 	if serving := servingTickets(s.gitdir); len(serving) > 0 {
 		fmt.Fprintln(os.Stderr, "STATUS: BLOCKED")
 		fmt.Fprintf(os.Stderr, "REASON: primary is serving a scratch composition (%s) — land never merges on top of it.\n", strings.Join(serving, ","))
-		fmt.Fprintln(os.Stderr, retarget("RECOMMENDATION: run 'bbs-ticket reset-base' to discard the composition, then re-run land."))
+		fmt.Fprintln(os.Stderr, retarget("RECOMMENDATION: run 'bbs-ticket surface revert' to discard the composition, then re-run land."))
 		return false
 	}
 	return true

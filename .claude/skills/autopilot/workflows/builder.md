@@ -53,7 +53,7 @@ no ticket/requirement, stop with `NEEDS_CONTEXT`.
    `**Verify:**` line, and the implement handoff — not just the diff. The
    `qa` skill owns the test surface: on a normal checkout it tests the
    running dev server directly; inside a ticket worktree it runs the
-   merge-base/lease protocol itself (see `qa` SKILL.md § Flow step 2 and
+   surface lease/compose protocol itself (see `qa` SKILL.md § Flow step 2 and
    `../references/worktrees.md`). No runnable target → record the blocker
    and run the strongest fallback (`browse` for UI, else a narrow local
    check). Commit any QA fixes, then persist the verdict with

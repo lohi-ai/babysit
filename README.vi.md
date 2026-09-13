@@ -239,9 +239,9 @@ Cô lập là thứ xin theo từng lần chạy, khi bạn thật sự muốn:
 - `bbs ticket ensure --slug-hint <slug> --mode=worktree` — riêng ticket này một worktree; rồi chạy autopilot trong đó.
 - `bbs ticket ensure --slug-hint <slug> --mode=branch` — cắt `feat/<id>_<slug>` tại chỗ.
 
-**Worktree có giá, nên biết mình mua gì.** Vòng lặp trong không còn 0 bước: vì code nằm trong worktree còn dev server phục vụ checkout chính, mỗi vòng test là một commit cộng `bbs ticket merge-base` thay vì sửa-rồi-refresh. Cái nó mua là ticket tách rời — review từng cái một, bỏ cái hỏng, và land từng cái thành một PR sạch. Repo nào lúc nào cũng muốn hình dạng đó thì viết tay `mode: worktree` + `land: local`; không gì tự viết nó cho bạn.
+**Worktree có giá, nên biết mình mua gì.** Vòng lặp trong không còn 0 bước: vì code nằm trong worktree còn dev server phục vụ checkout chính, mỗi vòng test là một commit cộng `bbs ticket surface compose` thay vì sửa-rồi-refresh. Cái nó mua là ticket tách rời — review từng cái một, bỏ cái hỏng, và land từng cái thành một PR sạch. Repo nào lúc nào cũng muốn hình dạng đó thì viết tay `mode: worktree` + `land: local`; không gì tự viết nó cho bạn.
 
-Các lệnh chuyển việc giữa worktree và bề mặt dùng chung — `merge-base`, `switch`, `reset-base`, cùng lớp cho người dùng `board`, `serve`, `/bbs:fix-pr` — nằm ở mục [Làm nhiều ticket song song](#làm-nhiều-ticket-song-song-mode-worktree). Chi tiết: [`references/git-flow.md`](.claude/skills/references/git-flow.md).
+Các lệnh chuyển việc giữa worktree và bề mặt dùng chung — `bbs ticket surface <acquire|compose|revert|release|status>`, cùng lớp cho người dùng `board`, `serve`, `/bbs:fix-pr` — nằm ở mục [Làm nhiều ticket song song](#làm-nhiều-ticket-song-song-mode-worktree). Chi tiết: [`references/git-flow.md`](.claude/skills/references/git-flow.md).
 
 ### 3. Chạy
 
@@ -342,7 +342,7 @@ bbs ticket serve            # để trống: gộp mọi ticket đã xong (qa + 
 3. Review trong browser. Nhờ session của ticket sửa; nó commit trong worktree của riêng nó; chạy lại `serve` (reentrant — làm mới thời gian giữ, cắt lại bề mặt) rồi refresh browser. Lặp tới khi ưng.
    Với Orca, cả vòng lặp này gói gọn trong một worktree: `orca tab create --url <qa url>` đưa app đang chạy vào browser tích hợp, còn `orca file open-changed --mode diff --worktree path:<ticket-worktree>` mở diff của ticket bên cạnh.
 4. Ưng rồi → `bbs ticket serve --release`, rồi `/bbs:create-pr` cho từng repo. Reviewer comment sau đó → `/bbs:fix-pr`.
-5. `bbs ticket board --pr` chỉ ra các PR đã merge và in đúng các lệnh dọn dẹp (`reset-base`, `set-status done`).
+5. `bbs ticket board --pr` chỉ ra các PR đã merge và in đúng các lệnh dọn dẹp (`surface revert`, `set-status done`).
 
 **Một ticket, hai repo** (feature trải cả frontend + backend): `/bbs:setup-project` ghi lại các repo anh em một lần; builder của autopilot tự băng qua — tạo ticket anh em đã liên kết, code và QA cả hai bên — và `serve` bày cả cặp ra trước mặt bạn bằng một lệnh. Trong lúc đó session của các ticket khác vẫn code và review trong worktree riêng của chúng; `board` chỉ mặt từng người đang giữ bề mặt và còn giữ bao lâu. Công thức đầy đủ: [`references/git-flow.md` § Attended parallel review](.claude/skills/references/git-flow.md).
 

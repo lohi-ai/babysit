@@ -2,20 +2,20 @@
 # tests/test_bbs_ticket_board.sh — coverage for bin/bbs-ticket § board.
 #
 # board = read-only aggregated view: every ticket joined with its verdicts,
-# branch, session, PR pointer, and siblings, plus a qa-lease + serving footer.
+# branch, session, PR pointer, and siblings, plus a surface-lease + serving footer.
 # Zero mutation — running board must never change any state.
 #
 # Scenarios:
 #   board-rows-and-verdicts   both tickets listed; A's qa verdict DONE, B none;
 #                             branch column from manifest; footer FREE/(base only)
-#   board-lease-and-serving   lease held by A + switch A → footer shows owner
-#                             and SERVING=A; switch B → SERVING=B;
-#                             merge-base A then B (no reset) → SERVING=A,B
+#   board-lease-and-serving   lease held by A + compose A → footer shows owner
+#                             and SERVING=A; compose B → SERVING=B;
+#                             compose B A → SERVING=B,A
 #   board-status-filter       done ticket hidden by default, shown with --all
 #   board-sibling-unresolved  sibling with unset RELATED_* env → "path
 #                             unresolved" sub-row, main row intact, rc 0
 #   board-base-drift          BASE line: matches origin after push; ahead after
-#                             merge-base lands a ticket on local base, with the
+#                             compose lands a ticket on local base, with the
 #                             "cut from origin" sub-line; "no origin ref" when
 #                             the repo has no remote
 
@@ -92,22 +92,22 @@ T="$(mktemp -d)"
   export AGENT_ROLE=mayor
   build_two_tickets "$T" || { echo "fixture failed"; exit 1; }
 
-  "$BBS_TICKET_BIN" qa-lease acquire --ticket "$TK_A" >/dev/null 2>&1 || { echo "acquire failed"; exit 1; }
-  BABYSIT_TICKET="$TK_A" "$BBS_TICKET_BIN" switch "$TK_A" >/dev/null 2>&1 || { echo "switch A failed"; exit 1; }
+  "$BBS_TICKET_BIN" surface acquire --ticket "$TK_A" >/dev/null 2>&1 || { echo "acquire failed"; exit 1; }
+  BABYSIT_TICKET="$TK_A" "$BBS_TICKET_BIN" surface compose "$TK_A" >/dev/null 2>&1 || { echo "compose A failed"; exit 1; }
   out="$("$BBS_TICKET_BIN" board)"
   printf '%s\n' "$out" | grep -q "^QA-LEASE: $TK_A " || { echo "lease owner not shown: $out"; exit 1; }
   printf '%s\n' "$out" | grep -q "^SERVING: $TK_A$" || { echo "expected SERVING: $TK_A: $out"; exit 1; }
 
-  # switch is set-semantics: B replaces A.
-  BABYSIT_TICKET="$TK_A" "$BBS_TICKET_BIN" qa-lease release >/dev/null 2>&1
-  "$BBS_TICKET_BIN" switch "$TK_B" >/dev/null 2>&1 || { echo "switch B failed"; exit 1; }
+  # compose is set-semantics: B replaces A.
+  BABYSIT_TICKET="$TK_A" "$BBS_TICKET_BIN" surface release >/dev/null 2>&1
+  "$BBS_TICKET_BIN" surface compose "$TK_B" >/dev/null 2>&1 || { echo "compose B failed"; exit 1; }
   "$BBS_TICKET_BIN" board | grep -q "^SERVING: $TK_B$" \
-    || { echo "expected SERVING: $TK_B after switch B"; exit 1; }
+    || { echo "expected SERVING: $TK_B after compose B"; exit 1; }
 
-  # merge-base appends: A lands on top of B without a reset.
-  ( cd "$WT_A" && "$BBS_TICKET_BIN" merge-base >/dev/null 2>&1 ) || { echo "merge-base A failed"; exit 1; }
+  # A multi-ticket compose names the whole set.
+  "$BBS_TICKET_BIN" surface compose "$TK_B" "$TK_A" >/dev/null 2>&1 || { echo "compose B A failed"; exit 1; }
   "$BBS_TICKET_BIN" board | grep -q "^SERVING: $TK_B,$TK_A$" \
-    || { echo "expected SERVING: $TK_B,$TK_A after merge-base"; exit 1; }
+    || { echo "expected SERVING: $TK_B,$TK_A after compose B A"; exit 1; }
 ) && ok "board-lease-and-serving" || fail "board-lease-and-serving"
 rm -rf "$T"
 
@@ -159,9 +159,9 @@ T="$(mktemp -d)"
   "$BBS_TICKET_BIN" board | grep -q "^BASE: main — matches origin/main" \
     || { echo "expected in-sync BASE line: $("$BBS_TICKET_BIN" board)"; exit 1; }
 
-  # merge-base lands A on local main only — exactly the drift a ticket cut
+  # compose lands A on local main only — exactly the drift a ticket cut
   # from origin/main would miss.
-  ( cd "$WT_A" && "$BBS_TICKET_BIN" merge-base >/dev/null 2>&1 ) || { echo "merge-base A failed"; exit 1; }
+  ( cd "$WT_A" && "$BBS_TICKET_BIN" surface compose >/dev/null 2>&1 ) || { echo "compose A failed"; exit 1; }
   out="$("$BBS_TICKET_BIN" board)"
   printf '%s\n' "$out" | grep -qE "^BASE: main — [1-9][0-9]* ahead / 0 behind origin/main" \
     || { echo "expected ahead BASE line: $out"; exit 1; }

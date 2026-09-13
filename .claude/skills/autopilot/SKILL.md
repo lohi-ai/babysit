@@ -302,8 +302,8 @@ flag.
   first-column `STATUS: DONE` line (a `VERDICT: PASS` prose line is not a
   status; `set-verdict` refuses a body without one).
 - Git scope is exactly: `git init` on an unborn repo, and committing the
-  work on the current branch. Never push, land, merge-base, or open a PR,
-  and never cut a branch for itself — close-out is the human's
+  work on the current branch. Never push, land, compose the shared surface,
+  or open a PR, and never cut a branch for itself — close-out is the human's
   (`create-pr`) or the dispatching foreman's (its finish policy). Step skills
   are infra-isolated — they edit the working tree and never commit; commit
   their output yourself at each milestone.

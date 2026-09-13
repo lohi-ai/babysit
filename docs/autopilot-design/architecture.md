@@ -76,7 +76,7 @@ Tool results return status, exit code, relevant error excerpt, and full log path
 
 Code identity uses the complete tracked tree plus staged/unstaged changes and relevant untracked inputs, not HEAD alone. Final release readiness requires a clean intended change and a recorded base commit. Generated/ignored inputs that affect QA are represented by the surface/test fingerprint; unknown inputs prohibit evidence reuse.
 
-Parent workers own commits, QA surface preparation and leases. Native gate workers edit only their assigned scope. Existing process verifiers may commit their own fixes under their documented contract, but cannot push or close out; the parent reconciles their final revision. Worktree QA continues to reuse current merge-base/switch/lease behavior. A shared surface must prove which revision and dependencies it serves, independently of where the shell is running.
+Parent workers own commits, QA surface preparation and leases. Native gate workers edit only their assigned scope. Existing process verifiers may commit their own fixes under their documented contract, but cannot push or close out; the parent reconciles their final revision. Worktree QA continues to reuse current surface lease/compose behavior. A shared surface must prove which revision and dependencies it serves, independently of where the shell is running.
 
 A gate result records the final code it inspected, not merely the dispatch revision. Dependency locks, test commands, relevant QA configuration, build revision, and environment identity contribute to freshness. Dynamic external state is explicitly non-reusable across attempts unless an immutable fixture identifies it. Unknown runtime access produces a named limitation or fallback, never a fabricated pass.
 

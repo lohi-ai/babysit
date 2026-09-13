@@ -16,8 +16,8 @@ import (
 // session/board), the index.json state-accessors (env/get/set-status/set-phase/
 // set-parent/add-child/add-relation/set-sibling/add-label/set-pointer/
 // get-pointer/ensure-size/append-history), the file-only manifest.yaml ops
-// (init/get-manifest/set-branch), the git-mutating base-ops family (merge-base/
-// refresh/reset-base/switch/serve/qa-lease), `ensure`, and path/list/reconcile/
+// (init/get-manifest/set-branch), the git-mutating base-ops family (refresh/
+// surface/serve/land), `ensure`, and path/list/reconcile/
 // find-similar. A byte-identical frozen copy of the retired script survives at
 // tests/fixtures/bbs-ticket.reference as the differential-harness oracle.
 //
@@ -99,20 +99,14 @@ func newTicketCmd() *cobra.Command {
 				runEnsure(args[1:])
 			case "clear":
 				runClear(args[1:])
-			case "merge-base":
-				runMergeBase(args[1:])
 			case "refresh":
 				runRefresh(args[1:])
-			case "reset-base":
-				runResetBase(args[1:])
-			case "switch":
-				runSwitch(args[1:])
+			case "surface":
+				runSurface(args[1:])
 			case "serve":
 				runServe(args[1:])
 			case "land":
 				runLand(args[1:])
-			case "qa-lease":
-				runQALease(args[1:])
 			case "add-handoff":
 				runAddHandoff(args[1:])
 			case "latest-handoff":
@@ -208,30 +202,32 @@ Subcommands:
 
 Only for runs that cut something (--mode=branch|worktree, e.g. a foreman
 batch). In the default trunk mode the work is already on the branch you are
-standing on, so none of the next seven apply:
+standing on, so none of the next four apply:
 
-  merge-base [--base BRANCH]     from a ticket worktree: merge the ticket branch
-                                 into the primary checkout (dev-server tree);
-                                 BLOCKs on dirty/diverged state or conflict
   refresh [--base BRANCH]        bring the ticket branch up to date: fetch +
                                  merge origin/<base> into it (never local base);
                                  BLOCKs on dirty tree or conflict
-  reset-base [--base BRANCH]     reset the primary checkout's base branch to
+  surface <verb>                 the one test-surface lifecycle:
+      acquire [--ticket ID] [--ttl-min N]
+                                 exclusive QA-session lease on the test surface;
+                                 other tickets' compose/revert BLOCK while held;
+                                 stale (> ttl) is stolen
+      compose [<ticket>...] [--base BRANCH]
+                                 test surface = base + exactly these tickets:
+                                 revert then merge each ticket branch in; bare
+                                 inside a ticket worktree composes that ticket
+      revert [--base BRANCH]     reset the primary checkout's base branch to
                                  origin/<base> (drops local integration merges);
                                  BLOCKs on dirty/off-base/non-merge local commits
-  switch <ticket>... [--base BRANCH]
-                                 test surface = base + exactly these tickets:
-                                 reset-base then merge each ticket branch in;
-                                 the fast QA hop between worktree tickets
-  qa-lease <acquire|release|status> [--ticket ID] [--ttl-min N] [--force]
-                                 exclusive QA-session lease on the test surface;
-                                 other tickets' merge-base/switch/reset-base
-                                 BLOCK while held; stale (> ttl) is stolen
+      release [--ticket ID] [--force]
+                                 drop the lease; --force overrides ownership
+      status                     lease owner, age, ttl
   serve [<ticket>...] [--ttl-min N]
-                                 human review: long qa-lease (240min) + switch,
-                                 here and in each sibling repo; bare = every
-                                 finished ticket (qa + review-pr DONE); re-run
-                                 after each fix; serve --release frees leases
+                                 human review: long surface lease (240min) +
+                                 compose, here and in each sibling repo; bare =
+                                 every finished ticket (qa + review-pr DONE);
+                                 re-run after each fix; serve --release frees
+                                 leases
   land [<ticket>...] [--base BRANCH]
                                  merge finished ticket branches into the LOCAL
                                  base and KEEP the merge (--no-ff); gates on qa
@@ -240,7 +236,7 @@ standing on, so none of the next seven apply:
                                  foreman lands a worker as it finishes
 
   board [--all] [--pr]           read-only ticket board: status, branch, qa/
-                                 review verdicts, session, PR, qa-lease, serving
+                                 review verdicts, session, PR, surface lease, serving
   path <kind> [selectors] --read|--write   resolve a ticket file path (canonical → legacy)
   list <kind> [selectors]                  list ticket files of a kind
   reconcile [--ticket <id> | --all] [--dry-run] [--quiet]

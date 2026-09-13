@@ -19,7 +19,7 @@ Work a PR's unresolved review threads to zero. One repo's PR per invocation — 
      --jq '.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved|not)'
    ```
 3. Fix each thread in the ticket's **own worktree** (`bbs ticket resolve` gives the path), never the primary checkout. Same discipline as `review-pr --fix`: apply what's right, skip with a stated reason what isn't (wrong, out of scope, or a genuine disagreement — those go back to the reviewer as a reply, not a silent skip).
-4. Fixes that change behavior get re-verified before push: re-run the surface's check, and when other tickets are in flight follow the qa-lease protocol (`qa-lease acquire` → `switch <ticket>` → check → `release`).
+4. Fixes that change behavior get re-verified before push: re-run the surface's check, and when other tickets are in flight follow the surface lease protocol (`surface acquire` → `surface compose <ticket>` → check → `surface release`).
 5. Commit in the worktree and `git push` the ticket branch.
 6. Close the loop per thread: reply in-thread via REST, resolve via GraphQL (resolution is GraphQL-only):
    ```bash

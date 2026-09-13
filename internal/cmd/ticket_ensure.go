@@ -417,11 +417,11 @@ func deriveSlug(raw string) string {
 
 // divertWarning is printed when a `branch`-mode cut is forced into a worktree.
 // The divert is not free: the worktree inner loop costs a commit +
-// `merge-base` per test iteration, where cutting in place costs nothing. A dev
-// who never chose that tax should be told how to get back to the fast loop
-// rather than silently dropped into the slow one.
+// `surface compose` per test iteration, where cutting in place costs nothing.
+// A dev who never chose that tax should be told how to get back to the fast
+// loop rather than silently dropped into the slow one.
 func divertWarning(curBranch, baseBranch string) {
-	fmt.Fprintln(os.Stderr, "ensure: WARNING — the worktree loop costs a commit + 'bbs ticket merge-base' per test iteration.")
+	fmt.Fprintln(os.Stderr, "ensure: WARNING — the worktree loop costs a commit + 'bbs ticket surface compose' per test iteration.")
 	if curBranch != baseBranch {
 		fmt.Fprintf(os.Stderr, "ensure: to keep the 0-step loop: check out '%s' with a clean tree and re-run.\n", baseBranch)
 	} else {

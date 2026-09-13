@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # tests/test_bbs_ticket_git_flow_mode.sh — coverage for the git-flow mode
-# (trunk|branch|worktree) in bin/bbs-ticket § ensure, and for reset-base.
+# (trunk|branch|worktree) in bin/bbs-ticket § ensure, and for surface revert.
 #
 # The mode decides where a new ticket's branch lives:
 #   trunk     no cut; identity rides BABYSIT_TICKET
 #   branch    safe-cut gate (covered by test_bbs_ticket_safe_cut.sh)
 #   worktree  always divert — primary checkout stays pinned to base
-# reset-base snaps the primary's base branch back to origin/<base> after
+# surface revert snaps the primary's base branch back to origin/<base> after
 # tickets land upstream, refusing when real work would be lost.
 #
 # Scenarios:
@@ -18,11 +18,11 @@
 #   mode-equals-form-diverts              --mode=worktree (= form) → divert; --mode=bogus → exit 2
 #   legacy-ticket-branch-optional         ticket_branch: optional maps to trunk
 #   invalid-config-mode                   mode: bogus → exit 2
-#   reset-base-after-merge-base           land a ticket via merge-base (fast-forward),
-#                                         reset-base → RESET=1, main == origin/main,
+#   revert-after-compose                land a ticket via surface compose,
+#                                         revert → RESET=1, main == origin/main,
 #                                         ticket branch + worktree intact
-#   reset-base-refuses-stray-commit       direct commit on main, no branch holds it → BLOCKED
-#   reset-base-refuses-dirty              dirty primary → BLOCKED
+#   revert-refuses-stray-commit       direct commit on main, no branch holds it → BLOCKED
+#   revert-refuses-dirty              dirty primary → BLOCKED
 
 set -u
 SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
@@ -206,7 +206,7 @@ T="$(mktemp -d)"
 ) && ok "invalid-config-mode" || fail "invalid-config-mode"
 rm -rf "$T"
 
-# ── reset-base-after-merge-base ───────────────────────────────────────
+# ── revert-after-compose ───────────────────────────────────────
 T="$(mktemp -d)"
 (
   export PATH="$SCRIPT_DIR/bin:$PATH"
@@ -224,24 +224,24 @@ T="$(mktemp -d)"
     cd "$wt"
     echo "ticket work" > f.txt
     git add f.txt && git -c user.email=t@t -c user.name=t commit -q -m "ticket work"
-    "$BBS_TICKET_BIN" merge-base >/dev/null 2>"$T/mb-err" \
-      || { echo "merge-base failed: $(cat "$T/mb-err")"; exit 1; }
+    "$BBS_TICKET_BIN" surface compose >/dev/null 2>"$T/mb-err" \
+      || { echo "compose failed: $(cat "$T/mb-err")"; exit 1; }
   ) || exit 1
-  [ -f f.txt ] || { echo "merge-base did not land f.txt on the primary"; exit 1; }
+  [ -f f.txt ] || { echo "compose did not land f.txt on the primary"; exit 1; }
 
-  rb="$("$BBS_TICKET_BIN" reset-base 2>"$T/rb-err")"; rc=$?
-  [ "$rc" -eq 0 ] || { echo "reset-base failed rc=$rc: $(cat "$T/rb-err")"; exit 1; }
+  rb="$("$BBS_TICKET_BIN" surface revert 2>"$T/rb-err")"; rc=$?
+  [ "$rc" -eq 0 ] || { echo "revert failed rc=$rc: $(cat "$T/rb-err")"; exit 1; }
   printf '%s\n' "$rb" | grep -q '^RESET=1$' \
     || { echo "expected RESET=1; out: $rb"; exit 1; }
   [ "$(git rev-parse main)" = "$(git rev-parse origin/main)" ] \
-    || { echo "main != origin/main after reset-base"; exit 1; }
+    || { echo "main != origin/main after revert"; exit 1; }
   [ ! -f f.txt ] || { echo "f.txt still on primary after reset"; exit 1; }
   # The ticket branch and worktree survive untouched.
   [ -f "$wt/f.txt" ] || { echo "worktree lost f.txt"; exit 1; }
-) && ok "reset-base-after-merge-base" || fail "reset-base-after-merge-base"
+) && ok "revert-after-compose" || fail "revert-after-compose"
 rm -rf "$T"
 
-# ── reset-base-refuses-stray-commit ───────────────────────────────────
+# ── revert-refuses-stray-commit ───────────────────────────────────
 T="$(mktemp -d)"
 (
   export PATH="$SCRIPT_DIR/bin:$PATH"
@@ -251,15 +251,15 @@ T="$(mktemp -d)"
   echo "direct work" > direct.txt
   git add direct.txt && git -c user.email=t@t -c user.name=t commit -q -m "committed directly on main"
 
-  "$BBS_TICKET_BIN" reset-base >/dev/null 2>"$T/err"; rc=$?
+  "$BBS_TICKET_BIN" surface revert >/dev/null 2>"$T/err"; rc=$?
   [ "$rc" -eq 2 ] || { echo "expected rc=2, got $rc"; exit 1; }
   grep -q "BLOCKED" "$T/err" || { echo "expected BLOCKED: $(cat "$T/err")"; exit 1; }
   git rev-parse --verify -q HEAD >/dev/null || { echo "history damaged"; exit 1; }
   [ -f direct.txt ] || { echo "direct.txt lost despite BLOCK"; exit 1; }
-) && ok "reset-base-refuses-stray-commit" || fail "reset-base-refuses-stray-commit"
+) && ok "revert-refuses-stray-commit" || fail "revert-refuses-stray-commit"
 rm -rf "$T"
 
-# ── reset-base-refuses-dirty ──────────────────────────────────────────
+# ── revert-refuses-dirty ──────────────────────────────────────────
 T="$(mktemp -d)"
 (
   export PATH="$SCRIPT_DIR/bin:$PATH"
@@ -268,11 +268,11 @@ T="$(mktemp -d)"
   cd "$T/repo"
   echo "uncommitted" > dirty.txt
 
-  "$BBS_TICKET_BIN" reset-base >/dev/null 2>"$T/err"; rc=$?
+  "$BBS_TICKET_BIN" surface revert >/dev/null 2>"$T/err"; rc=$?
   [ "$rc" -eq 2 ] || { echo "expected rc=2 on dirty primary, got $rc"; exit 1; }
   grep -q "uncommitted changes" "$T/err" || { echo "expected dirty-tree reason: $(cat "$T/err")"; exit 1; }
   [ -f dirty.txt ] || { echo "dirty.txt lost despite BLOCK"; exit 1; }
-) && ok "reset-base-refuses-dirty" || fail "reset-base-refuses-dirty"
+) && ok "revert-refuses-dirty" || fail "revert-refuses-dirty"
 rm -rf "$T"
 
 echo

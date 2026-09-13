@@ -21,7 +21,7 @@ const boardRowFmt = "%-14s %-12s %-9s %-9s %-7s %-16s %-12s %s\n"
 
 // runBoard ports bin/bbs-ticket.bash:3275-3399 — a read-only aggregated view of
 // every ticket joined with its verdicts, branch, session, PR and siblings, plus
-// a qa-lease + serving footer. Zero mutation.
+// a surface-lease + serving footer. Zero mutation.
 func runBoard(args []string) {
 	withPR, showAll := false, false
 	for _, a := range args {
@@ -115,7 +115,7 @@ func runBoard(args []string) {
 				c.State, c.Actor, status, undoVerb(c.State))
 		}
 		if merged {
-			fmt.Printf(retarget("  ↳ PR merged — next: bbs-ticket reset-base; BABYSIT_TICKET=%s bbs-ticket set-status done\n"), tid)
+			fmt.Printf(retarget("  ↳ PR merged — next: bbs-ticket surface revert; BABYSIT_TICKET=%s bbs-ticket set-status done\n"), tid)
 		}
 
 		for _, sib := range idx.Siblings {
@@ -214,7 +214,7 @@ func printBaseLine(primary, gitdir string, now int64) {
 		// base_branch, which breaks composing too. Say so only when origin has
 		// the branch; when neither side does, the repo is simply new.
 		if haveOrigin {
-			fmt.Printf(retarget("BASE: %s — no local '%s' branch (origin/%s exists) — bbs-ticket serve, switch and merge-base need one\n"), base, base, base)
+			fmt.Printf(retarget("BASE: %s — no local '%s' branch (origin/%s exists) — bbs-ticket serve and surface compose need one\n"), base, base, base)
 		}
 		return
 	}
@@ -257,7 +257,7 @@ func printBaseLine(primary, gitdir string, now int64) {
 		}
 	}
 	if behind != "0" {
-		fmt.Printf(retarget("  ↓ origin/%s moved on — bbs-ticket refresh (in a ticket) or bbs-ticket reset-base (on the primary)\n"), base)
+		fmt.Printf(retarget("  ↓ origin/%s moved on — bbs-ticket refresh (in a ticket) or bbs-ticket surface revert (on the primary)\n"), base)
 	}
 }
 

@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # tests/test_bbs_ticket_land.sh — coverage for `bbs ticket land`.
 #
-# land <ticket> is the opposite of switch: switch resets the base and treats the
-# composition as scratch, land merges into the LOCAL base and KEEPS the merge.
+# land <ticket> is the opposite of surface compose: compose resets the base
+# and treats the composition as scratch, land merges into the LOCAL base and
+# KEEPS the merge.
 # It is what `finish: land` calls when a worker finishes, so its guards are
 # the whole feature — an unverified or half-landed batch is the failure that
 # matters, not a missing convenience.
@@ -18,9 +19,9 @@
 #                                  the whole batch is checked before any merge
 #   land-blocks-off-base           primary on another branch → rc 2 BLOCKED
 #   land-blocks-dirty-primary      uncommitted changes → rc 2 BLOCKED, preserved
-#   land-blocks-on-foreign-lease   another ticket holds the qa-lease → rc 2
+#   land-blocks-on-foreign-lease   another ticket holds the surface lease → rc 2
 #   land-multi                     A + B both finished → both merges on base
-#   land-survives-reset-base-guard reset-base after a land does not BLOCK on
+#   land-survives-revert-guard     surface revert after a land does not BLOCK on
 #                                  stray commits (the ticket branches hold them)
 
 set -u
@@ -201,13 +202,13 @@ T="$(mktemp -d)"
   build_two_tickets "$T" || { echo "fixture failed"; exit 1; }
   finish "$TK_A"
   # B is mid-QA on the shared surface; landing A would move it under B.
-  "$BBS_TICKET_BIN" qa-lease acquire --ticket "$TK_B" >/dev/null 2>&1 || { echo "seed lease failed"; exit 1; }
+  "$BBS_TICKET_BIN" surface acquire --ticket "$TK_B" >/dev/null 2>&1 || { echo "seed lease failed"; exit 1; }
 
   before="$(git rev-parse HEAD)"
   "$BBS_TICKET_BIN" land "$TK_A" >"$T/out" 2>"$T/err"; rc=$?
   [ "$rc" -eq 2 ] || { echo "expected rc 2, got $rc"; exit 1; }
   [ "$(git rev-parse HEAD)" = "$before" ] || { echo "landed through another ticket's lease"; exit 1; }
-  "$BBS_TICKET_BIN" qa-lease status | grep -q "^OWNER=$TK_B$" \
+  "$BBS_TICKET_BIN" surface status | grep -q "^OWNER=$TK_B$" \
     || { echo "lease owner changed"; exit 1; }
 ) && ok "land-blocks-on-foreign-lease" || fail "land-blocks-on-foreign-lease"
 rm -rf "$T"
@@ -230,8 +231,8 @@ T="$(mktemp -d)"
 rm -rf "$T"
 
 # ── land-blocks-on-scratch-composition ────────────────────────────────
-# switch composes a ticket onto base as scratch (bbs-serving marker set).
-# land must refuse to merge on top of it — the composition is what reset-base
+# compose puts a ticket onto base as scratch (bbs-serving marker set).
+# land must refuse to merge on top of it — the composition is what revert
 # discards, and landing there either no-ops or mixes scratch into history.
 T="$(mktemp -d)"
 (
@@ -240,29 +241,29 @@ T="$(mktemp -d)"
   export AGENT_ROLE=mayor
   build_two_tickets "$T" || { echo "fixture failed"; exit 1; }
   finish "$TK_A"
-  "$BBS_TICKET_BIN" switch "$TK_A" >/dev/null 2>&1 || { echo "switch failed"; exit 1; }
+  "$BBS_TICKET_BIN" surface compose "$TK_A" >/dev/null 2>&1 || { echo "compose failed"; exit 1; }
 
   before="$(git rev-parse HEAD)"
   "$BBS_TICKET_BIN" land "$TK_A" >"$T/out" 2>"$T/err"; rc=$?
   [ "$rc" -eq 2 ] || { echo "expected rc 2, got $rc"; exit 1; }
   grep -q "STATUS: BLOCKED" "$T/err" || { echo "no BLOCKED; err: $(cat "$T/err")"; exit 1; }
   grep -q "scratch composition" "$T/err" || { echo "reason must name scratch composition; err: $(cat "$T/err")"; exit 1; }
-  grep -q "reset-base" "$T/err" || { echo "recommendation must name reset-base; err: $(cat "$T/err")"; exit 1; }
+  grep -q "surface revert" "$T/err" || { echo "recommendation must name surface revert; err: $(cat "$T/err")"; exit 1; }
   [ "$(git rev-parse HEAD)" = "$before" ] || { echo "base moved on a blocked land"; exit 1; }
 
-  # After reset-base discards the composition, land succeeds for real.
-  "$BBS_TICKET_BIN" reset-base >/dev/null 2>&1 || { echo "reset-base failed"; exit 1; }
+  # After revert discards the composition, land succeeds for real.
+  "$BBS_TICKET_BIN" surface revert >/dev/null 2>&1 || { echo "revert failed"; exit 1; }
   out="$("$BBS_TICKET_BIN" land "$TK_A" 2>"$T/err")"; rc=$?
-  [ "$rc" -eq 0 ] || { echo "land after reset failed rc=$rc: $(cat "$T/err")"; exit 1; }
+  [ "$rc" -eq 0 ] || { echo "land after revert failed rc=$rc: $(cat "$T/err")"; exit 1; }
   printf '%s\n' "$out" | grep -q "^LANDED=1 $TK_A " \
     || { echo "expected LANDED=1 after reset; out: $out"; exit 1; }
   [ "$(git rev-list --count --merges origin/main..HEAD)" -eq 1 ] \
-    || { echo "expected one merge commit after reset+land"; exit 1; }
+    || { echo "expected one merge commit after revert+land"; exit 1; }
 ) && ok "land-blocks-on-scratch-composition" || fail "land-blocks-on-scratch-composition"
 rm -rf "$T"
 
-# ── land-survives-reset-base-guard ────────────────────────────────────
-# reset-base BLOCKs when base carries commits no other branch holds. A landed
+# ── land-survives-revert-guard ────────────────────────────────────
+# surface revert BLOCKs when base carries commits no other branch holds. A landed
 # ticket must not trip it: the ticket branch still holds every commit, and the
 # merge itself is excluded as a merge. Otherwise finish: land would wedge the
 # serve loop for the rest of the batch.
@@ -275,13 +276,13 @@ T="$(mktemp -d)"
   finish "$TK_A"
   "$BBS_TICKET_BIN" land "$TK_A" >/dev/null 2>&1 || { echo "land failed"; exit 1; }
 
-  "$BBS_TICKET_BIN" reset-base >"$T/out" 2>"$T/err"; rc=$?
-  [ "$rc" -eq 0 ] || { echo "reset-base blocked after a land rc=$rc: $(cat "$T/err")"; exit 1; }
+  "$BBS_TICKET_BIN" surface revert >"$T/out" 2>"$T/err"; rc=$?
+  [ "$rc" -eq 0 ] || { echo "revert blocked after a land rc=$rc: $(cat "$T/err")"; exit 1; }
   grep -q "^RESET=1$" "$T/out" || { echo "expected RESET=1; out: $(cat "$T/out")"; exit 1; }
   # And the work is not lost — the ticket branch still has it.
   git rev-parse --verify -q "refs/heads/feat/${TK_A}_tick-a" >/dev/null \
     || { echo "ticket branch gone"; exit 1; }
-) && ok "land-survives-reset-base-guard" || fail "land-survives-reset-base-guard"
+) && ok "land-survives-revert-guard" || fail "land-survives-revert-guard"
 rm -rf "$T"
 
 echo
