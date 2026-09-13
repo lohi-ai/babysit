@@ -21,7 +21,7 @@ const FRAME_STYLE: React.CSSProperties = {
   backgroundColor: 'var(--surface-bg)',
 };
 
-const COLUMNS = '20px 150px 110px 1fr 110px 64px 72px 72px';
+const COLUMNS = '20px 150px 110px 1fr 110px 64px 96px 72px';
 
 // A ticket in one of these is finished with, so a foreman holding only these is
 // safe to retire. Anything else is work that stops moving the moment its foreman
@@ -73,16 +73,36 @@ export function Foremen({ snapshot }: { snapshot: Snapshot }) {
   // project, and a stranded-ticket warning narrower than that number would
   // reassure the human about tickets it never looked at.
   const allTickets = useScopedTickets(snapshot, 'all');
-  const openTickets = useMemo(() => {
-    const byForeman = new Map<string, string[]>();
-    for (const t of allTickets) {
-      if (!t.assignee || SETTLED.has(t.status)) continue;
-      const list = byForeman.get(t.assignee) ?? [];
-      list.push(t.id);
-      byForeman.set(t.assignee, list);
+  const liveTickets = useMemo(() => {
+    const s = new Set<string>();
+    for (const sess of snapshot.sessions?.sessions ?? []) {
+      if (sess.ticket) s.add(sess.ticket);
     }
-    return byForeman;
-  }, [allTickets]);
+    return s;
+  }, [snapshot]);
+  // Per-foreman grading of the tickets it holds: the bare `assigned` count
+  // cannot say whether that work is moving, stuck, or already finished — the
+  // retire confirm needs exactly that split.
+  const ticketGrades = useMemo(() => {
+    const open = new Map<string, string[]>();
+    const grades = new Map<string, { live: number; blocked: number; done: number }>();
+    for (const t of allTickets) {
+      if (!t.assignee) continue;
+      const g = grades.get(t.assignee) ?? { live: 0, blocked: 0, done: 0 };
+      if (SETTLED.has(t.status)) {
+        g.done++;
+      } else {
+        if (liveTickets.has(t.id)) g.live++;
+        if (t.status === 'blocked') g.blocked++;
+        const list = open.get(t.assignee) ?? [];
+        list.push(t.id);
+        open.set(t.assignee, list);
+      }
+      grades.set(t.assignee, g);
+    }
+    return { open, grades };
+  }, [allTickets, liveTickets]);
+  const openTickets = ticketGrades.open;
 
   const containerRef = useRef<HTMLDivElement>(null);
   const [rowEls, setRowEls] = useState<HTMLElement[]>([]);
@@ -133,6 +153,7 @@ export function Foremen({ snapshot }: { snapshot: Snapshot }) {
                 f={f}
                 state={state}
                 gate={reason}
+                grade={ticketGrades.grades.get(f.id)}
                 onRetire={() => setRetiring(f)}
               />
             ))}
@@ -168,11 +189,13 @@ function ForemanListRow({
   f,
   state,
   gate,
+  grade,
   onRetire,
 }: {
   f: ForemanRow;
   state: Liveness;
   gate: string;
+  grade?: { live: number; blocked: number; done: number };
   onRetire: () => void;
 }) {
   return (
@@ -218,6 +241,19 @@ function ForemanListRow({
         style={{ color: 'var(--text-secondary)', fontVariantNumeric: 'tabular-nums' }}
       >
         {f.assigned}
+        {grade && f.assigned > 0 && (
+          <span
+            className="block whitespace-nowrap"
+            style={{ color: 'var(--text-muted)', fontSize: 11 }}
+            title={`${grade.live} live · ${grade.blocked} blocked · ${grade.done} done`}
+          >
+            {[
+              grade.live > 0 ? `${grade.live} live` : null,
+              grade.blocked > 0 ? `${grade.blocked} blocked` : null,
+              grade.done > 0 ? `${grade.done} done` : null,
+            ].filter(Boolean).join(' · ') || `${f.assigned} open`}
+          </span>
+        )}
       </span>
       <span className="px-3 py-1.5 text-xs text-right truncate" title={f.heartbeat}>
         {/* The state is in the tag text, not only in the dot's color. */}

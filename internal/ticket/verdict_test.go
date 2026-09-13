@@ -1,11 +1,10 @@
-package cmd
+package ticket
 
 import (
 	"os"
 	"testing"
 
 	"github.com/reallongnguyen/babysit/internal/identity"
-	"github.com/reallongnguyen/babysit/internal/ticket"
 )
 
 // liveHollowVerdict is verbatim what a spawned verifier persisted for
@@ -26,7 +25,7 @@ func TestTheWriteGuardAgreesWithTheGateItProtects(t *testing.T) {
 	cases := []struct {
 		name string
 		body string
-		want string // what verdictStatus should report
+		want string // what VerdictStatus should report
 	}{
 		{"plain done", "STATUS: DONE\n", "DONE"},
 		{"status after a heading", "# qa — t\n\nSTATUS: DONE_WITH_CONCERNS\nnotes\n", "DONE_WITH_CONCERNS"},
@@ -40,17 +39,17 @@ func TestTheWriteGuardAgreesWithTheGateItProtects(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			st := ticket.New(identity.Env{ProjectHome: t.TempDir(), Ticket: "t"})
+			st := New(identity.Env{ProjectHome: t.TempDir(), Ticket: "t"})
 			st.EnsureDirs()
 			if err := os.WriteFile(st.VerdictPath("qa"), []byte(tc.body), 0o644); err != nil {
 				t.Fatal(err)
 			}
-			got := verdictStatus(st, "qa")
+			got := VerdictStatus(st, "qa")
 			if got != tc.want {
-				t.Fatalf("verdictStatus = %q, want %q", got, tc.want)
+				t.Fatalf("VerdictStatus = %q, want %q", got, tc.want)
 			}
 			// The guard admits a body iff the gate can read a status from it.
-			if accepted, readable := bodyHasStatus([]byte(tc.body)), got != "none"; accepted != readable {
+			if accepted, readable := BodyHasStatus([]byte(tc.body)), got != "none"; accepted != readable {
 				t.Fatalf("guard accepts=%v but gate readable=%v (status %q) — the guard would let a hollow verdict through, or block a good one", accepted, readable, got)
 			}
 		})

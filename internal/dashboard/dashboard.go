@@ -196,6 +196,11 @@ func projectBlock(o Options, projectDir string) obj {
 			// The summary carries the approval record so a list can pin
 			// "waiting on you" without loading every ticket's detail.
 			"approval": detail["approval"],
+			// children + run are projections of the same index.json/checkpoint
+			// the detail already read — the list needs them to grade parent
+			// progress and current step without opening every detail.
+			"children": detail["children"],
+			"run":      detail["checkpoint"],
 		})
 		// timeline: each history row + {ticket: id}
 		if rows, ok := parseJSONL(filepath.Join(tdir, "history.jsonl")); ok {
@@ -223,9 +228,9 @@ func projectBlock(o Options, projectDir string) obj {
 
 func ticketDetail(o Options, tdir string) (obj, bool) {
 	id := filepath.Base(tdir)
-	idx, err := parseJSONObject(filepath.Join(tdir, "index.json"))
+	idx, err := ticket.ReadDocStrict(filepath.Join(tdir, "index.json"))
 	if err != nil {
-		o.warn("skipping " + id + " -- corrupt index at " + filepath.Join(tdir, "index.json") + ": invalid JSON")
+		o.warn("skipping " + id + " -- corrupt index at " + filepath.Join(tdir, "index.json") + ": " + err.Error())
 		return nil, false
 	}
 
@@ -262,6 +267,13 @@ func ticketDetail(o Options, tdir string) (obj, bool) {
 		// the rung it interrupted and make resume a guess.
 		"assignee": digRaw(idx, "assignee"),
 		"control":  digRaw(idx, "control"),
+		// The DAG edges live on the record: children is the parent's fan-out,
+		// origin/relations are the child's place in it, siblings the cross-repo
+		// peers. The SPA renders them verbatim rather than re-deriving them.
+		"children":  digRaw(idx, "children"),
+		"origin":    digRaw(idx, "origin"),
+		"relations": digRaw(idx, "relations"),
+		"siblings":  digRaw(idx, "siblings"),
 		// The approval record and the artifacts it points at travel together:
 		// the record is the question, these are what the human reads to answer
 		// it, and a screen that had one without the other could not decide.
@@ -519,8 +531,6 @@ func namedFiles(dir, ext string) arr {
 	return out
 }
 
-var statusLine = regexp.MustCompile(`^STATUS:[[:space:]]*(DONE_WITH_CONCERNS|DONE|BLOCKED|NEEDS_CONTEXT)\b`)
-
 func verdictStatuses(dir string) obj {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -536,16 +546,7 @@ func verdictStatuses(dir string) obj {
 	out := obj{}
 	for _, n := range names {
 		skill := strings.TrimSuffix(n, ".md")
-		st := "none"
-		if b, err := os.ReadFile(filepath.Join(dir, n)); err == nil {
-			for _, ln := range strings.Split(string(b), "\n") {
-				if m := statusLine.FindStringSubmatch(ln); m != nil {
-					st = m[1]
-					break
-				}
-			}
-		}
-		out[skill] = st
+		out[skill] = ticket.VerdictStatusAt(filepath.Join(dir, n))
 	}
 	return out
 }
@@ -615,18 +616,6 @@ func tailRows(path string, cap int) (arr, int) {
 }
 
 // ─── JSON parse helpers ──────────────────────────────────────────────────────
-
-func parseJSONObject(path string) (map[string]interface{}, error) {
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-	var m map[string]interface{}
-	if err := json.Unmarshal(b, &m); err != nil {
-		return nil, err
-	}
-	return m, nil
-}
 
 func parseJSONValue(path string) (interface{}, error) {
 	b, err := os.ReadFile(path)
