@@ -982,12 +982,8 @@ func runServe(args []string) {
 		if env.Ticket != "" {
 			tickets = []string{env.Ticket}
 		} else {
-			dirs, _ := os.ReadDir(filepath.Join(env.ProjectHome, "tickets"))
-			for _, d := range dirs {
-				if !d.IsDir() {
-					continue
-				}
-				t := d.Name()
+			ids, _ := ticket.TicketIDs(env.ProjectHome)
+			for _, t := range ids {
 				switch ticket.ReadDoc(filepath.Join(env.ProjectHome, "tickets", t, "index.json")).Get("status") {
 				case "done", "cancelled", "duplicate":
 					continue

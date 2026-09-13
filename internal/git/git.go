@@ -126,5 +126,10 @@ func CommonDirIn(dir string) string {
 	if !filepath.IsAbs(d) {
 		d = filepath.Join(dir, d)
 	}
+	// dir may be "" (process cwd) or relative — absolutize against the cwd the
+	// command actually ran in.
+	if abs, err := filepath.Abs(d); err == nil {
+		d = abs
+	}
 	return filepath.Clean(d)
 }

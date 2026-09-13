@@ -52,9 +52,6 @@ func ReadManifest(path string) (*Manifest, error) {
 // need "the row for this repo/branch/worktree" share this instead of
 // re-implementing the scan.
 func (m *Manifest) FindRepo(match func(Repo) bool) *Repo {
-	if m == nil {
-		return nil
-	}
 	for i := range m.Repos {
 		if match(m.Repos[i]) {
 			return &m.Repos[i]
@@ -67,10 +64,15 @@ func (m *Manifest) FindRepo(match func(Repo) bool) *Repo {
 // first row — bash `next((x for x in repos if x.name == repo), repos[0])`.
 // nil when the manifest has no repos.
 func (m *Manifest) RepoByName(name string) *Repo {
-	if r := m.FindRepo(func(r Repo) bool { return r.Name == name }); r != nil {
-		return r
+	for i := range m.Repos {
+		if m.Repos[i].Name == name {
+			return &m.Repos[i]
+		}
 	}
-	return m.FindRepo(func(Repo) bool { return true })
+	if len(m.Repos) > 0 {
+		return &m.Repos[0]
+	}
+	return nil
 }
 
 // ManifestAnyPushed reports whether manifest.yaml records any repo row as

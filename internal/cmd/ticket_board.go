@@ -64,9 +64,10 @@ func runBoard(args []string) {
 			}
 		}
 
-		// Board reads manifests through the canonical parser, which exits 2 on
-		// version != 1 and leaves both columns at "-". (resolve deliberately
-		// parses any version — different codepath, different contract.)
+		// Board renders manifests only at schema version 1 — the contract bash
+		// manifest_read enforced by exiting 2; here the version check leaves
+		// both columns at "-". (resolve deliberately parses any version —
+		// different codepath, different contract.)
 		branch, pushed := "-", "-"
 		if m, err := ticket.ReadManifest(filepath.Join(d, "manifest.yaml")); err == nil && m.Version == "1" {
 			if r := m.RepoByName(repo); r != nil {
@@ -427,6 +428,13 @@ func readFile(p string) string {
 func gitContext() (primary, gitdir, repo string) {
 	primary, ok := git.PrimaryWorktree()
 	if !ok || primary == "" {
+		return "", "", ""
+	}
+	// `git worktree list` also answers where there is no checkout .git dir at
+	// the primary path — a bare repo (printed as a "bare" worktree), a
+	// submodule, or a --separate-git-dir layout (a .git gitfile). The go-git
+	// probe this replaced rejected all three; require a real .git directory.
+	if fi, err := os.Stat(filepath.Join(primary, ".git")); err != nil || !fi.IsDir() {
 		return "", "", ""
 	}
 	gitdir = git.CommonDirIn(primary)

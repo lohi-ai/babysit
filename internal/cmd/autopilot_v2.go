@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/reallongnguyen/babysit/internal/git"
 	"github.com/reallongnguyen/babysit/internal/identity"
 	"github.com/reallongnguyen/babysit/internal/ticket"
 )
@@ -289,7 +290,7 @@ func readStrictObject(path string, required bool) (ticket.Doc, error) {
 		return d, nil
 	}
 	var re *ticket.ReadError
-	if errors.As(err, &re) && re.Kind == ticket.KindMissing && os.IsNotExist(re.Err) && !required {
+	if errors.As(err, &re) && re.Kind == ticket.KindMissing && !required {
 		return ticket.Doc{}, nil
 	}
 	if errors.As(err, &re) && re.Kind == ticket.KindMalformed {
@@ -365,11 +366,8 @@ func snapshotGitStateOnce(dir, base string) (snapshotGit, error) {
 	observedAt := ""
 	if upstream != "" {
 		remoteHead = gitOutIn(dir, "rev-parse", upstream)
-		if gitDir := gitOutIn(dir, "rev-parse", "--git-common-dir"); gitDir != "" {
-			if !filepath.IsAbs(gitDir) {
-				gitDir = filepath.Join(dir, gitDir)
-			}
-			refPath := filepath.Join(filepath.Clean(gitDir), "refs", "remotes", filepath.FromSlash(upstream))
+		if gitDir := git.CommonDirIn(dir); gitDir != "" {
+			refPath := filepath.Join(gitDir, "refs", "remotes", filepath.FromSlash(upstream))
 			if fi, statErr := os.Stat(refPath); statErr == nil {
 				observedAt = fi.ModTime().UTC().Format(time.RFC3339)
 			}

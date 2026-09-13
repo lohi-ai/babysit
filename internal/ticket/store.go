@@ -131,19 +131,8 @@ type Sibling struct {
 // the file is missing or malformed — matching bash json_read, which prints
 // empty and exits 0 either way.
 func ReadIndex(path string) Index {
-	d, err := ReadDocStrict(path)
-	if err != nil {
-		return Index{}
-	}
-	return d.Index()
-}
-
-// Index decodes the record into the typed view. Fields whose stored type does
-// not match the struct are skipped by encoding/json, the same partial-decode
-// behavior the old direct unmarshal had.
-func (d Doc) Index() Index {
 	var idx Index
-	b, err := json.Marshal(d)
+	b, err := os.ReadFile(path)
 	if err != nil {
 		return idx
 	}

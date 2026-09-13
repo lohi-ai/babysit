@@ -41,17 +41,15 @@ func clearAllTickets(stateDir string) (int, error) {
 		if !project.IsDir() {
 			continue
 		}
-		tickets, err := os.ReadDir(filepath.Join(stateDir, "projects", project.Name(), "tickets"))
+		ids, err := ticket.TicketIDs(filepath.Join(stateDir, "projects", project.Name()))
 		if os.IsNotExist(err) {
 			continue
 		}
 		if err != nil {
 			return 0, err
 		}
-		for _, entry := range tickets {
-			if entry.IsDir() {
-				targets = append(targets, target{project.Name(), entry.Name()})
-			}
+		for _, id := range ids {
+			targets = append(targets, target{project.Name(), id})
 		}
 	}
 
