@@ -41,15 +41,16 @@ no ticket/requirement, stop with `NEEDS_CONTEXT`.
    leaves the working tree dirty by design — commit its output here. Skills
    are infra-isolated: they edit files; every commit in this workflow is
    autopilot's own step.
-4. Run `review-pr --fix` via SKILL.md's **Automatic review / QA subagents**
-   policy (applies fixes to the working tree), then persist and read back the
+4. Run `review-pr --fix` in the current autopilot session via SKILL.md's
+   **Current-session review / automatic QA subagent** policy (applies fixes to
+   the working tree), then persist and read back the
    verdict with `bbs ticket set-verdict --skill review-pr` and
    `bbs ticket verdict-status --skill review-pr` — the pre-push hook reads it
    when the human (or foreman) pushes.
    Verify mode may reuse review only if its persisted DONE covers the current
    change; otherwise run it too.
-5. Run `qa` via the same automatic subagent policy, after review fixes are
-   integrated, against the requirement's acceptance criteria, the plan's
+5. Run `qa` via the same policy's automatic QA subagent path, after review
+   fixes are integrated, against the requirement's acceptance criteria, the
    `**Verify:**` line, and the implement handoff — not just the diff. The
    `qa` skill owns the test surface: on a normal checkout it tests the
    running dev server directly; inside a ticket worktree it runs the

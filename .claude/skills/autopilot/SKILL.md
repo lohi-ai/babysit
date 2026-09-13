@@ -239,11 +239,23 @@ Planning: `plan-draft`. Coding: `implement`. Landing review: `review-pr`.
 QA: `qa` (no runnable target → record the fallback, use `browse` or a narrow
 local check). Debug: `investigate`. Closing out is the human's `create-pr`
 (or foreman's finish policy) — never autopilot's.
-### Automatic review / QA subagents
+### Current-session review / automatic QA subagent
 Applies to every workflow's `review-pr` and `qa` steps, without an opt-in
 flag.
-1. **Select from actual capabilities, automatically.** Inspect the native
-   subagent tool schema and advertised models/agent profiles before dispatch:
+1. **Run review in the current session.** Always load and execute the real
+   `review-pr --fix` skill in the current autopilot session, on the session's
+   model. Never dispatch the whole review skill to a native child or external
+   process, even when a smaller or different model is available. This
+   execution boundary is load-bearing: `review-pr` at medium and higher effort
+   uses the Task tool for its own independent finder and verifier agents, and
+   making it a child creates nested delegation that some harnesses reject.
+   The review skill's own Task fan-out is allowed and required. Honor its
+   resolved effort; if the current session cannot provide the required
+   fan-out, record `BLOCKED` rather than delegating the whole skill or silently
+   lowering review effort.
+2. **Select QA capabilities automatically.** QA may run in one native child.
+   Inspect the native subagent tool schema and advertised models/agent profiles
+   before dispatch:
    - **Claude Code:** prefer `sonnet` through the subagent tool's model
      selector when supported, with an agent allowed to read, edit, and run
      the required checks.
@@ -253,45 +265,47 @@ flag.
      accepts a `model` argument or that an agent type is a model name.
    - **OMP / other harnesses:** use an advertised smaller coding-capable
      model/profile with the required tools; never guess a model ID or assume
-     a read-only scout can perform `review-pr --fix` or QA fixes.
-   Honor an explicit user model choice. Otherwise choose the advertised
+     a read-only scout can perform QA fixes.
+   Honor an explicit user QA model choice. Otherwise choose the advertised
    smaller capable option; if model selection is unavailable, use a native
    child with its inherited/default model and record that limitation.
-   If native delegation is unavailable or forbidden, execute the real skill
-   in-session and record why.
+   If native delegation is unavailable or forbidden, execute the real `qa`
+   skill in-session and record why.
    Capability routing is Mechanical; a judgment-based model escalation is
    Taste and is logged via the framework, without prompting.
-2. **Dispatch one gate at a time:** `review-pr --fix`, wait and integrate its
-   fixes, then `qa` on the resulting change. Never run these mutating gates
-   concurrently with each other or with implementation. The parent retains
-   ticket/checkpoint ownership and commits. Step workers do not invoke
-   autopilot or recursively delegate these gates.
-3. **Give each child a complete, bounded assignment:** skill reference and
-   resolved file path; ticket id and absolute ticket/repo paths;
-   requirement, plan and relevant handoff paths; exact review base/range;
-   acceptance criteria, available check commands, QA URL/surface;
-   permitted edits and no git/close-out authority. Use a fresh
-   task context, not a copy of the implementation conversation. Require the
-   actual skill, evidence paths, changed files, unresolved findings, and its
-   status/verdict body. Require real runtime QA, including a relevant
-   error/empty/validation/responsive case, or the skill's named fallback.
-   A child lacking required browser/runtime access returns that limitation,
-   not a fabricated PASS; route the gate to a capable child or the parent.
-4. **Accept evidence, not completion text.** Record the child handle,
-   selected model (or unknown/inherited), gate, reviewed revision and
-   evidence paths in the existing checkpoint/handoff. Wait with the native
-   tool; parent must not edit the shared checkout meanwhile. If the harness
-   isolates child edits, integrate them before the next gate. Inspect the
-   report and unresolved findings; persist each accepted body with
+3. **Run one mutating gate at a time:** finish the current-session
+   `review-pr --fix` pass and its fixes before dispatching `qa`. Never run
+   either gate concurrently with implementation or with the other gate. The
+   autopilot session retains ticket/checkpoint ownership and commits. The QA
+   worker does not invoke autopilot or recursively delegate another gate.
+4. **Give the QA child a complete, bounded assignment:** skill reference and
+   resolved file path; ticket id and absolute ticket/repo paths; requirement,
+   plan and relevant handoff paths; acceptance criteria, available check
+   commands, QA URL/surface; permitted edits and no git/close-out authority.
+   Use a fresh task context, not a copy of the implementation conversation.
+   Require the actual skill, evidence paths, changed files, unresolved
+   findings, and its status/verdict body. Require real runtime QA, including a
+   relevant error/empty/validation/responsive case, or the skill's named
+   fallback. A child lacking required browser/runtime access returns that
+   limitation, not a fabricated PASS; route the gate to a capable child or
+   the parent.
+5. **Accept evidence, not completion text.** For review, record the current
+   session model, reviewed revision, report, fixes, and evidence paths in the
+   checkpoint/handoff. For QA, also record the child handle and selected model
+   (or unknown/inherited). Wait with the native tool; the parent must not edit
+   the shared checkout while QA runs. If the harness isolates QA edits,
+   integrate them before continuing. Inspect each report and unresolved
+   finding; persist each accepted body with
    `BABYSIT_TICKET="$TICKET" bbs ticket set-verdict --skill <review-pr|qa> --body-file <path>` unless
    the skill already persisted it, then read `BABYSIT_TICKET="$TICKET" bbs ticket verdict-status`.
    Require evidence from this attempt and the current change, not an old
-   DONE left on disk. A crash, missing report, or inadequate check is not a
-   pass: retry on a capable model or record BLOCKED. Never overwrite a
-   child's failure with a parent-authored success without fixing and
-   re-verifying. Subsequent edits invalidate affected gates; run them again
-   before finish. On cold resume recover the recorded attempt and artifacts;
-   do not start a duplicate writer while its child is still running.
+   `DONE` left on disk. A crash, missing report, or inadequate check is not a
+   pass: fix and re-run review in-session, or retry QA on a capable model /
+   record `BLOCKED`. Never overwrite a failed gate with a parent-authored
+   success without fixing and re-verifying. Subsequent edits invalidate
+   affected gates; run them again before finish. On cold resume recover any
+   recorded QA attempt and artifacts; do not start a duplicate writer while
+   its child is still running.
 ## Rules
 - Disk state must always be enough for a cold session to resume — but disk is
   the backup, not the brain; in a live session use everything already learned.

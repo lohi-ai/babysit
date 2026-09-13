@@ -9,8 +9,8 @@
 #      carrying that archetype's verdict vocabulary, and a NEXT line.
 #   3. Builder keeps only one-ticket modes and leaves all branch/worktree and
 #      decomposed-parent ownership to foreman.
-#   4. Code-touching workflows (builder, sweeper, maintainer) persist the QA
-#      verdict with `bbs-ticket set-verdict --skill qa` — the PR gate reads it.
+#   4. Code-touching workflows run review-pr in the current autopilot session,
+#      then persist the QA verdict the PR gate reads.
 #   5. `bbs-autopilot explain` routes a committed non-base branch to builder
 #      (verify mode) — needs a real origin, which the eval-set fixtures lack.
 
@@ -18,6 +18,7 @@ set -u
 SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 WF_DIR="$SCRIPT_DIR/.claude/skills/autopilot/workflows"
 BBS_AUTOPILOT="$SCRIPT_DIR/bin/bbs-autopilot"
+AUTOPILOT_SKILL="$SCRIPT_DIR/.claude/skills/autopilot/SKILL.md"
 [ -x "$BBS_AUTOPILOT" ] || { echo "FAIL: $BBS_AUTOPILOT not executable" >&2; exit 1; }
 
 PASS=0
@@ -89,9 +90,22 @@ else
   fail "builder-has-no-topology"
 fi
 
-# ── code-touching workflows persist the qa verdict ──────────────────
+# ── review execution boundary + persisted QA verdict ────────────────
 
-for name in builder sweeper maintainer; do
+if grep -q 'Never dispatch the whole review skill' "$AUTOPILOT_SKILL" \
+   && grep -q 'making it a child creates nested delegation' "$AUTOPILOT_SKILL"; then
+  ok "review-pr-stays-in-current-session"
+else
+  fail "review-pr-stays-in-current-session"
+fi
+
+for name in builder grower sweeper maintainer; do
+  if grep -q 'review-pr.*current autopilot session' "$WF_DIR/$name.md"; then
+    ok "$name-runs-review-in-current-session"
+  else
+    fail "$name-runs-review-in-current-session"
+  fi
+
   if grep -q 'set-verdict --skill qa' "$WF_DIR/$name.md"; then
     ok "$name-persists-qa-verdict"
   else
