@@ -52,7 +52,7 @@ func runAutopilot(args []string) {
 
 	// Resolve lazily. Verbs that never infer a ticket — or take one
 	// explicitly — get project scope only: an unrelated manifest ambiguity
-	// in the cwd must not block `current`, `clear <t>`, `lint-workflow`,
+	// in the cwd must not block `clear <t>`, `lint-workflow`,
 	// or `probe --ticket t`. Verbs that infer the ticket from the checkout
 	// run the full ladder.
 	var a *apState
@@ -82,7 +82,11 @@ func runAutopilot(args []string) {
 	case "clear":
 		project().clear(rest) // requires an explicit ticket
 	case "recover":
-		project().recover(rest)
+		if explicit {
+			project().recover(rest)
+		} else {
+			ladder().recover(rest)
+		}
 	case "snapshot":
 		if explicit {
 			project().snapshotV2(rest)

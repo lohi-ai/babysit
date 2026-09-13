@@ -23,7 +23,7 @@ production; a frozen byte-identical copy of the old script lives at
 
 | Command | Purpose |
 |---------|---------|
-| `bbs autopilot` | State helpers the `/bbs:autopilot` skill uses, also runnable by hand for debugging: `probe` (dump probed state), `explain` (show recommended workflow; add `--details` for the per-workflow PASS/FAIL table), `base-branch` (resolve with per-project override), `lint-workflow <path>` (authoring-time `needs-state:` lint), plus the checkpoint/timeline/recover/snapshot/git-flow helpers |
+| `bbs autopilot` | State helpers the `/bbs:autopilot` skill uses, also runnable by hand for debugging: `probe` (dump probed state), `explain` (show recommended workflow; add `--details` for the per-workflow PASS/FAIL table), `base-branch` (resolve with per-project override), `lint-workflow <path>` (authoring-time `needs-state:` lint), plus the checkpoint/recover/snapshot/git-flow helpers |
 | `bbs ticket` | Ticket-layout broker and state-probe surface. `env` derives `SLUG`/`BRANCH`/`TICKET`/`BABYSIT_PROJECT_HOME` through the identity ladder — `BABYSIT_TICKET` env → `manifest.yaml` cwd-match → branch regex — which is what every skill preamble evals and what autopilot resume relies on; `path <kind>` resolves Layout C file paths; `verdict-status --skill <n>` reads the latest verdict for a sub-skill (used by autopilot's Probe and Verify-post) |
 | `bbs config` | `get` / `set` / `list` in `~/.babysit/config.yaml` |
 | `bbs update` | `git pull` + `setup-skills`, then refreshes installed Claude Code and Codex plugins; writes a `JUST_UPGRADED` marker. `bbs update check` is the cached probe — prints `UPGRADE_AVAILABLE <old> <new>` when a new release exists |

@@ -105,6 +105,27 @@ e="$(BABYSIT_PROJECT_HOME="$WORK/ph-b" bash "$ORACLE" recover 2>/dev/null | mask
 g="$(BABYSIT_PROJECT_HOME="$WORK/ph-g" "$GO"        recover 2>/dev/null | mask)"
 cmp_case "recover (no branch ticket)" "$e" "$g" 0 0
 
+# Manifest-only worktrees must take the full identity ladder. This is a Go-only
+# contract: the frozen oracle predates manifest identity.
+MANIFEST_PH="$WORK/manifest-ph"
+MANIFEST_TH="$MANIFEST_PH/tickets/bs-manifest"
+mkdir -p "$MANIFEST_TH"
+cat > "$MANIFEST_TH/manifest.yaml" <<EOF
+version: 1
+ticket: bs-manifest
+repos:
+  - name: repo
+    worktree: $REPO
+EOF
+printf "%s\n" "{\"ticket\":\"bs-manifest\",\"workflow\":\"builder\",\"step\":\"implement\",\"status\":\"in_progress\"}" > "$MANIFEST_TH/checkpoint.json"
+g="$(BABYSIT_PROJECT_HOME="$MANIFEST_PH" "$GO" recover 2>/dev/null | mask)"
+case "$g" in
+  *"CURRENT_TICKET: bs-manifest (resolved by identity ladder)"*"LATEST_CHECKPOINT: $MANIFEST_TH/checkpoint.json"*"--- END RECOVERY ---"*)
+    echo "ok   recover (manifest identity)"; PASS=$((PASS+1)) ;;
+  *)
+    echo "FAIL recover (manifest identity)"; FAIL=$((FAIL+1)) ;;
+esac
+
 # ── error paths: exit codes + stderr ─────────────────────────────────
 for args in "checkpoint --ticket t" "checkpoint --ticket t --workflow w --step s --status bogus" "clear" "bogus-sub" ""; do
   # shellcheck disable=SC2086

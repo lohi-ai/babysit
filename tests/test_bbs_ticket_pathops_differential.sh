@@ -65,20 +65,6 @@ seed() {
 JSON
   printf 'Add a user data export button to the settings page.\n' > "$t/requirement.md"
   printf '# plan\n' > "$t/plan.md"
-  # A second, closed ticket + an open one so list/reconcile have
-  # a population to scan.
-  local t2="$ph/tickets/bs-other2"
-  mkdir -p "$t2"
-  cat > "$t2/index.json" <<'JSON'
-{"id":"bs-other2","status":"backlog","pointers":{"branch":"feat/bs-other2_user_export_csv"}}
-JSON
-  printf 'Export user list as CSV download.\n' > "$t2/requirement.md"
-  local t3="$ph/tickets/bs-done3"
-  mkdir -p "$t3"
-  cat > "$t3/index.json" <<'JSON'
-{"id":"bs-done3","status":"done","pointers":{"branch":"feat/bs-done3_user_export_pdf"}}
-JSON
-  printf 'Export user profile as PDF.\n' > "$t3/requirement.md"
 }
 seed bash
 seed go
