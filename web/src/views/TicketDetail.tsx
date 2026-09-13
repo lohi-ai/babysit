@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { ChevronDown } from 'lucide-react';
-import { foremanLive, type ForemanRow, type HistoryRow, type ManifestRepo, type NamedFile, type Snapshot, type TicketApproval, type TicketControl, type TicketDetail as TicketDetailData } from '../lib/data';
+import { foremanLive, type ForemanRow, type HistoryRow, type ManifestRepo, type NamedFile, type Snapshot, type TicketApproval, type TicketControl, type TicketDetail as TicketDetailData, type TicketSummary } from '../lib/data';
 import { assignTicket, controlTicket, ticketReadiness, type ControlAction, type ReadinessResult } from '../lib/api';
 import { Button } from '../components/Button';
 import { Tag } from '../components/Tag';
@@ -15,7 +15,7 @@ import { TopBar } from '../components/TopBar';
 import { formatDate, formatRelative } from '../lib/format';
 import { useFilter } from '../contexts/FilterContext';
 import { gateProps, useControlPlane, useMutation } from '../contexts/ControlContext';
-import { useScopedTicketDetail } from '../lib/scope';
+import { useScopedTicketDetail, useScopedTickets } from '../lib/scope';
 
 // The five documents the page is *for*, then everything else behind one menu.
 // Split rather than ordered, because the split is what keeps the strip from
@@ -54,6 +54,16 @@ export function TicketDetail({ snapshot, ticketId }: { snapshot: Snapshot; ticke
   }, [snapshot, state.project, ticketId]);
   const { mode } = useControlPlane();
   const [readiness, setReadiness] = useState<ReadinessResult | null>(null);
+  // The parent's children resolved against the scoped list — the strip renders
+  // each child's status, so it needs the summaries, not just the ids.
+  const scopedTickets = useScopedTickets(snapshot, project || 'all');
+  const childTickets = useMemo(() => {
+    if (!detail?.children?.length) return [];
+    const byId = new Map(scopedTickets.map(t => [t.id, t]));
+    return detail.children
+      .map(id => byId.get(id))
+      .filter((t): t is NonNullable<typeof t> => !!t);
+  }, [detail, scopedTickets]);
 
   useEffect(() => {
     if (mode !== 'served' || !project) {
@@ -169,6 +179,7 @@ export function TicketDetail({ snapshot, ticketId }: { snapshot: Snapshot; ticke
         detail={detail}
         running={runner}
         readiness={readiness}
+        childTickets={childTickets}
         foreman={
           <AssignRow
             project={project}
@@ -708,11 +719,13 @@ function StatusStrip({
   detail,
   running,
   readiness,
+  childTickets,
   foreman,
 }: {
   detail: TicketDetailData;
   running: string | null;
   readiness: ReadinessResult | null;
+  childTickets: TicketSummary[];
   foreman: ReactNode;
 }) {
   const qa = detail.verdict_statuses['qa'] ?? 'none';
@@ -753,6 +766,36 @@ function StatusStrip({
     cells.push({
       label: 'Parent',
       value: <a href={`#/tickets/${detail.parent}`} className="font-mono hover:underline" style={{ color: 'var(--accent)' }}>{detail.parent}</a>,
+    });
+  }
+  // The DAG edges the record carries: children resolved to live statuses so a
+  // parent reads its fan-out at a glance, blocked_by names what is holding a
+  // child back. Both are links — the strip is a map, not a report.
+  if (childTickets.length > 0) {
+    cells.push({
+      label: 'Children',
+      value: (
+        <span className="flex flex-wrap gap-x-2 gap-y-0.5">
+          {childTickets.map(c => (
+            <a key={c.id} href={`#/tickets/${c.id}`} className="font-mono hover:underline" style={{ color: 'var(--accent)' }}>
+              {c.id} <Tag status={c.status} />
+            </a>
+          ))}
+        </span>
+      ),
+    });
+  }
+  const blockedBy = detail.relations?.blocked_by ?? [];
+  if (blockedBy.length > 0) {
+    cells.push({
+      label: 'Blocked by',
+      value: (
+        <span className="flex flex-wrap gap-x-2 gap-y-0.5">
+          {blockedBy.map(id => (
+            <a key={id} href={`#/tickets/${id}`} className="font-mono hover:underline" style={{ color: 'var(--status-blocked-text)' }}>{id}</a>
+          ))}
+        </span>
+      ),
     });
   }
   if (detail.branch) {

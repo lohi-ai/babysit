@@ -110,6 +110,38 @@ export interface TicketSummary {
   control: TicketControl | null;
   /** Pending or last-answered design checkpoint; null when never published. */
   approval: TicketApproval | null;
+  /** Child ticket ids from index.json — the parent's fan-out in the DAG. */
+  children: string[] | null;
+  /** The ticket's checkpoint.json projected onto the summary, so a list can
+   *  render the current workflow/step without opening every detail. */
+  run: CheckpointRow | null;
+}
+
+// Where a sub-ticket sits in its parent's plan — index.json `origin`.
+export interface TicketOrigin {
+  type?: string | null;
+  parent?: string | null;
+  plan?: string | null;
+  seed?: string | null;
+  position?: string | null;
+  design_doc?: string | null;
+  [k: string]: unknown;
+}
+
+// Dependency edges from index.json `relations`.
+export interface TicketRelations {
+  blocked_by?: string[];
+  blocks?: string[];
+  duplicate_of?: string | null;
+  related?: string[];
+  [k: string]: unknown;
+}
+
+// Cross-repo peer from index.json `siblings[]` — mirrors internal/ticket.Sibling.
+export interface SiblingRef {
+  role?: string | null;
+  repo?: string | null;
+  ticket?: string | null;
 }
 
 export interface NamedFile {
@@ -169,6 +201,12 @@ export interface TicketDetail extends TicketSummary {
   verdict_statuses: Record<string, string>;
   reviews: NamedFile[];
   evidence: string[];
+  /** Sub-ticket provenance; non-null when this ticket was cut from a parent plan. */
+  origin: TicketOrigin | null;
+  /** Dependency edges: blocked_by / blocks / duplicate_of / related. */
+  relations: TicketRelations | null;
+  /** Cross-repo peers of the same logical ticket. */
+  siblings: SiblingRef[];
 }
 
 export interface TimelineEvent {
@@ -387,6 +425,8 @@ export function normalizeSnapshot(raw: unknown): LoadedSnapshot {
       t.assignee ??= null;
       t.control ??= null;
       t.approval ??= null;
+      t.children ??= null;
+      t.run ??= null;
     }
     for (const id of Object.keys(p.ticketDetail)) {
       const d = p.ticketDetail[id];
@@ -402,6 +442,11 @@ export function normalizeSnapshot(raw: unknown): LoadedSnapshot {
       d.approval ??= null;
       d.design ??= null;
       d.prototype ??= null;
+      d.children ??= null;
+      d.run ??= null;
+      d.origin ??= null;
+      d.relations ??= null;
+      d.siblings ??= [];
     }
   }
   s.decisions ??= [];

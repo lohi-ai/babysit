@@ -1,19 +1,12 @@
 package cmd
 
 import (
-	"bufio"
-	"bytes"
 	"fmt"
 	"os"
-	"regexp"
 	"strings"
 
 	"github.com/reallongnguyen/babysit/internal/ticket"
 )
-
-// statusRe matches the first STATUS: line of a verdict body — the small fixed
-// alphabet callers branch on instead of parsing prose.
-var statusRe = regexp.MustCompile(`^STATUS:[[:space:]]*(DONE|DONE_WITH_CONCERNS|BLOCKED|NEEDS_CONTEXT)\b`)
 
 // runSetVerdict ports bin/bbs-ticket.bash:1411-1440.
 //
@@ -73,7 +66,7 @@ func runSetVerdict(args []string) {
 	// Refuse at the write, where the producer is still around to fix it. The
 	// empty-body placeholder is exempt — that caller is explicitly recording the
 	// absence of a verdict rather than fumbling the format of a real one.
-	if !placeholder && !bodyHasStatus(out) {
+	if !placeholder && !ticket.BodyHasStatus(out) {
 		fmt.Fprintf(os.Stderr, "set-verdict: %s body has no STATUS: line, refusing to write a verdict every gate reads as 'none'\n", skill)
 		fmt.Fprintln(os.Stderr, "  add a first-column line: STATUS: DONE | DONE_WITH_CONCERNS | BLOCKED | NEEDS_CONTEXT")
 		fmt.Fprintln(os.Stderr, "  (a 'VERDICT: PASS' line is not a status - the gates do not parse it)")
@@ -114,36 +107,7 @@ func runVerdictStatus(args []string) {
 
 // verdictStatus is the reusable read used by both verdict-status and board.
 func verdictStatus(st *ticket.Store, skill string) string {
-	f, err := os.Open(st.VerdictPath(skill))
-	if err != nil {
-		return "none"
-	}
-	defer f.Close()
-
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-	for sc.Scan() {
-		// First STATUS: line wins. Verdict files are append-once-overwrite, so a
-		// later duplicate would be a bug; taking the first is stable regardless.
-		if m := statusRe.FindStringSubmatch(sc.Text()); m != nil {
-			return m[1]
-		}
-	}
-	return "none"
-}
-
-// bodyHasStatus reports whether a verdict body carries a status line, scanned
-// with the same matcher verdictStatus reads by — so the write guard can never
-// disagree with the gate it exists to protect.
-func bodyHasStatus(body []byte) bool {
-	sc := bufio.NewScanner(bytes.NewReader(body))
-	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-	for sc.Scan() {
-		if statusRe.MatchString(sc.Text()) {
-			return true
-		}
-	}
-	return false
+	return ticket.VerdictStatus(st, skill)
 }
 
 // valueOf returns the value following a flag. A flag in last position is where

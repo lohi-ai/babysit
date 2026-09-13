@@ -56,6 +56,24 @@ export function Home({ snapshot }: { snapshot: Snapshot }) {
       .sort((a, b) => (b.ticket.updated_at ?? '').localeCompare(a.ticket.updated_at ?? ''));
   }, [tickets, sessions]);
 
+  // Child progress for decomposed parents: done/total resolved against the
+  // same summaries the table renders, so the count can never disagree with
+  // the rows the human can click through to.
+  const childProgress = useMemo(() => {
+    const byId = new Map(tickets.map(t => [t.id, t]));
+    const m = new Map<string, { done: number; total: number }>();
+    for (const t of tickets) {
+      if (!t.children?.length) continue;
+      const total = t.children.length;
+      const done = t.children.filter(c => {
+        const s = byId.get(c)?.status;
+        return s === 'done' || s === 'cancelled' || s === 'duplicate';
+      }).length;
+      m.set(t.id, { done, total });
+    }
+    return m;
+  }, [tickets]);
+
   // Sessions the table above cannot account for: no ticket attached, or a
   // ticket outside the current project filter. Showing every session here as
   // well would print the busy ones twice; showing none of them hides the case
@@ -89,18 +107,26 @@ export function Home({ snapshot }: { snapshot: Snapshot }) {
                 backgroundColor: 'var(--surface-bg)',
               }}
             >
-              <DenseRow columns="120px 1fr 140px 160px 96px" header>
+              <DenseRow columns="120px 1fr 100px 140px 160px 72px 96px" header>
                 <HeadCell>Ticket</HeadCell>
                 <HeadCell>Title</HeadCell>
+                <HeadCell>Status</HeadCell>
                 <HeadCell>Running</HeadCell>
                 <HeadCell>Step</HeadCell>
+                <HeadCell>Children</HeadCell>
                 <HeadCell>Updated</HeadCell>
               </DenseRow>
               {active.map(({ ticket: t, runner, live }) => {
+                // The ticket's own checkpoint is the step source; active_pair
+                // is the v1 fallback for snapshots that predate per-ticket run.
                 const pair = meta.active_pair?.ticket === t.id ? meta.active_pair : null;
-                const step = pair ? `${pair.workflow} / ${pair.step}` : t.phase ?? '—';
+                const run = t.run;
+                const step = run?.workflow && run?.step
+                  ? `${run.workflow} / ${run.step}${run.status ? ` · ${run.status}` : ''}`
+                  : pair ? `${pair.workflow} / ${pair.step}` : t.phase ?? '—';
+                const kids = childProgress.get(t.id);
                 return (
-                  <DenseRow key={t.id} columns="120px 1fr 140px 160px 96px">
+                  <DenseRow key={t.id} columns="120px 1fr 100px 140px 160px 72px 96px">
                     <span className="px-3 min-w-0">
                       <a href={`#/tickets/${t.id}`} title={t.id} className="font-mono text-xs hover:underline truncate block" style={{ color: 'var(--accent)' }}>
                         {t.id}
@@ -108,6 +134,9 @@ export function Home({ snapshot }: { snapshot: Snapshot }) {
                     </span>
                     <span className="px-3 text-sm truncate min-w-0" style={{ color: 'var(--text-primary)' }} title={t.title}>
                       {t.title || '—'}
+                    </span>
+                    <span className="px-3 min-w-0">
+                      <Tag status={t.status} />
                     </span>
                     <span className="px-3 text-xs truncate min-w-0 flex items-center gap-1.5" style={{ color: 'var(--text-secondary)' }}>
                       {/* The dot is the difference between "a foreman owns this"
@@ -125,8 +154,11 @@ export function Home({ snapshot }: { snapshot: Snapshot }) {
                         {runner ?? '—'}
                       </span>
                     </span>
-                    <span className="px-3 text-xs truncate min-w-0" style={{ color: 'var(--text-secondary)' }} title={step}>
+                    <span className="px-3 text-xs truncate min-w-0" style={{ color: 'var(--text-secondary)' }} title={run?.note || step}>
                       {step}
+                    </span>
+                    <span className="px-3 text-xs truncate min-w-0" style={{ color: 'var(--text-muted)', fontVariantNumeric: 'tabular-nums' }} title={kids ? `${kids.done} of ${kids.total} children settled` : ''}>
+                      {kids ? `${kids.done}/${kids.total}` : '—'}
                     </span>
                     <span className="px-3 text-xs truncate min-w-0" style={{ color: 'var(--text-muted)' }} title={t.updated_at ?? ''}>
                       {t.updated_at ? formatRelative(t.updated_at) : '—'}
