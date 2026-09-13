@@ -52,6 +52,19 @@ func (s *Store) EnsureDirs() {
 	}
 }
 
+// LoadForMutate reads index.json for a mutation, seeding defaults only when
+// the file is absent — matching bash
+// `[ -f "$F" ] || json_mutate "$F" ensure_defaults "$TICKET"`. The record
+// layer owns this contract so no caller re-implements the defaults rule.
+func (s *Store) LoadForMutate() Doc {
+	p := s.IndexPath()
+	doc := ReadDoc(p)
+	if fi, err := os.Stat(p); err != nil || fi.IsDir() {
+		doc.EnsureDefaults(s.Env.Ticket)
+	}
+	return doc
+}
+
 func (s *Store) VerdictPath(skill string) string {
 	return filepath.Join(s.Home(), "verdicts", skill+".md")
 }
@@ -114,11 +127,23 @@ type Sibling struct {
 	Ticket string `json:"ticket"`
 }
 
-// ReadIndex returns a zero Index when the file is missing or malformed —
-// matching bash json_read, which prints empty and exits 0 either way.
+// ReadIndex returns the typed view of the canonical record: a zero Index when
+// the file is missing or malformed — matching bash json_read, which prints
+// empty and exits 0 either way.
 func ReadIndex(path string) Index {
+	d, err := ReadDocStrict(path)
+	if err != nil {
+		return Index{}
+	}
+	return d.Index()
+}
+
+// Index decodes the record into the typed view. Fields whose stored type does
+// not match the struct are skipped by encoding/json, the same partial-decode
+// behavior the old direct unmarshal had.
+func (d Doc) Index() Index {
 	var idx Index
-	b, err := os.ReadFile(path)
+	b, err := json.Marshal(d)
 	if err != nil {
 		return idx
 	}

@@ -41,7 +41,7 @@ func approvalPublish(st *ticket.Store, kind, note, actor string) (conflict strin
 		kind = "plan"
 	}
 	err = withLock(st, func() error {
-		doc := loadForMutate(st)
+		doc := st.LoadForMutate()
 		if cur := doc.Get("approval.state"); cur != "" && cur != "dropped" {
 			if cur == "pending" {
 				conflict = "pending"
@@ -108,7 +108,7 @@ func approvalAddComment(st *ticket.Store, n approvalNote, actor string) (id stri
 	// identical comments saved in the same tick would silently become one.
 	n.ID = fmt.Sprintf("c%d", time.Now().UnixNano())
 	err = withLock(st, func() error {
-		doc := loadForMutate(st)
+		doc := st.LoadForMutate()
 		if doc.Get("approval.state") != "pending" {
 			missing = true
 			return nil
@@ -166,7 +166,7 @@ func approvalResolve(st *ticket.Store, action, note, actor string) (state string
 		return "", false, fmt.Errorf("unknown decision %q (approve|redirect|drop)", action)
 	}
 	err = withLock(st, func() error {
-		doc := loadForMutate(st)
+		doc := st.LoadForMutate()
 		if doc.Get("approval.state") != "pending" {
 			missing = true
 			return nil

@@ -32,7 +32,7 @@ func controlApply(st *ticket.Store, state, note, actor string) (status, conflict
 	// together, and a check outside the lock would let both pass and the loser
 	// silently overwrite the winner's record.
 	err = withLock(st, func() error {
-		doc := loadForMutate(st)
+		doc := st.LoadForMutate()
 		status = doc.Get("status")
 		if status == "" {
 			status = "triage"
@@ -103,7 +103,7 @@ func controlClear(st *ticket.Store, want, actor string) (cur, status string, err
 	// Read the state under the lock, like controlApply: clearing on a stale read
 	// is how a resume ends up wiping a cancel that landed in between.
 	err = withLock(st, func() error {
-		doc := loadForMutate(st)
+		doc := st.LoadForMutate()
 		cur = doc.Get("control.state")
 		status = doc.Get("status")
 		if cur == "" || cur != want {
@@ -163,7 +163,7 @@ func runRestore()             { clearControl("cancelled") }
 // POST handler. An empty foreman clears the assignment.
 func assignSet(st *ticket.Store, foreman, actor string) error {
 	return withLock(st, func() error {
-		doc := loadForMutate(st)
+		doc := st.LoadForMutate()
 		old := doc.Get("assignee")
 		if foreman == "" {
 			doc.Set("assignee", "null")
@@ -218,7 +218,7 @@ func claimSet(st *ticket.Store, foremanID, actor string) (owner string, claimed 
 		return "", false, err
 	}
 	err = withLock(st, func() error {
-		doc := loadForMutate(st)
+		doc := st.LoadForMutate()
 		owner = doc.Get("assignee")
 		if owner != "" {
 			return nil

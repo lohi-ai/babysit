@@ -67,17 +67,6 @@ func mutateLocked(st *ticket.Store, fn func() error) {
 	}
 }
 
-// loadForMutate reads index.json, seeding defaults only when the file is absent
-// — matching bash `[ -f "$F" ] || json_mutate "$F" ensure_defaults "$TICKET"`.
-func loadForMutate(st *ticket.Store) ticket.Doc {
-	p := st.IndexPath()
-	doc := ticket.ReadDoc(p)
-	if !fileExists(p) {
-		doc.EnsureDefaults(st.Env.Ticket)
-	}
-	return doc
-}
-
 // printJSONRead mirrors the `json_read … ; echo` pair used by get / get-pointer,
 // including the double-newline bash emits when index.json itself is absent.
 func printJSONRead(st *ticket.Store, path string) {
@@ -138,7 +127,7 @@ const statusValid = "triage backlog planned decomposed in_progress in_review blo
 // whichever one moved the ticket.
 func statusSet(st *ticket.Store, status, actor string) error {
 	return withLock(st, func() error {
-		doc := loadForMutate(st)
+		doc := st.LoadForMutate()
 		old := doc.Get("status")
 		doc.Set("status", status)
 		if err := ticket.WriteDoc(st.IndexPath(), doc); err != nil {
@@ -183,7 +172,7 @@ func runSetPhase(args []string) {
 	}
 	st := ticket.New(env)
 	mutateLocked(st, func() error {
-		doc := loadForMutate(st)
+		doc := st.LoadForMutate()
 		doc.Set("phase", phase)
 		if err := ticket.WriteDoc(st.IndexPath(), doc); err != nil {
 			return err
@@ -207,7 +196,7 @@ func runSetParent(args []string) {
 	}
 	st := ticket.New(env)
 	mutateLocked(st, func() error {
-		doc := loadForMutate(st)
+		doc := st.LoadForMutate()
 		doc.Set("parent", parent)
 		doc.Set("origin.parent", parent)
 		if err := ticket.WriteDoc(st.IndexPath(), doc); err != nil {
@@ -232,7 +221,7 @@ func runAddChild(args []string) {
 	}
 	st := ticket.New(env)
 	mutateLocked(st, func() error {
-		doc := loadForMutate(st)
+		doc := st.LoadForMutate()
 		if err := doc.Append("children", child); err != nil {
 			return err
 		}
@@ -267,7 +256,7 @@ func runAddRelation(args []string) {
 	}
 	st := ticket.New(env)
 	mutateLocked(st, func() error {
-		doc := loadForMutate(st)
+		doc := st.LoadForMutate()
 		if typ == "duplicate_of" {
 			doc.Set("relations.duplicate_of", target)
 		} else if err := doc.Append("relations."+typ, target); err != nil {
@@ -304,7 +293,7 @@ func runSetSibling(args []string) {
 	obj := fmt.Sprintf(`{"role":"%s","repo":"%s","ticket":"%s"}`, role, repo, sticket)
 	st := ticket.New(env)
 	mutateLocked(st, func() error {
-		doc := loadForMutate(st)
+		doc := st.LoadForMutate()
 		if err := doc.AppendObj("siblings", obj); err != nil {
 			return err
 		}
@@ -330,7 +319,7 @@ func runAddLabel(args []string) {
 	}
 	st := ticket.New(env)
 	mutateLocked(st, func() error {
-		doc := loadForMutate(st)
+		doc := st.LoadForMutate()
 		if err := doc.Append("labels", label); err != nil {
 			return err
 		}
@@ -355,7 +344,7 @@ func runSetPointer(args []string) {
 	}
 	st := ticket.New(env)
 	mutateLocked(st, func() error {
-		doc := loadForMutate(st)
+		doc := st.LoadForMutate()
 		doc.Set("pointers."+key, value)
 		return ticket.WriteDoc(st.IndexPath(), doc)
 	})
@@ -461,7 +450,7 @@ func runEnsureSize() {
 		size, files, loc, modules, migrations, deps)
 
 	mutateLocked(st, func() error {
-		doc := loadForMutate(st)
+		doc := st.LoadForMutate()
 		doc.Set("pointers.ticket_size", size)
 		return ticket.WriteDoc(st.IndexPath(), doc)
 	})
