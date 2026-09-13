@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	gogit "github.com/go-git/go-git/v5"
+	"github.com/reallongnguyen/babysit/internal/git"
 	"github.com/reallongnguyen/babysit/internal/identity"
 	"github.com/reallongnguyen/babysit/internal/slug"
 	"github.com/reallongnguyen/babysit/internal/ticket"
@@ -38,7 +38,8 @@ func runBoard(args []string) {
 
 	env := identity.Resolve()
 	tdir := filepath.Join(env.ProjectHome, "tickets")
-	if fi, err := os.Stat(tdir); err != nil || !fi.IsDir() {
+	names, err := ticket.TicketIDs(env.ProjectHome)
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "board: no tickets at %s\n", tdir)
 		os.Exit(0)
 	}
@@ -47,15 +48,6 @@ func runBoard(args []string) {
 	now := time.Now().Unix()
 
 	fmt.Printf(boardRowFmt, "TICKET", "STATUS", "QA", "REVIEW", "PUSHED", "SESSION", "PR", "BRANCH")
-
-	entries, _ := os.ReadDir(tdir)
-	names := make([]string, 0, len(entries))
-	for _, e := range entries {
-		if e.IsDir() {
-			names = append(names, e.Name())
-		}
-	}
-	sort.Strings(names)
 
 	for _, tid := range names {
 		d := filepath.Join(tdir, tid)
@@ -72,19 +64,15 @@ func runBoard(args []string) {
 			}
 		}
 
-		// Board reads manifests through bash manifest_read, which exits 2 on
-		// version != 1 and leaves both columns at "-". (resolve deliberately
-		// parses any version — different codepath, different contract.)
+		// Board renders manifests only at schema version 1 — the contract bash
+		// manifest_read enforced by exiting 2; here the version check leaves
+		// both columns at "-". (resolve deliberately parses any version —
+		// different codepath, different contract.)
 		branch, pushed := "-", "-"
-		if m, err := ticket.ReadManifest(filepath.Join(d, "manifest.yaml")); err == nil && m.Version == "1" && len(m.Repos) > 0 {
-			r := m.Repos[0]
-			for _, cand := range m.Repos {
-				if cand.Name == repo {
-					r = cand
-					break
-				}
+		if m, err := ticket.ReadManifest(filepath.Join(d, "manifest.yaml")); err == nil && m.Version == "1" {
+			if r := m.RepoByName(repo); r != nil {
+				branch, pushed = r.Branch, pyBool(r.Pushed)
 			}
-			branch, pushed = r.Branch, pyBool(r.Pushed)
 		}
 
 		st := ticket.New(identity.Env{ProjectHome: env.ProjectHome, Ticket: tid})
@@ -432,41 +420,26 @@ func readFile(p string) string {
 	return string(b)
 }
 
-// gitContext resolves the primary worktree, its git dir, and the repo name —
-// the equivalents of `git worktree list --porcelain | head -1`,
-// `git rev-parse --absolute-git-dir`, and basename. go-git confirms we are
-// inside a work tree at all (it understands the .git-file indirection); the
-// paths themselves come from that pointer, which go-git does not expose.
+// gitContext resolves the primary worktree, its shared git dir, and the repo
+// name through internal/git — the equivalents of `git worktree list
+// --porcelain | head -1` and `git rev-parse --git-common-dir`. A bare repo or
+// a cwd outside any work tree yields all-empty: the board then renders
+// without the lease/serving footer.
 func gitContext() (primary, gitdir, repo string) {
-	cwd, err := os.Getwd()
-	if err != nil {
+	primary, ok := git.PrimaryWorktree()
+	if !ok || primary == "" {
 		return "", "", ""
 	}
-	if _, err := gogit.PlainOpenWithOptions(cwd, &gogit.PlainOpenOptions{DetectDotGit: true}); err != nil {
+	// `git worktree list` also answers where there is no checkout .git dir at
+	// the primary path — a bare repo (printed as a "bare" worktree), a
+	// submodule, or a --separate-git-dir layout (a .git gitfile). The go-git
+	// probe this replaced rejected all three; require a real .git directory.
+	if fi, err := os.Stat(filepath.Join(primary, ".git")); err != nil || !fi.IsDir() {
 		return "", "", ""
 	}
-
-	for dir := cwd; ; {
-		gp := filepath.Join(dir, ".git")
-		fi, err := os.Stat(gp)
-		if err == nil {
-			if fi.IsDir() {
-				return dir, gp, filepath.Base(dir)
-			}
-			// Linked worktree: .git is a file holding
-			// "gitdir: <primary>/.git/worktrees/<name>".
-			v := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(readFile(gp)), "gitdir:"))
-			marker := string(os.PathSeparator) + "worktrees" + string(os.PathSeparator)
-			if i := strings.Index(v, marker); i >= 0 {
-				gd := v[:i]
-				return filepath.Dir(gd), gd, filepath.Base(filepath.Dir(gd))
-			}
-			return "", "", ""
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			return "", "", ""
-		}
-		dir = parent
+	gitdir = git.CommonDirIn(primary)
+	if fi, err := os.Stat(gitdir); err != nil || !fi.IsDir() {
+		return "", "", ""
 	}
+	return primary, gitdir, filepath.Base(primary)
 }

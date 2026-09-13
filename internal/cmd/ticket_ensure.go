@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/reallongnguyen/babysit/internal/git"
 	"github.com/reallongnguyen/babysit/internal/ticket"
 )
 
@@ -84,7 +85,7 @@ func runEnsure(args []string) {
 			st.EnsureDirs()
 			_ = os.WriteFile(reqPath, []byte(fromInput+"\n"), 0o644)
 			acquireOrDie(st)
-			doc := loadForMutate(st)
+			doc := st.LoadForMutate()
 			doc.Set("pointers.requirement", "requirement.md")
 			werr := ticket.WriteDoc(st.IndexPath(), doc)
 			st.ReleaseLock()
@@ -292,7 +293,7 @@ func runEnsure(args []string) {
 	st := ticket.New(stEnv)
 	st.EnsureDirs()
 	acquireOrDie(st)
-	doc := loadForMutate(st)
+	doc := st.LoadForMutate()
 	doc.EnsureDefaults(ticketID)
 	doc.Set("id", ticketID)
 	doc.Set("pointers.branch", branch)
@@ -357,20 +358,18 @@ func runEnsure(args []string) {
 }
 
 // gitCommonDir returns the repository's shared git dir — the one holding
-// worktrees/, so every checkout of the repo agrees on the path. `rev-parse
-// --git-common-dir` answers relative to cwd from the primary checkout (".git"),
-// so resolve it before handing it to anything that is not run from there.
+// worktrees/, so every checkout of the repo agrees on the path — resolved for
+// the process cwd via internal/git. When git cannot answer (not a repo) the
+// historical ".git" fallback stands: the worktree-add lock then lands in
+// cwd/.git, only as wrong as it always was.
 func gitCommonDir() string {
-	d := gitOut("rev-parse", "--git-common-dir")
-	if d == "" {
-		d = ".git"
+	if d := git.CommonDirIn(""); d != "" {
+		return d
 	}
-	if !filepath.IsAbs(d) {
-		if abs, err := filepath.Abs(d); err == nil {
-			d = abs
-		}
+	if abs, err := filepath.Abs(".git"); err == nil {
+		return abs
 	}
-	return d
+	return ".git"
 }
 
 // newTicketID mirrors bash: bs-<8 lowercase-alnum> from crypto rand, epoch

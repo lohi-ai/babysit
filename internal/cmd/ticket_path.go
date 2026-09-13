@@ -346,16 +346,7 @@ func emitWorktree(st *ticket.Store) {
 		return
 	}
 	current := filepath.Base(gitOut("rev-parse", "--show-toplevel"))
-	var matched *ticket.Repo
-	for i := range m.Repos {
-		if m.Repos[i].Name == current {
-			matched = &m.Repos[i]
-			break
-		}
-	}
-	if matched == nil && len(m.Repos) > 0 {
-		matched = &m.Repos[0]
-	}
+	matched := m.RepoByName(current)
 	if matched == nil {
 		return
 	}
@@ -568,18 +559,15 @@ func runReconcile(args []string) {
 		env = resolveEnv()
 	}
 	if all {
-		tdir := filepath.Join(env.ProjectHome, "tickets")
-		entries, err := os.ReadDir(tdir)
+		ids, err := ticket.TicketIDs(env.ProjectHome)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "reconcile: no tickets dir at %s\n", tdir)
+			fmt.Fprintf(os.Stderr, "reconcile: no tickets dir at %s\n", filepath.Join(env.ProjectHome, "tickets"))
 			os.Exit(0)
 		}
 		rc := 0
-		for _, e := range entries {
-			if e.IsDir() {
-				if err := reconcileOne(os.Stdout, env, e.Name(), dry, quiet); err != nil {
-					rc = 1
-				}
+		for _, tid := range ids {
+			if err := reconcileOne(os.Stdout, env, tid, dry, quiet); err != nil {
+				rc = 1
 			}
 		}
 		os.Exit(rc)
@@ -670,14 +658,8 @@ func reconcileTarget(th string) string {
 	if landed(th) {
 		return "done"
 	}
-	if my, err := os.ReadFile(filepath.Join(th, "manifest.yaml")); err == nil {
-		for _, ln := range strings.Split(string(my), "\n") {
-			if strings.HasPrefix(ln, "    pushed:") {
-				if strings.TrimSpace(strings.SplitN(ln, ":", 2)[1]) == "true" {
-					return "in_review"
-				}
-			}
-		}
+	if ticket.ManifestAnyPushed(filepath.Join(th, "manifest.yaml")) {
+		return "in_review"
 	}
 	// A PR pointer is the same rung as pushed: the change is out for review.
 	// Whether that PR merged is a network question, and reconcile runs over
@@ -705,7 +687,7 @@ func applyStatus(st *ticket.Store, target string) error {
 		return err
 	}
 	defer st.ReleaseLock()
-	doc := loadForMutate(st)
+	doc := st.LoadForMutate()
 	old := doc.Get("status")
 	doc.Set("status", target)
 	if err := ticket.WriteDoc(st.IndexPath(), doc); err != nil {

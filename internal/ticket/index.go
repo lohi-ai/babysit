@@ -38,6 +38,60 @@ func ReadDoc(path string) Doc {
 	return d
 }
 
+// ReadError distinguishes the ways a strict index.json read fails so a caller
+// can keep its own error contract: KindMissing means the file is absent,
+// KindUnreadable means it exists but could not be read, KindMalformed means
+// the bytes are not exactly one JSON object.
+type ReadError struct {
+	Path string
+	Kind ReadErrorKind
+	Err  error
+}
+
+type ReadErrorKind int
+
+const (
+	KindMissing ReadErrorKind = iota
+	KindUnreadable
+	KindMalformed
+)
+
+func (e *ReadError) Error() string { return e.Err.Error() }
+func (e *ReadError) Unwrap() error { return e.Err }
+
+// ReadDocStrict is ReadDoc with explicit failure: the record layer's strict
+// read for callers (autopilot snapshot/attempt state) where a missing or
+// malformed index.json must surface as an error rather than an empty record.
+// The decode is identical — UseNumber, single top-level object, trailing
+// content rejected.
+func ReadDocStrict(path string) (Doc, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		kind := KindUnreadable
+		if os.IsNotExist(err) {
+			kind = KindMissing
+		}
+		return nil, &ReadError{Path: path, Kind: kind, Err: err}
+	}
+	d := Doc{}
+	dec := json.NewDecoder(bytes.NewReader(b))
+	dec.UseNumber()
+	if err := dec.Decode(&d); err != nil || d == nil {
+		if err == nil {
+			err = fmt.Errorf("top-level value is not a JSON object")
+		}
+		return nil, &ReadError{Path: path, Kind: KindMalformed, Err: err}
+	}
+	var extra interface{}
+	if err := dec.Decode(&extra); err != io.EOF {
+		if err == nil {
+			err = fmt.Errorf("multiple JSON values")
+		}
+		return nil, &ReadError{Path: path, Kind: KindMalformed, Err: err}
+	}
+	return d, nil
+}
+
 // WriteDoc touches updated_at and atomically rewrites index.json. Output is
 // 2-space-indented with sorted keys (Go sorts map keys) — JSON-equivalent to
 // bash's `json.dump(d, fh, indent=2, sort_keys=True)` plus trailing newline.
@@ -217,24 +271,32 @@ func asList(parent map[string]interface{}, key, dotted string) ([]interface{}, e
 	return lst, nil
 }
 
-// Get mirrors bash json_read: walk the dotted path; a missing key or a JSON null
-// yields the empty string; a dict/list renders as compact JSON; every scalar
-// renders like Python str() (True/False for bools).
-func (d Doc) Get(dotted string) string {
+// Value walks the dotted path and returns the raw decoded value — the typed
+// access half of the record layer. A missing key or a non-object intermediate
+// yields nil; "" returns the whole record. Get renders the same walk as text.
+func (d Doc) Value(dotted string) interface{} {
 	var cur interface{} = map[string]interface{}(d)
 	if dotted != "" {
 		for _, p := range strings.Split(dotted, ".") {
 			m, ok := cur.(map[string]interface{})
 			if !ok {
-				return ""
+				return nil
 			}
 			v, present := m[p]
 			if !present {
-				return ""
+				return nil
 			}
 			cur = v
 		}
 	}
+	return cur
+}
+
+// Get mirrors bash json_read: walk the dotted path; a missing key or a JSON null
+// yields the empty string; a dict/list renders as compact JSON; every scalar
+// renders like Python str() (True/False for bools).
+func (d Doc) Get(dotted string) string {
+	cur := d.Value(dotted)
 	if cur == nil {
 		return ""
 	}

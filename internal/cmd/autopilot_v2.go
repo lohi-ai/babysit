@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/reallongnguyen/babysit/internal/git"
 	"github.com/reallongnguyen/babysit/internal/identity"
 	"github.com/reallongnguyen/babysit/internal/ticket"
 )
@@ -248,11 +249,10 @@ func collectAutopilotSnapshotOnce(a *apState, ticketID, ticketHome string) (*aut
 	st := ticket.New(identity.Env{Slug: a.slug, Branch: a.branch, Ticket: ticketID, ProjectHome: a.stateRoot})
 	canonical, worktree := top, top
 	if m, err := ticket.ReadManifest(manifestPath); err == nil {
-		for _, r := range m.Repos {
-			if r.Branch == a.branch || samePath(r.Worktree, top) {
-				canonical, worktree = r.Canonical, r.Worktree
-				break
-			}
+		if r := m.FindRepo(func(r ticket.Repo) bool {
+			return r.Branch == a.branch || samePath(r.Worktree, top)
+		}); r != nil {
+			canonical, worktree = r.Canonical, r.Worktree
 		}
 	} else if !os.IsNotExist(err) {
 		return nil, &snapshotError{Code: "STATE_MALFORMED", Message: "malformed required state: " + manifestPath, Details: map[string]string{"path": manifestPath}, Exit: 3}
@@ -262,7 +262,7 @@ func collectAutopilotSnapshotOnce(a *apState, ticketID, ticketHome string) (*aut
 	s.Run = &snapshotRun{
 		ID: stringValue(cp["run_id"]), Workflow: stringValue(cp["workflow"]),
 		WorkflowDigest: stringValue(cp["workflow_digest"]), Mode: deriveMode(idx, ticketHome, top),
-		Control: idx["control"], StopAfter: stringValue(cp["stop_after"]), Contract: contractVersion(cp),
+		Control: idx.Value("control"), StopAfter: stringValue(cp["stop_after"]), Contract: contractVersion(cp),
 	}
 	activeID := stringValue(cp["active_attempt_id"])
 	if activeID != "" {
@@ -280,24 +280,23 @@ func collectAutopilotSnapshotOnce(a *apState, ticketID, ticketHome string) (*aut
 	return s, nil
 }
 
-func readStrictObject(path string, required bool) (map[string]interface{}, error) {
-	b, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) && !required {
-			return map[string]interface{}{}, nil
-		}
-		return nil, &snapshotError{Code: "STATE_UNREADABLE", Message: err.Error(), Exit: 3}
+// readStrictObject decodes one JSON-object state file through the record
+// layer's strict read, mapping its ReadError onto the snapshot error contract:
+// unreadable → STATE_UNREADABLE, malformed → STATE_MALFORMED. A missing file
+// is only an error when required; otherwise the empty record stands in.
+func readStrictObject(path string, required bool) (ticket.Doc, error) {
+	d, err := ticket.ReadDocStrict(path)
+	if err == nil {
+		return d, nil
 	}
-	var out map[string]interface{}
-	dec := json.NewDecoder(strings.NewReader(string(b)))
-	dec.UseNumber()
-	if err := dec.Decode(&out); err != nil || out == nil {
+	var re *ticket.ReadError
+	if errors.As(err, &re) && re.Kind == ticket.KindMissing && !required {
+		return ticket.Doc{}, nil
+	}
+	if errors.As(err, &re) && re.Kind == ticket.KindMalformed {
 		return nil, &snapshotError{Code: "STATE_MALFORMED", Message: "malformed required state: " + path, Details: map[string]string{"path": path}, Exit: 3}
 	}
-	if err := requireJSONEOF(dec); err != nil {
-		return nil, &snapshotError{Code: "STATE_MALFORMED", Message: "malformed required state: " + path, Details: map[string]string{"path": path}, Exit: 3}
-	}
-	return out, nil
+	return nil, &snapshotError{Code: "STATE_UNREADABLE", Message: err.Error(), Exit: 3}
 }
 
 func requireJSONEOF(dec *json.Decoder) error {
@@ -367,11 +366,8 @@ func snapshotGitStateOnce(dir, base string) (snapshotGit, error) {
 	observedAt := ""
 	if upstream != "" {
 		remoteHead = gitOutIn(dir, "rev-parse", upstream)
-		if gitDir := gitOutIn(dir, "rev-parse", "--git-common-dir"); gitDir != "" {
-			if !filepath.IsAbs(gitDir) {
-				gitDir = filepath.Join(dir, gitDir)
-			}
-			refPath := filepath.Join(filepath.Clean(gitDir), "refs", "remotes", filepath.FromSlash(upstream))
+		if gitDir := git.CommonDirIn(dir); gitDir != "" {
+			refPath := filepath.Join(gitDir, "refs", "remotes", filepath.FromSlash(upstream))
 			if fi, statErr := os.Stat(refPath); statErr == nil {
 				observedAt = fi.ModTime().UTC().Format(time.RFC3339)
 			}
@@ -612,8 +608,8 @@ func deriveObligations(s *autopilotSnapshot, _ *ticket.Store) []snapshotObligati
 	return out
 }
 
-func deriveMode(idx map[string]interface{}, ticketHome, top string) string {
-	if nestedString(idx, "origin", "type") == "sub_ticket" {
+func deriveMode(idx ticket.Doc, ticketHome, top string) string {
+	if idx.Get("origin.type") == "sub_ticket" {
 		return "child"
 	}
 	if fi, err := os.Stat(filepath.Join(ticketHome, "manifest.md")); err == nil && !fi.IsDir() {
@@ -753,18 +749,6 @@ func stringValue(v interface{}) string {
 		return s
 	}
 	return fmt.Sprint(v)
-}
-
-func nestedString(m map[string]interface{}, keys ...string) string {
-	var cur interface{} = m
-	for _, key := range keys {
-		next, ok := cur.(map[string]interface{})
-		if !ok {
-			return ""
-		}
-		cur = next[key]
-	}
-	return stringValue(cur)
 }
 
 func stringSlice(v interface{}) []string {
