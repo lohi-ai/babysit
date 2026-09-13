@@ -6,6 +6,7 @@ package git
 
 import (
 	"os/exec"
+	"path/filepath"
 	"strings"
 )
 
@@ -109,4 +110,21 @@ func RevParseIn(dir, ref string) string {
 		return ""
 	}
 	return strings.TrimSpace(out)
+}
+
+// CommonDirIn is `git rev-parse --git-common-dir` in dir, resolved to an
+// absolute path — the shared .git that holds worktrees/, so every checkout of
+// the repo agrees on it. From the primary checkout git answers relative
+// (".git"), so the result is joined against dir before absolutizing. "" on any
+// failure (not a repo, git missing).
+func CommonDirIn(dir string) string {
+	out, ok := runIn(dir, "rev-parse", "--git-common-dir")
+	if !ok || out == "" {
+		return ""
+	}
+	d := strings.TrimSpace(out)
+	if !filepath.IsAbs(d) {
+		d = filepath.Join(dir, d)
+	}
+	return filepath.Clean(d)
 }

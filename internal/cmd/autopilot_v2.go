@@ -248,11 +248,10 @@ func collectAutopilotSnapshotOnce(a *apState, ticketID, ticketHome string) (*aut
 	st := ticket.New(identity.Env{Slug: a.slug, Branch: a.branch, Ticket: ticketID, ProjectHome: a.stateRoot})
 	canonical, worktree := top, top
 	if m, err := ticket.ReadManifest(manifestPath); err == nil {
-		for _, r := range m.Repos {
-			if r.Branch == a.branch || samePath(r.Worktree, top) {
-				canonical, worktree = r.Canonical, r.Worktree
-				break
-			}
+		if r := m.FindRepo(func(r ticket.Repo) bool {
+			return r.Branch == a.branch || samePath(r.Worktree, top)
+		}); r != nil {
+			canonical, worktree = r.Canonical, r.Worktree
 		}
 	} else if !os.IsNotExist(err) {
 		return nil, &snapshotError{Code: "STATE_MALFORMED", Message: "malformed required state: " + manifestPath, Details: map[string]string{"path": manifestPath}, Exit: 3}

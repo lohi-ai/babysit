@@ -16,6 +16,7 @@ import (
 	"github.com/reallongnguyen/babysit/internal/dashboard"
 	"github.com/reallongnguyen/babysit/internal/git"
 	"github.com/reallongnguyen/babysit/internal/identity"
+	"github.com/reallongnguyen/babysit/internal/ticket"
 	"github.com/reallongnguyen/babysit/internal/webui"
 	"github.com/spf13/cobra"
 )
@@ -411,16 +412,13 @@ func reconcileProjects(stateDir string) {
 			continue
 		}
 		projDir := filepath.Join(projects, e.Name())
-		ticketsDir := filepath.Join(projDir, "tickets")
-		tickets, err := os.ReadDir(ticketsDir)
+		ids, err := ticket.TicketIDs(projDir)
 		if err != nil {
 			continue
 		}
 		env := identity.Env{ProjectHome: projDir}
-		for _, t := range tickets {
-			if t.IsDir() {
-				_ = reconcileOne(io.Discard, env, t.Name(), false, true)
-			}
+		for _, tid := range ids {
+			_ = reconcileOne(io.Discard, env, tid, false, true)
 		}
 	}
 }

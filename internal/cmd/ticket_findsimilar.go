@@ -75,10 +75,11 @@ func runFindSimilar(args []string) {
 	}
 
 	env := identity.Resolve()
-	tdir := filepath.Join(env.ProjectHome, "tickets")
-	if info, err := os.Stat(tdir); err != nil || !info.IsDir() {
+	ids, err := ticket.TicketIDs(env.ProjectHome)
+	if err != nil {
 		os.Exit(0)
 	}
+	tdir := filepath.Join(env.ProjectHome, "tickets")
 
 	inputTokens := fsTok(fromInput)
 	if len(inputTokens) == 0 {
@@ -86,11 +87,6 @@ func runFindSimilar(args []string) {
 	}
 
 	closed := map[string]bool{"done": true, "cancelled": true, "merged": true}
-	entries, err := os.ReadDir(tdir)
-	if err != nil {
-		os.Exit(0)
-	}
-	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
 
 	type result struct {
 		score float64
@@ -98,8 +94,7 @@ func runFindSimilar(args []string) {
 		slug  string
 	}
 	var results []result
-	for _, e := range entries {
-		tid := e.Name()
+	for _, tid := range ids {
 		idx := filepath.Join(tdir, tid, "index.json")
 		if !fileExists(idx) {
 			continue

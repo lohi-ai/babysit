@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 
 	"github.com/reallongnguyen/babysit/internal/identity"
@@ -79,8 +78,7 @@ func ResolveProject() (identity.Env, error) {
 // ManifestCwdMatches returns the ticket ids whose manifest.yaml declares a
 // worktree containing $PWD, deduped and in directory order.
 func ManifestCwdMatches(projectHome string) []string {
-	tdir := filepath.Join(projectHome, "tickets")
-	entries, err := os.ReadDir(tdir)
+	names, err := TicketIDs(projectHome)
 	if err != nil {
 		return nil
 	}
@@ -93,11 +91,7 @@ func ManifestCwdMatches(projectHome string) []string {
 		pwdReal = pwd
 	}
 
-	names := make([]string, 0, len(entries))
-	for _, e := range entries {
-		names = append(names, e.Name())
-	}
-	sort.Strings(names)
+	tdir := filepath.Join(projectHome, "tickets")
 
 	var matches []string
 	seen := map[string]bool{}

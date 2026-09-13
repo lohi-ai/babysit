@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/reallongnguyen/babysit/internal/git"
 	"github.com/reallongnguyen/babysit/internal/identity"
 	"github.com/reallongnguyen/babysit/internal/ticket"
 	"github.com/reallongnguyen/babysit/internal/workspace"
@@ -119,15 +120,12 @@ func haveGit() bool {
 	return err == nil
 }
 
-// gitPrimary mirrors `git worktree list --porcelain | sed -n 's/^worktree //p'
-// | head -1` — the primary checkout of the current repo.
+// gitPrimary is the primary checkout of the current repo — the first entry of
+// `git worktree list --porcelain`, shared with every other topology read via
+// internal/git.
 func gitPrimary() string {
-	for _, ln := range strings.Split(gitOut("worktree", "list", "--porcelain"), "\n") {
-		if s, ok := strings.CutPrefix(ln, "worktree "); ok {
-			return s
-		}
-	}
-	return ""
+	p, _ := git.PrimaryWorktree()
+	return p
 }
 
 // lockAcquire / lockRelease mirror bin/lib/lock.sh: a spin-mkdir mutex at 100ms

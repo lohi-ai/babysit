@@ -507,13 +507,12 @@ func ticketV2Readiness(primary string, base identity.Env, ticketID, action strin
 	dir := primary
 	if manifest, err := ticket.ReadManifest(st.ManifestPath()); err == nil {
 		branch := ticketBranch(ticketID)
-		for _, repo := range manifest.Repos {
-			if repo.Branch == branch && repo.Worktree != "" {
-				dir = repo.Worktree
-				if !filepath.IsAbs(dir) {
-					dir = filepath.Join(primary, dir)
-				}
-				break
+		if repo := manifest.FindRepo(func(r ticket.Repo) bool {
+			return r.Branch == branch && r.Worktree != ""
+		}); repo != nil {
+			dir = repo.Worktree
+			if !filepath.IsAbs(dir) {
+				dir = filepath.Join(primary, dir)
 			}
 		}
 	}

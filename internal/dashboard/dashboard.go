@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/reallongnguyen/babysit/internal/foreman"
+	"github.com/reallongnguyen/babysit/internal/ticket"
 )
 
 func timeNow() int64 { return time.Now().Unix() }
@@ -175,7 +176,9 @@ func projectBlock(o Options, projectDir string) obj {
 	details := obj{}
 	timeline := arr{}
 
-	for _, tdir := range sortedDirs(ticketsDir) {
+	ids, _ := ticket.TicketIDs(projectDir)
+	for _, id := range ids {
+		tdir := filepath.Join(ticketsDir, id)
 		if _, err := os.Stat(filepath.Join(tdir, "index.json")); err != nil {
 			continue
 		}
@@ -445,64 +448,26 @@ func parseFlatYAML(path string) map[string]string {
 
 // ─── manifest.yaml → repos[] ─────────────────────────────────────────────────
 
+// manifestRepos renders a manifest's repos[] for the SPA through the canonical
+// parser. A missing or malformed manifest yields an empty array — the same
+// shape the hand parser produced for a file it could not read.
 func manifestRepos(path string) arr {
-	b, err := os.ReadFile(path)
+	m, err := ticket.ReadManifest(path)
 	if err != nil {
 		return arr{}
 	}
-	var raw []map[string]interface{}
-	var cur map[string]interface{}
-	for _, ln := range strings.Split(string(b), "\n") {
-		trimmed := strings.TrimLeft(ln, " ")
-		if ln == "" || strings.HasPrefix(trimmed, "#") {
-			continue
-		}
-		if strings.HasPrefix(ln, "  - ") {
-			cur = map[string]interface{}{}
-			raw = append(raw, cur)
-			kv := strings.TrimSpace(ln[4:])
-			if k, v, ok := strings.Cut(kv, ":"); ok {
-				cur[strings.TrimSpace(k)] = coerceYAML(strings.TrimSpace(v))
-			}
-		} else if strings.HasPrefix(ln, "    ") && cur != nil {
-			kv := strings.TrimSpace(ln)
-			if k, v, ok := strings.Cut(kv, ":"); ok {
-				cur[strings.TrimSpace(k)] = coerceYAML(strings.TrimSpace(v))
-			}
-		}
-	}
 	out := arr{}
-	for _, r := range raw {
-		pushed := false
-		if b, ok := r["pushed"].(bool); ok {
-			pushed = b
-		}
+	for _, r := range m.Repos {
 		out = append(out, obj{
-			"name":      nilIfEmptyVal(r["name"]),
-			"branch":    nilIfEmptyVal(r["branch"]),
-			"canonical": nilIfEmptyVal(r["canonical"]),
-			"worktree":  nilIfEmptyVal(r["worktree"]),
-			"base":      nilIfEmptyVal(r["base"]),
-			"pushed":    pushed,
+			"name":      nilIfEmptyVal(r.Name),
+			"branch":    nilIfEmptyVal(r.Branch),
+			"canonical": nilIfEmptyVal(r.Canonical),
+			"worktree":  nilIfEmptyVal(r.Worktree),
+			"base":      nilIfEmptyVal(r.Base),
+			"pushed":    r.Pushed == "true",
 		})
 	}
 	return out
-}
-
-func coerceYAML(v string) interface{} {
-	switch v {
-	case "true":
-		return true
-	case "false":
-		return false
-	}
-	if len(v) >= 2 && strings.HasPrefix(v, "'") && strings.HasSuffix(v, "'") {
-		return strings.ReplaceAll(v[1:len(v)-1], "''", "'")
-	}
-	if len(v) >= 2 && strings.HasPrefix(v, `"`) && strings.HasSuffix(v, `"`) {
-		return v[1 : len(v)-1]
-	}
-	return v
 }
 
 // ─── file helpers ────────────────────────────────────────────────────────────
