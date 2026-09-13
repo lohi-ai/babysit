@@ -88,46 +88,6 @@ func TestResolveProjectAmbiguousCwdSucceeds(t *testing.T) {
 	}
 }
 
-// Bare trunk resume: several tickets share main (manifest "." rows are
-// skipped by the ladder), so the active pair in current.txt is the only
-// durable discriminator. The ticket must exist on disk with a checkpoint
-// naming it.
-func TestCurrentTicketColdResumeOnTrunk(t *testing.T) {
-	repo, projectHome := ambiguousFixture(t) // two manifests claim this cwd
-	th := filepath.Join(projectHome, "tickets", "ap-55")
-	mustMkdirAll(t, th)
-	mustWrite(t, filepath.Join(th, "checkpoint.json"), `{"schema_version":2,"revision":1,"ticket":"ap-55","branch":"main"}`)
-	mustWrite(t, filepath.Join(projectHome, "current.txt"), "builder ap-55\n")
-	_ = repo
-
-	// The ladder genuinely cannot pick — ambiguity is the regression shape.
-	if _, err := ticket.ResolveLadder(); err == nil {
-		t.Fatal("expected ambiguous cwd")
-	}
-	// Project-only resolution (what `current`/`recover` use) still works.
-	a := resolveAPProject()
-	if got := a.currentTicket(); got != "ap-55" {
-		t.Fatalf("current.txt resume failed under ambiguity: %q", got)
-	}
-}
-
-func TestCurrentTicketRejectsStalePair(t *testing.T) {
-	repo := initSnapshotRepo(t)
-	projectHome := filepath.Join(t.TempDir(), "project")
-	mustMkdirAll(t, projectHome)
-	// current.txt names a ticket whose dir/checkpoint is gone.
-	mustWrite(t, filepath.Join(projectHome, "current.txt"), "builder ap-99\n")
-	t.Chdir(repo)
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("BABYSIT_TICKET", "")
-	t.Setenv("BBS_TICKET", "")
-	t.Setenv("BABYSIT_PROJECT_HOME", projectHome)
-
-	a := resolveAPProject()
-	if got := a.currentTicket(); got != "" {
-		t.Fatalf("stale current.txt resurrected deleted ticket: %q", got)
-	}
-}
 
 func TestResolveLadderEnvConflictOutsideRepo(t *testing.T) {
 	t.Chdir(t.TempDir()) // not a git repo — slug.Resolve returns ErrNoRepo

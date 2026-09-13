@@ -327,18 +327,6 @@ else
   _record fail "linter fixture: bbs-ticket-lint or fixture missing"
 fi
 
-# ============================================================================
-# Existing subcommands still work (regression sanity)
-# ============================================================================
-echo "== Regression: existing subcommands =="
-LATEST_VIA_OLD="$(bbs latest-handoff --skill build 2>/dev/null)"
-LATEST_VIA_NEW="$(bbs path handoff --skill build --latest --read 2>/dev/null)"
-if [ "$LATEST_VIA_OLD" = "$LATEST_VIA_NEW" ] && [ -n "$LATEST_VIA_OLD" ]; then
-  _record pass "latest-handoff agrees with path handoff --latest"
-else
-  _record fail "latest-handoff agrees with path handoff --latest" \
-    "old='$LATEST_VIA_OLD' new='$LATEST_VIA_NEW'"
-fi
 
 # ============================================================================
 # End-to-end skill lifecycle scenarios
@@ -482,65 +470,6 @@ expect_stdout "EV: adversarial status valid" 0 "valid" \
 printf 'garbage' > "$TH/evidence/adversarial/result.json"
 expect_stdout "EV: malformed-on-disk → malformed" 0 "malformed" \
   bbs evidence-status --kind adversarial
-
-# ============================================================================
-# find-similar — scoring + filtering
-#
-# Iterates over all tickets in $PROJECT_HOME/tickets, so we use unique
-# nonsense tokens in the tracer's requirement.md to guarantee we only match
-# ourselves (keeps the test hermetic against whatever real tickets exist).
-# ============================================================================
-echo "== find-similar =="
-rm -rf "$TH" && mkdir -p "$TH"
-bbs init >/dev/null
-
-# Seed a unique-token requirement on an open ticket.
-UNIQUE_A="zxqwfoomarker"
-UNIQUE_B="plongwidget"
-UNIQUE_C="gribbleflange"
-cat > "$TH/requirement.md" <<EOF
-Build a $UNIQUE_A system with $UNIQUE_B and $UNIQUE_C support.
-EOF
-# Register the branch pointer so slug extraction works (cosmetic — score
-# comes from requirement.md body here, but keep the test honest).
-bbs set-pointer branch "feat/${BBS_TICKET}_zxqw-plong-gribble" >/dev/null 2>&1 || true
-
-# Hit: input contains 2+ of the unique tokens → containment ≥ 2/3
-expect_stdout_lines "find-similar hit (containment ≥ 0.6)" 0 1 \
-  bbs find-similar --from-input "$UNIQUE_A $UNIQUE_B $UNIQUE_C"
-
-HIT_LINE="$(bbs find-similar --from-input "$UNIQUE_A $UNIQUE_B $UNIQUE_C" 2>/dev/null | head -1)"
-case "$HIT_LINE" in
-  "$BBS_TICKET"$'\t'*) _record pass "find-similar returns tracer id in first column" ;;
-  *) _record fail "find-similar returns tracer id in first column" "got '$HIT_LINE'" ;;
-esac
-
-# Miss: query with none of the unique tokens
-expect_stdout "find-similar miss (empty stdout)" 0 "" \
-  bbs find-similar --from-input "completely unrelated query about databases"
-
-# Closed ticket (status=done) is skipped even on perfect token match
-bbs set-status done >/dev/null 2>&1
-expect_stdout "find-similar skips closed tickets" 0 "" \
-  bbs find-similar --from-input "$UNIQUE_A $UNIQUE_B $UNIQUE_C"
-# Restore to a non-closed status for subsequent tests.
-bbs set-status in_progress >/dev/null 2>&1 || true
-
-# Stop-word-only input produces empty token set → no matches, exit 0
-expect_stdout "find-similar stop-word-only input" 0 "" \
-  bbs find-similar --from-input "the a an and or"
-
-# Missing --from-input → exit 2
-expect_exit "find-similar missing --from-input → exit 2" 2 \
-  bbs find-similar
-
-# --min-score filter: score 1.0 passes 0.9, score 0 fails 0.9
-expect_stdout_lines "find-similar --min-score 0.9 still hits" 0 1 \
-  bbs find-similar --from-input "$UNIQUE_A $UNIQUE_B $UNIQUE_C" --min-score 0.9
-
-# --limit caps output
-expect_stdout_lines "find-similar --limit 0 returns nothing" 0 0 \
-  bbs find-similar --from-input "$UNIQUE_A $UNIQUE_B $UNIQUE_C" --limit 0
 
 # ============================================================================
 # Summary

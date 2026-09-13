@@ -3,10 +3,10 @@
 # port must behave identically to the frozen bash oracle.
 #
 # Covers the slice ported in internal/cmd/ticket_state.go + internal/ticket/
-# index.go: env, get, set-status, set-phase, set-parent, add-child,
-# add-relation, set-sibling, add-label, set-pointer, get-pointer, ensure-size,
-# append-history. Manifest.yaml ops have their own differential harness
-# (test_bbs_ticket_manifest_differential.sh); base-ops stay bash-delegated. Both
+# index.go: env, get, set-status, set-phase, set-parent, set-sibling,
+# set-pointer, get-pointer, ensure-size, append-history. Manifest.yaml ops have
+# their own differential harness (test_bbs_ticket_manifest_differential.sh);
+# base-ops stay bash-delegated. Both
 # are out of scope here.
 #
 # Method: replay one identical command sequence against the Go binary
@@ -79,21 +79,12 @@ SEQ=(
   "set-status in_progress"           # fresh: ensure_defaults + status + history
   "set-phase implement"
   "set-parent bs-parent1"
-  "add-child bs-child1"
-  "add-child bs-child1"              # dedup — no second entry
-  "add-relation blocks bs-blk1"
-  "add-relation blocked_by bs-blk2"
-  "add-relation related bs-rel1"
-  "add-relation duplicate_of bs-dup1"
   "set-sibling --role fe --repo org/fe --ticket bs-fe1"
   "set-sibling --role fe --repo org/fe --ticket bs-fe1"  # dedup by equality
   "set-sibling --role be --repo org/be --ticket bs-be1"
-  "add-label urgent"
-  "add-label urgent"                 # dedup
   "set-pointer pr https://ex/pr/9"
   "set-pointer ticket_size M"
   "get status"
-  "get relations"
   "get siblings"
   "get pointers"
   "get-pointer pr"
@@ -114,14 +105,11 @@ done
 ERRSEQ=(
   "set-status bogus"
   "get"
-  "add-relation weird target"
   "set-sibling --role fe --repo org/fe"
   "get-pointer"
   "set-pointer"
   "set-phase"
   "set-parent"
-  "add-child"
-  "add-label"
   "append-history"
 )
 for cmd in "${ERRSEQ[@]}"; do

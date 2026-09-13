@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # tests/test_bbs_ticket_pathops_differential.sh — the Go path-broker port
-# (internal/cmd/ticket_path.go, ticket_handoff.go, ticket_findsimilar.go) must
-# behave identically to the frozen bash oracle.
+# (internal/cmd/ticket_path.go, ticket_handoff.go) must behave identically to
+# the frozen bash oracle.
 #
 # Covers the file-only Slice D subcommands: path (--read/--write across kinds),
-# list, reconcile, find-similar, add-handoff, latest-handoff, set-review,
-# set-evidence, evidence-status, qa-evidence. All operate over the Layout C home
+# list, reconcile, add-handoff, set-review, set-evidence, evidence-status,
+# qa-evidence. All operate over the Layout C home
 # with a fixed ticket, so the sequence is deterministic once timestamps and the
 # per-impl project-home prefix are masked. Git-mutating base-ops + ensure have
 # their own harness (test_bbs_ticket_baseops_differential.sh).
@@ -59,26 +59,12 @@ seed() {
   ph="$home/projects/slug"
   local t="$ph/tickets/bs-path01"
   mkdir -p "$t/handoffs" "$t/verdicts" "$t/reviews" "$t/evidence"
-  # index.json with a branch pointer (find-similar reads slug from it).
+  # index.json with a branch pointer.
   cat > "$t/index.json" <<'JSON'
 {"id":"bs-path01","status":"in_progress","pointers":{"branch":"feat/bs-path01_add_user_export"}}
 JSON
   printf 'Add a user data export button to the settings page.\n' > "$t/requirement.md"
   printf '# plan\n' > "$t/plan.md"
-  # A second, closed ticket + an open one so find-similar/list/reconcile have
-  # a population to rank and scan.
-  local t2="$ph/tickets/bs-other2"
-  mkdir -p "$t2"
-  cat > "$t2/index.json" <<'JSON'
-{"id":"bs-other2","status":"backlog","pointers":{"branch":"feat/bs-other2_user_export_csv"}}
-JSON
-  printf 'Export user list as CSV download.\n' > "$t2/requirement.md"
-  local t3="$ph/tickets/bs-done3"
-  mkdir -p "$t3"
-  cat > "$t3/index.json" <<'JSON'
-{"id":"bs-done3","status":"done","pointers":{"branch":"feat/bs-done3_user_export_pdf"}}
-JSON
-  printf 'Export user profile as PDF.\n' > "$t3/requirement.md"
 }
 seed bash
 seed go
@@ -120,7 +106,6 @@ SEQ=(
   # handoffs
   "add-handoff --skill plan-draft --status DONE"
   "add-handoff --skill implement --status DONE_WITH_CONCERNS"
-  "latest-handoff"
   "path handoff --read --latest"
   # reviews + evidence
   "set-review --skill review-pr --body-file $ROOT/review.md"
@@ -128,10 +113,6 @@ SEQ=(
   "set-evidence --skill qa --kind risk-gate --json {\"high_risk\":false}"
   "evidence-status --skill qa"
   "set-evidence --skill qa --kind verification --json {\"nope\":1}"   # missing field
-  # find-similar
-  "find-similar --from-input export user data"
-  "find-similar --from-input totally unrelated quantum topic --min-score 0.6"
-  "find-similar --from-input user export --limit 1"
   # list
   "list"
 )

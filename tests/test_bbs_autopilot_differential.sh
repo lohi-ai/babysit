@@ -33,6 +33,9 @@ mask() { sed -E 's/[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z/<TS>/g
 #   "branch does not encode"; the Go side reports the identity ladder
 #   (env → manifest → branch). Normalized in `mask`, not the frozen oracle.
 mask_usage() { sed -E 's/\|snapshot\|context\|attempt\|/|/; s/\|git-flow\|/|/'; }
+# bs-0c8r7mv7: read/current/set-current/timeline/check-skill-deps were pruned
+# as zero-caller commands; the frozen oracle still lists them in usage.
+mask_deleted() { sed -E 's/read\|//; s/set-current\|//; s/current\|//; s/timeline\|//; s/\|check-skill-deps//'; }
 cmp_case() { # name  expected(masked)  actual(masked)  ec_e  ec_a
   if [ "$2" = "$3" ] && [ "$4" = "$5" ]; then
     echo "ok   $1"; PASS=$((PASS+1))
@@ -73,7 +76,7 @@ if [ -f "$WF" ]; then
   cmp_case "lint-workflow builder.md" "$e" "$g" "$ec_e" "$ec_g"
 fi
 
-# ── checkpoint / read / refresh / recover / timeline (masked) ─────────
+# ── checkpoint / refresh / recover (masked) ─────────
 cp_args=(checkpoint --ticket bs-x1 --workflow builder --step implement --status in_progress --note "a note")
 BABYSIT_PROJECT_HOME="$WORK/cp-b" bash "$ORACLE" "${cp_args[@]}" >/dev/null 2>&1
 BABYSIT_PROJECT_HOME="$WORK/cp-g" "$GO"        "${cp_args[@]}" >/dev/null 2>&1
@@ -90,11 +93,6 @@ e="$(mask < "$WORK/cp-b/timeline.jsonl")"
 g="$(mask < "$WORK/cp-g/timeline.jsonl")"
 cmp_case "timeline.jsonl content" "$e" "$g" 0 0
 
-# read
-e="$(BABYSIT_PROJECT_HOME="$WORK/cp-b" bash "$ORACLE" read bs-x1 2>/dev/null | mask)"; ec_e=$?
-g="$(BABYSIT_PROJECT_HOME="$WORK/cp-g" "$GO"        read bs-x1 2>/dev/null | mask)"; ec_g=$?
-cmp_case "read bs-x1" "$e" "$g" "$ec_e" "$ec_g"
-
 # refresh, then compare (preserves step/status/iteration, restamps ts+head_sha)
 BABYSIT_PROJECT_HOME="$WORK/cp-b" bash "$ORACLE" checkpoint --refresh --ticket bs-x1 >/dev/null 2>&1
 BABYSIT_PROJECT_HOME="$WORK/cp-g" "$GO"        checkpoint --refresh --ticket bs-x1 >/dev/null 2>&1
@@ -103,14 +101,35 @@ g="$(mask < "$WORK/cp-g/tickets/bs-x1/checkpoint.json")"
 cmp_case "checkpoint.json after --refresh" "$e" "$g" 0 0
 
 # recover (embeds the checkpoint; mask ts)
-e="$(BABYSIT_PROJECT_HOME="$WORK/cp-b" bash "$ORACLE" recover 2>/dev/null | mask)"
-g="$(BABYSIT_PROJECT_HOME="$WORK/cp-g" "$GO"        recover 2>/dev/null | mask)"
+e="$(BABYSIT_PROJECT_HOME="$WORK/ph-b" bash "$ORACLE" recover 2>/dev/null | mask)"
+g="$(BABYSIT_PROJECT_HOME="$WORK/ph-g" "$GO"        recover 2>/dev/null | mask)"
 cmp_case "recover (no branch ticket)" "$e" "$g" 0 0
 
+# Manifest-only worktrees must take the full identity ladder. This is a Go-only
+# contract: the frozen oracle predates manifest identity.
+MANIFEST_PH="$WORK/manifest-ph"
+MANIFEST_TH="$MANIFEST_PH/tickets/bs-manifest"
+mkdir -p "$MANIFEST_TH"
+cat > "$MANIFEST_TH/manifest.yaml" <<EOF
+version: 1
+ticket: bs-manifest
+repos:
+  - name: repo
+    worktree: $REPO
+EOF
+printf "%s\n" "{\"ticket\":\"bs-manifest\",\"workflow\":\"builder\",\"step\":\"implement\",\"status\":\"in_progress\"}" > "$MANIFEST_TH/checkpoint.json"
+g="$(BABYSIT_PROJECT_HOME="$MANIFEST_PH" "$GO" recover 2>/dev/null | mask)"
+case "$g" in
+  *"CURRENT_TICKET: bs-manifest (resolved by identity ladder)"*"LATEST_CHECKPOINT: $MANIFEST_TH/checkpoint.json"*"--- END RECOVERY ---"*)
+    echo "ok   recover (manifest identity)"; PASS=$((PASS+1)) ;;
+  *)
+    echo "FAIL recover (manifest identity)"; FAIL=$((FAIL+1)) ;;
+esac
+
 # ── error paths: exit codes + stderr ─────────────────────────────────
-for args in "checkpoint --ticket t" "checkpoint --ticket t --workflow w --step s --status bogus" "read" "clear" "bogus-sub" ""; do
+for args in "checkpoint --ticket t" "checkpoint --ticket t --workflow w --step s --status bogus" "clear" "bogus-sub" ""; do
   # shellcheck disable=SC2086
-  e="$(BABYSIT_PROJECT_HOME="$WORK/ph-b" bash "$ORACLE" $args 2>&1)"; ec_e=$?
+  e="$(BABYSIT_PROJECT_HOME="$WORK/ph-b" bash "$ORACLE" $args 2>&1 | mask_deleted)"; ec_e=$?
   # shellcheck disable=SC2086
   g="$(BABYSIT_PROJECT_HOME="$WORK/ph-g" "$GO"        $args 2>&1 | mask_usage)"; ec_g=$?   # pipefail (set -o above) → the Go exit code survives the filter
   cmp_case "err: '${args:-<none>}'" "$e" "$g" "$ec_e" "$ec_g"

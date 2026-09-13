@@ -14,12 +14,12 @@ import (
 //
 // Every subcommand now runs natively: the identity core (resolve/verdicts/
 // session/board), the index.json state-accessors (env/get/set-status/set-phase/
-// set-parent/add-child/add-relation/set-sibling/add-label/set-pointer/
-// get-pointer/ensure-size/append-history), the file-only manifest.yaml ops
-// (init/get-manifest/set-branch), the git-mutating base-ops family (refresh/
-// surface/serve/land), `ensure`, and path/list/reconcile/
-// find-similar. A byte-identical frozen copy of the retired script survives at
-// tests/fixtures/bbs-ticket.reference as the differential-harness oracle.
+// set-parent/set-sibling/set-pointer/get-pointer/ensure-size/append-history),
+// the file-only manifest.yaml ops (init/get-manifest/set-branch), the
+// git-mutating base-ops family (refresh/surface/serve/land), `ensure`, and
+// path/list/reconcile. A byte-identical frozen copy of the retired script
+// survives at tests/fixtures/bbs-ticket.reference as the differential-harness
+// oracle.
 //
 // Flag parsing is disabled and each subcommand hand-parses its argv, because
 // the bash original hand-parses too and its quirks are part of the contract
@@ -73,14 +73,8 @@ func newTicketCmd() *cobra.Command {
 				runRestore()
 			case "approval":
 				runApproval(args[1:])
-			case "add-child":
-				runAddChild(args[1:])
-			case "add-relation":
-				runAddRelation(args[1:])
 			case "set-sibling":
 				runSetSibling(args[1:])
-			case "add-label":
-				runAddLabel(args[1:])
 			case "set-pointer":
 				runSetPointer(args[1:])
 			case "get-pointer":
@@ -109,8 +103,6 @@ func newTicketCmd() *cobra.Command {
 				runLand(args[1:])
 			case "add-handoff":
 				runAddHandoff(args[1:])
-			case "latest-handoff":
-				runLatestHandoff(args[1:])
 			case "set-review":
 				runSetReview(args[1:])
 			case "set-evidence":
@@ -127,10 +119,6 @@ func newTicketCmd() *cobra.Command {
 				runList(args[1:])
 			case "reconcile":
 				runReconcile(args[1:])
-			case "find-similar":
-				runFindSimilar(args[1:])
-			case "assert-cwd":
-				runAssertCwd()
 			default:
 				fmt.Fprintf(os.Stderr, "unknown subcommand: %s\n", args[0])
 				os.Exit(2)
@@ -180,15 +168,11 @@ Subcommands:
   approval await [--interval S] [--reminder-min M]
                     block until the human decides; prints the outcome. No timeout —
                     it reminds once, it never guesses.
-  add-child <t>     append a child ticket id
-  add-relation <type> <target>
   set-sibling --role R --repo REPO --ticket T
-  add-label <label>
   set-pointer <key> <value>
   get-pointer <key>             print pointers.<key> ("" if unset)
   ensure-size                   resolve ticket_size (XS|S|M|L); estimate from diff if unset
   add-handoff --skill S --status STATUS [--body MD | --body-file FILE]
-  latest-handoff [--skill S]    print latest handoff filename (optionally filtered by skill)
   set-verdict --skill S [--body MD | --body-file FILE]
   verdict-status --skill S       print {none|DONE|DONE_WITH_CONCERNS|BLOCKED|NEEDS_CONTEXT}
   set-review  --skill S [--body MD | --body-file FILE]

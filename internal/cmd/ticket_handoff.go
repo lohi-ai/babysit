@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
 	"strconv"
 	"strings"
 
@@ -14,8 +13,8 @@ import (
 )
 
 // This file ports the append-only artifact family of bin/bbs-ticket.bash:
-// add-handoff, latest-handoff, set-review, set-evidence, evidence-status,
-// qa-evidence. All are file I/O over the Layout C ticket home; none touch git.
+// add-handoff, set-review, set-evidence, evidence-status, qa-evidence. All are
+// file I/O over the Layout C ticket home; none touch git.
 
 // runAddHandoff ports add-handoff (bbs-ticket.bash:1340-1375): write the next
 // numbered <NNN>-<skill>-<status>.md handoff, update handoffs/LATEST, and append
@@ -91,43 +90,11 @@ func nextHandoffSeq(home string) string {
 	return fmt.Sprintf("%03d", max+1)
 }
 
-// runLatestHandoff ports latest-handoff (bbs-ticket.bash:1377-1409): with --skill,
-// the highest-NNN <NNN>-<skill>-*.md; else the handoffs/LATEST pointer (validated
-// so a poisoned LATEST cannot escape the handoffs dir).
-func runLatestHandoff(args []string) {
-	env := resolveEnv()
-	needTicket(env)
-	var filterSkill string
-	for i := 0; i < len(args); i++ {
-		if args[i] == "--skill" {
-			filterSkill, i = valueOf(args, i, "--skill"), i+1
-		}
-	}
-	th := ticket.New(env).Home()
-	if filterSkill != "" {
-		matches, _ := filepath.Glob(filepath.Join(th, "handoffs", "[0-9][0-9][0-9]-"+filterSkill+"-*.md"))
-		sort.Strings(matches)
-		if len(matches) > 0 {
-			fmt.Println(matches[len(matches)-1])
-		}
-		os.Exit(0)
-	}
-	l := filepath.Join(th, "handoffs", "LATEST")
-	if b, err := os.ReadFile(l); err == nil {
-		name := strings.TrimRight(string(b), "\n")
-		if invalidLatestName(name) {
-			fmt.Fprintf(os.Stderr, retarget("bbs-ticket list handoff: LATEST contains invalid name '%s'\n"), name)
-			os.Exit(3)
-		}
-		fmt.Printf("%s/handoffs/%s\n", th, name)
-	}
-	os.Exit(0)
-}
-
 // invalidLatestName mirrors the bash case guard ""|*/*|*..*|.* on a LATEST value.
 func invalidLatestName(name string) bool {
 	return name == "" || strings.Contains(name, "/") || strings.Contains(name, "..") || strings.HasPrefix(name, ".")
 }
+
 
 // runSetReview ports set-review (bbs-ticket.bash:1475-1500): overwrite
 // reviews/<skill>.md and append a history row. Unknown args fail loud (exit 2).

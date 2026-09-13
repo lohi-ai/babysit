@@ -220,23 +220,6 @@ func (d Doc) SetObj(dotted, objJSON string) error {
 	return nil
 }
 
-// Append mirrors the json_mutate append op: setdefault a list, then append the
-// string only if not already present (bash `if value not in lst`).
-func (d Doc) Append(dotted, value string) error {
-	parent, key := walk(d, strings.Split(dotted, "."))
-	lst, err := asList(parent, key, dotted)
-	if err != nil {
-		return err
-	}
-	for _, e := range lst {
-		if s, ok := e.(string); ok && s == value {
-			return nil
-		}
-	}
-	parent[key] = append(lst, value)
-	return nil
-}
-
 // AppendObj mirrors the json_mutate append_obj op: dedupe by full equality.
 func (d Doc) AppendObj(dotted, objJSON string) error {
 	dec := json.NewDecoder(strings.NewReader(objJSON))

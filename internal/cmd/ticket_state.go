@@ -11,8 +11,8 @@ import (
 )
 
 // This file ports the index.json state-accessor family of bin/bbs-ticket.bash:
-// env, get, set-status, set-phase, set-parent, add-child, add-relation,
-// set-sibling, add-label, set-pointer, get-pointer, ensure-size, append-history.
+// env, get, set-status, set-phase, set-parent, set-sibling, set-pointer,
+// get-pointer, ensure-size, append-history.
 // Each mutates index.json under the shared .index.lock and appends to
 // history.jsonl exactly where the bash original does. Manifest.yaml operations
 // (init/get-manifest/set-branch) and the git-mutating base-ops stay delegated.
@@ -208,69 +208,6 @@ func runSetParent(args []string) {
 	os.Exit(0)
 }
 
-func runAddChild(args []string) {
-	env := resolveEnv()
-	needTicket(env)
-	child := ""
-	if len(args) > 0 {
-		child = args[0]
-	}
-	if child == "" {
-		fmt.Fprintln(os.Stderr, "add-child: child ticket id required")
-		os.Exit(2)
-	}
-	st := ticket.New(env)
-	mutateLocked(st, func() error {
-		doc := st.LoadForMutate()
-		if err := doc.Append("children", child); err != nil {
-			return err
-		}
-		if err := ticket.WriteDoc(st.IndexPath(), doc); err != nil {
-			return err
-		}
-		st.HistoryAppendExtra("child_added", actorRole(), fmt.Sprintf(`{"child":"%s"}`, child))
-		return nil
-	})
-	os.Exit(0)
-}
-
-var relationTypes = map[string]bool{"blocks": true, "blocked_by": true, "duplicate_of": true, "related": true}
-
-func runAddRelation(args []string) {
-	env := resolveEnv()
-	needTicket(env)
-	typ, target := "", ""
-	if len(args) > 0 {
-		typ = args[0]
-	}
-	if len(args) > 1 {
-		target = args[1]
-	}
-	if !relationTypes[typ] {
-		fmt.Fprintln(os.Stderr, "add-relation: type must be blocks|blocked_by|duplicate_of|related")
-		os.Exit(2)
-	}
-	if target == "" {
-		fmt.Fprintln(os.Stderr, "add-relation: target ticket id required")
-		os.Exit(2)
-	}
-	st := ticket.New(env)
-	mutateLocked(st, func() error {
-		doc := st.LoadForMutate()
-		if typ == "duplicate_of" {
-			doc.Set("relations.duplicate_of", target)
-		} else if err := doc.Append("relations."+typ, target); err != nil {
-			return err
-		}
-		if err := ticket.WriteDoc(st.IndexPath(), doc); err != nil {
-			return err
-		}
-		st.HistoryAppendExtra("relation_added", actorRole(),
-			fmt.Sprintf(`{"type":"%s","target":"%s"}`, typ, target))
-		return nil
-	})
-	os.Exit(0)
-}
 
 func runSetSibling(args []string) {
 	env := resolveEnv()
@@ -306,27 +243,6 @@ func runSetSibling(args []string) {
 	os.Exit(0)
 }
 
-func runAddLabel(args []string) {
-	env := resolveEnv()
-	needTicket(env)
-	label := ""
-	if len(args) > 0 {
-		label = args[0]
-	}
-	if label == "" {
-		fmt.Fprintln(os.Stderr, "add-label: label required")
-		os.Exit(2)
-	}
-	st := ticket.New(env)
-	mutateLocked(st, func() error {
-		doc := st.LoadForMutate()
-		if err := doc.Append("labels", label); err != nil {
-			return err
-		}
-		return ticket.WriteDoc(st.IndexPath(), doc)
-	})
-	os.Exit(0)
-}
 
 func runSetPointer(args []string) {
 	env := resolveEnv()

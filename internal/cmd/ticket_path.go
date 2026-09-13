@@ -18,10 +18,10 @@ import (
 )
 
 // This file ports the ticket filesystem broker of bin/bbs-ticket.bash: path (the
-// canonical→legacy resolver with dual-presence + sunset telemetry), list,
-// reconcile (the filesystem→status ladder), find-similar, and assert-cwd. All
-// are read/derive over the Layout C home; reconcile is the only mutator and it
-// only advances index.json.status forward.
+// canonical→legacy resolver with dual-presence + sunset telemetry), list, and
+// reconcile (the filesystem→status ladder). All are read/derive over the
+// Layout C home; reconcile is the only mutator and it only advances
+// index.json.status forward.
 
 var pathKinds = map[string]bool{
 	"home": true, "index": true, "requirement": true, "design": true,
@@ -698,9 +698,6 @@ func applyStatus(st *ticket.Store, target string) error {
 	return nil
 }
 
-// runAssertCwd ports assert-cwd (bbs-ticket.bash:3401-3407): a compatibility
-// no-op since product mode was removed.
-func runAssertCwd() { os.Exit(0) }
 
 func printPathHelp() {
 	fmt.Fprint(os.Stderr, retarget(`usage: bbs-ticket path <kind> [selectors] --read|--write
