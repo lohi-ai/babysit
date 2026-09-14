@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { ChevronDown } from 'lucide-react';
-import { foremanLive, type ForemanRow, type HistoryRow, type ManifestRepo, type NamedFile, type Snapshot, type TicketApproval, type TicketControl, type TicketDetail as TicketDetailData, type TicketSummary } from '../lib/data';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { ArrowRight, Check, ChevronDown, Clock, Play, TriangleAlert } from 'lucide-react';
+import { foremanLive, type DagNode, type DagState, type ForemanRow, type HistoryRow, type ManifestRepo, type NamedFile, type Snapshot, type TicketApproval, type TicketControl, type TicketDetail as TicketDetailData, type TicketDag, type TicketSummary } from '../lib/data';
 import { assignTicket, controlTicket, ticketReadiness, type ControlAction, type ReadinessResult } from '../lib/api';
 import { Button } from '../components/Button';
 import { Tag } from '../components/Tag';
@@ -21,7 +21,7 @@ import { useScopedTicketDetail, useScopedTickets } from '../lib/scope';
 // Split rather than ordered, because the split is what keeps the strip from
 // overflowing: eight tabs pushed Reviews off a 1440px screen entirely.
 type Tab =
-  | 'requirement' | 'plan' | 'prototype' | 'handoffs' | 'qa'
+  | 'requirement' | 'plan' | 'dag' | 'prototype' | 'handoffs' | 'qa'
   | 'activity' | 'reviews' | 'manifest' | 'repos' | 'approval';
 
 const OVERFLOW: Tab[] = ['activity', 'reviews', 'manifest', 'repos', 'approval'];
@@ -90,6 +90,7 @@ export function TicketDetail({ snapshot, ticketId }: { snapshot: Snapshot; ticke
   const tabs: TabSpec[] = detail ? ([
     { key: 'requirement', label: 'Requirement', available: !!detail.requirement },
     { key: 'plan',        label: 'Plan',        available: !!detail.plan },
+    { key: 'dag',         label: 'DAG',         count: detail.dag?.counts.nodes, available: !!detail.dag },
     { key: 'prototype',   label: 'Prototype',   available: !!detail.prototype },
     { key: 'handoffs',    label: 'Handoffs',    count: detail.handoffs.length, available: detail.handoffs.length > 0 },
     { key: 'qa',          label: 'QA evidence', count: qaCount, available: qaCount > 0 },
@@ -213,6 +214,7 @@ export function TicketDetail({ snapshot, ticketId }: { snapshot: Snapshot; ticke
         <div className="pt-4" id={TABPANEL_ID} role="tabpanel">
           {activeTab === 'requirement' && detail.requirement && <Markdown source={detail.requirement} />}
           {activeTab === 'plan' && detail.plan && <Markdown source={detail.plan} />}
+          {activeTab === 'dag' && detail.dag && <DagPanel dag={detail.dag} />}
           {activeTab === 'prototype' && (
             <PrototypeFrame
               project={project}
@@ -662,6 +664,260 @@ const VERDICT_TONE: Record<string, 'ok' | 'warn' | 'err' | 'muted' | 'info' | 'a
   NEEDS_CONTEXT: 'warn',
   none: 'muted',
 };
+
+// ---------------------------------------------------------------------------
+// The project DAG — a decomposed ticket's fan-out, in the waves the server
+// layered it into. Every edge, wave and state is lifted from the snapshot
+// (`internal/ticket/dag.go`, the same model as `bbs ticket dag --json`); this
+// panel groups and colours what it is handed and derives nothing, which is what
+// keeps the page and the command from disagreeing.
+// ---------------------------------------------------------------------------
+
+// One word per graph state, the glyph beside it, and the rail that repeats it.
+// The word is uppercased by CSS and sits in the same place on every card, so
+// colour and glyph are never the only carriers of state. `not_found` is muted
+// rather than alarming: a dangling id is a note about the data, not a failure.
+const DAG_STATE: Record<DagState, { label: string; tone: string; rail: string; glyph: typeof Check }> = {
+  done:      { label: 'done',      tone: 'var(--status-completed-text)', rail: 'var(--status-completed-text)', glyph: Check },
+  running:   { label: 'running',   tone: 'var(--status-started-text)',  rail: 'var(--status-started-text)',  glyph: Play },
+  ready:     { label: 'ready',     tone: 'var(--accent)',               rail: 'var(--accent)',               glyph: ArrowRight },
+  waiting:   { label: 'waiting',   tone: 'var(--status-blocked-text)',  rail: 'var(--status-blocked-text)',  glyph: Clock },
+  not_found: { label: 'not found', tone: 'var(--text-muted)',           rail: 'var(--border-emphasis)',      glyph: TriangleAlert },
+};
+
+// The order a wave's per-state meta reads in. Zero counts drop out, so a lane
+// says what is in it and nothing else.
+const DAG_META_ORDER: DagState[] = ['done', 'not_found', 'running', 'ready', 'waiting'];
+
+function dagMeta(nodes: DagNode[]): string {
+  return DAG_META_ORDER
+    .map(state => [state, nodes.filter(n => n.state === state).length] as const)
+    .filter(([, count]) => count > 0)
+    .map(([state, count]) => `${count} ${DAG_STATE[state].label}`)
+    .join(' · ');
+}
+
+const DAG_CARD_STYLE: CSSProperties = {
+  borderWidth: '1px',
+  borderColor: 'var(--border-hairline)',
+  borderRadius: 'var(--radius-md)',
+  padding: '8px 10px',
+  minWidth: 0,
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '3px',
+};
+
+const DAG_META_STYLE: CSSProperties = {
+  fontSize: '11px',
+  color: 'var(--text-secondary)',
+  textTransform: 'uppercase',
+  letterSpacing: 'var(--tracking-caption)',
+};
+
+function DagPanel({ dag }: { dag: TicketDag }) {
+  const byId = useMemo(() => new Map(dag.nodes.map(n => [n.id, n])), [dag.nodes]);
+  const outside = dag.nodes.filter(n => n.external);
+  const c = dag.counts;
+
+  return (
+    <div>
+      <div
+        className="flex flex-wrap items-baseline gap-x-3 gap-y-1"
+        style={{ color: 'var(--text-secondary)', fontSize: '12px', marginBottom: '14px' }}
+      >
+        <span style={{ color: 'var(--text-primary)', fontWeight: 500 }}>
+          DAG · root <span className="font-mono">{dag.root}</span>
+        </span>
+        <span>
+          {c.nodes} tickets · {c.waves} waves · {c.ready} ready · {c.waiting} waiting
+          {' · '}{c.external} outside · {c.dangling} not found · {dag.cycles.length} cycles
+        </span>
+      </div>
+      {dag.cycles.length > 0 && (
+        <p
+          role="status"
+          className="flex items-start gap-2 mb-3"
+          style={{
+            border: '1px solid var(--status-blocked-text)',
+            borderRadius: 'var(--radius-md)',
+            padding: '10px 12px',
+            color: 'var(--text-secondary)',
+            fontSize: '12px',
+          }}
+        >
+          <TriangleAlert
+            size={14}
+            aria-hidden
+            className="shrink-0"
+            style={{ marginTop: '2px', color: 'var(--status-blocked-text)' }}
+          />
+          <span>
+            Cycle. <strong style={{ color: 'var(--status-blocked-text)', fontWeight: 600 }}>
+              {dag.cycles.map(cyc => [...cyc, cyc[0]].join(' → ')).join('; ')}
+            </strong>
+            {' '}— these tickets block each other, so no wave can go first.
+          </span>
+        </p>
+      )}
+      {outside.length > 0 && (
+        <DagLane
+          caption="Outside this subtree"
+          meta="blockers that live in another branch of the project"
+          nodes={outside}
+          byId={byId}
+        />
+      )}
+      {dag.waves.map((wave, i) => {
+        const nodes = wave.map(id => byId.get(id)).filter((n): n is DagNode => !!n);
+        return <DagLane key={i} caption={`Wave ${i}`} meta={dagMeta(nodes)} nodes={nodes} byId={byId} />;
+      })}
+    </div>
+  );
+}
+
+// One lane: a caption, its count, and the cards in it. Waves and the outside
+// lane render through the same component, because a lane is a grouping, not a
+// kind of thing — the cards themselves carry what differs.
+function DagLane({ caption, meta, nodes, byId }: {
+  caption: string;
+  meta: string;
+  nodes: DagNode[];
+  byId: Map<string, DagNode>;
+}) {
+  return (
+    <section style={{ marginBottom: '14px' }}>
+      <h3 className="flex flex-wrap items-center gap-2" style={{ marginBottom: '6px' }}>
+        <span
+          className="uppercase"
+          style={{ fontSize: '11px', fontWeight: 500, letterSpacing: 'var(--tracking-caption)', color: 'var(--text-secondary)' }}
+        >
+          {caption}
+        </span>
+        <span
+          style={{
+            fontSize: '11px',
+            color: 'var(--text-muted)',
+            background: 'var(--surface-elevated)',
+            borderRadius: 'var(--radius-sm)',
+            minWidth: '18px',
+            textAlign: 'center',
+            padding: '0 4px',
+          }}
+        >
+          {nodes.length}
+        </span>
+        {meta && <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>{meta}</span>}
+      </h3>
+      <div
+        className="grid gap-2"
+        style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(min(228px, 100%), 1fr))', alignItems: 'start' }}
+      >
+        {nodes.map(n => <DagCard key={n.id} node={n} byId={byId} />)}
+      </div>
+    </section>
+  );
+}
+
+function DagCard({ node, byId }: { node: DagNode; byId: Map<string, DagNode> }) {
+  const state = DAG_STATE[node.state] ?? DAG_STATE.not_found;
+  const Glyph = state.glyph;
+  // A settled card is an outcome, not a set of questions: its status and
+  // verdicts say nothing the state word has not already said, so it renders as
+  // one row and leaves the wave's actionable set to the eye.
+  const compact = node.state === 'done' || node.state === 'not_found';
+  const nested = node.children.map(id => byId.get(id)).filter((n): n is DagNode => !!n);
+  const blockers = node.blocked_by.map(id => ({ id, blocker: byId.get(id) }));
+  const chip = node.dangling ? 'not found' : node.external ? 'outside' : null;
+
+  return (
+    <section
+      style={{
+        ...DAG_CARD_STYLE,
+        ...(compact ? { flexDirection: 'row', alignItems: 'center', gap: '6px', padding: '5px 10px' } : {}),
+        borderStyle: node.external || node.state === 'not_found' ? 'dashed' : 'solid',
+        ...(node.external ? { background: 'var(--surface-elevated)' } : {}),
+        borderLeft: `2px solid ${state.rail}`,
+      }}
+    >
+      <div className="flex flex-wrap items-center gap-1.5 min-w-0">
+        <span
+          className="inline-flex items-center gap-0.5 uppercase shrink-0"
+          style={{ color: state.tone, fontSize: '10px', fontWeight: 600, letterSpacing: 'var(--tracking-caption)' }}
+        >
+          <Glyph size={11} aria-hidden />
+          <span>{state.label}</span>
+        </span>
+        <a
+          href={`#/tickets/${node.id}`}
+          className="font-mono truncate"
+          style={{ fontSize: '12px', fontWeight: 500, color: 'var(--text-primary)' }}
+        >
+          {node.id}
+        </a>
+        <span className="ml-auto font-mono shrink-0" style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+          {node.position ? `#${node.position}` : '—'}
+        </span>
+        {chip && (
+          <span
+            className="uppercase shrink-0"
+            style={{
+              fontSize: '10px',
+              letterSpacing: 'var(--tracking-caption)',
+              borderRadius: 'var(--radius-sm)',
+              border: '1px solid',
+              padding: '0 3px',
+              ...(node.dangling
+                ? { color: 'var(--status-blocked-text)', borderColor: 'currentColor' }
+                : { color: 'var(--text-muted)', borderColor: 'var(--border-hairline)' }),
+            }}
+          >
+            {chip}
+          </span>
+        )}
+      </div>
+      {!compact && (
+        <>
+          <div style={DAG_META_STYLE}>
+            {node.status || 'unknown'} · qa {node.qa} · review-pr {node.review_pr}
+          </div>
+          {node.external && node.parent && (
+            <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>parent {node.parent}</div>
+          )}
+          {nested.length > 0 && (
+            <div className="flex flex-wrap items-center gap-1" style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
+              <span>› {nested.length} nested · {nested.filter(n => n.state === 'done').length} done</span>
+              <span style={{ color: 'var(--text-muted)' }}>—</span>
+              <a href={`#/tickets/${node.id}`} style={{ color: 'var(--accent)' }}>open its DAG</a>
+            </div>
+          )}
+          {blockers.length > 0 && (
+            <div style={{ fontSize: '11px', color: 'var(--text-secondary)', overflowWrap: 'anywhere' }}>
+              blocked by{' '}
+              {blockers.map((b, i) => (
+                <span key={b.id}>
+                  {i > 0 && ', '}
+                  <a
+                    href={`#/tickets/${b.id}`}
+                    className="font-mono"
+                    style={{ color: b.blocker?.state === 'done' ? 'var(--text-secondary)' : 'var(--status-blocked-text)' }}
+                  >
+                    {b.id}
+                  </a>
+                  {b.blocker && (
+                    <span style={{ color: b.blocker.state === 'done' ? 'var(--text-secondary)' : 'var(--status-blocked-text)' }}>
+                      {' '}{b.blocker.status}
+                    </span>
+                  )}
+                </span>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+    </section>
+  );
+}
 
 function EmptyTab({ label }: { label: string }) {
   return <div className="text-sm" style={{ color: 'var(--text-muted)' }}>{label}</div>;

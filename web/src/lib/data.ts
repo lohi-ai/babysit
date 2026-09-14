@@ -184,6 +184,55 @@ export interface ManifestRepo {
   pushed: boolean;
 }
 
+// The project graph a decomposed ticket roots — `internal/ticket/dag.go`
+// serialized as-is. The SPA groups and styles what it is given: it derives no
+// edge, no wave and no state, so the wave a card sits in and the state on its
+// label are the same values `bbs ticket dag` prints.
+export type DagState = 'done' | 'running' | 'ready' | 'waiting' | 'not_found';
+
+export interface DagNode {
+  id: string;
+  /** The ticket's parent id; for an outside node, its own parent. */
+  parent: string;
+  /** `origin.position` — the planner's intended order within the fan-out. */
+  position: string;
+  /** The raw lifecycle status; `state` is the graph-admission view of it. */
+  status: string;
+  qa: string;
+  review_pr: string;
+  children: string[];
+  blocked_by: string[];
+  blocks: string[];
+  /** Dependency layer. Outside nodes carry -1: they are never layered. */
+  wave: number;
+  state: DagState;
+  /** Reached by an edge but not a member of this subtree. */
+  external: boolean;
+  /** Referenced with no ticket record at all. */
+  dangling: boolean;
+}
+
+export interface DagCounts {
+  nodes: number;
+  waves: number;
+  ready: number;
+  waiting: number;
+  done: number;
+  running: number;
+  external: number;
+  dangling: number;
+}
+
+export interface TicketDag {
+  root: string;
+  nodes: DagNode[];
+  /** Node ids per wave, in render order; outside nodes are not in any wave. */
+  waves: string[][];
+  /** Each unorderable group, as the cycle it closes. */
+  cycles: string[][];
+  counts: DagCounts;
+}
+
 export interface TicketDetail extends TicketSummary {
   requirement: string | null;
   plan: string | null;
@@ -207,6 +256,11 @@ export interface TicketDetail extends TicketSummary {
   relations: TicketRelations | null;
   /** Cross-repo peers of the same logical ticket. */
   siblings: SiblingRef[];
+  /**
+   * The project graph, present only when this ticket decomposed into children.
+   * Null on every leaf: the server sends a dag for a root or not at all.
+   */
+  dag: TicketDag | null;
 }
 
 export interface TimelineEvent {
@@ -447,6 +501,7 @@ export function normalizeSnapshot(raw: unknown): LoadedSnapshot {
       d.origin ??= null;
       d.relations ??= null;
       d.siblings ??= [];
+      d.dag ??= null;
     }
   }
   s.decisions ??= [];
