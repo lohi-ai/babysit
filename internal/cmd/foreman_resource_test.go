@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -14,19 +15,19 @@ func resourceCLIFixture(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("BABYSIT_HOME", home)
 	t.Setenv("BABYSIT_STATE_DIR", home)
+	// status reconciles leases against Orca; a missing binary is the "Orca
+	// unreachable" path, which holds every lease — the default for tests that
+	// are not about reconciliation.
+	t.Setenv("ORCA_CLI_COMMAND", filepath.Join(home, "no-orca"))
 	if err := foreman.Save(foreman.Record{ID: "fm-a", Heartbeat: foreman.Now()}); err != nil {
 		t.Fatal(err)
 	}
 	old := newResourceBroker
 	newResourceBroker = func() *foreman.ResourceBroker {
-		total := uint64(16 * 1024 * 1024 * 1024)
 		return &foreman.ResourceBroker{
 			Dir: filepath.Join(home, "resources"),
 			Probe: func() foreman.HostResources {
-				return foreman.HostResources{
-					CPUs: 8, TotalMemoryBytes: total, AvailableMemoryBytes: total / 2,
-					Load1: 1, MemoryKnown: true, LoadKnown: true,
-				}
+				return foreman.HostResources{CPUs: 8, TotalMemoryBytes: 32 << 30}
 			},
 		}
 	}
@@ -81,6 +82,79 @@ func TestForemanResourceRequiresRegisteredOwner(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "foreman fm-missing") {
 		t.Fatalf("error = %v", err)
+	}
+}
+
+// The self-heal path: status is what every foreman wake runs, so it owns the
+// lease cross-check. A proven-terminal Dispatch releases its lease; a live
+// dispatch, a task with no dispatch record, and an unreachable Orca all hold.
+func TestForemanResourceStatusReleasesTerminalLeases(t *testing.T) {
+	resourceCLIFixture(t)
+	home := os.Getenv("BABYSIT_HOME")
+	bin := filepath.Join(home, "bin")
+	if err := os.MkdirAll(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// dispatch-show answers per task: task-done is terminal, task-live is
+	// still dispatched, task-none has no dispatch record at all.
+	stub := `#!/bin/sh
+case "$1" in
+  status) echo '{"ok":true,"result":{"runtime":{"reachable":true,"capabilities":["orchestration.contract.v1"]}}}' ;;
+  open) echo '{"ok":true,"result":{}}' ;;
+  orchestration)
+    case "$*" in
+      *task-done*) echo '{"ok":true,"result":{"dispatch":{"id":"ctx_1","status":"completed"}}}' ;;
+      *task-live*) echo '{"ok":true,"result":{"dispatch":{"id":"ctx_2","status":"dispatched"}}}' ;;
+      *task-none*) echo '{"ok":true,"result":{"dispatch":null}}' ;;
+      *) echo '{"ok":true,"result":{}}' ;;
+    esac ;;
+  *) echo '{"ok":true,"result":{}}' ;;
+esac
+`
+	if err := os.WriteFile(filepath.Join(bin, "orca"), []byte(stub), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("ORCA_CLI_COMMAND", filepath.Join(bin, "orca"))
+
+	reserve := func(task string) string {
+		out := captureStdout(t, func() {
+			if err := foremanResource([]string{
+				"reserve", "fm-a", "--ticket", "bs-a", "--task", task, "--profile", "standard",
+			}); err != nil {
+				t.Fatal(err)
+			}
+		})
+		for _, line := range strings.Split(out, "\n") {
+			if strings.HasPrefix(line, "LEASE=") {
+				return strings.TrimPrefix(line, "LEASE=")
+			}
+		}
+		t.Fatalf("reserve %s omitted lease: %q", task, out)
+		return ""
+	}
+	doneLease := reserve("task-done")
+	liveLease := reserve("task-live")
+	noneLease := reserve("task-none")
+
+	out := captureStdout(t, func() {
+		if err := foremanResource([]string{"status"}); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if !strings.Contains(out, "RELEASED_LEASE="+doneLease+"\n") {
+		t.Fatalf("terminal dispatch lease not released: %q", out)
+	}
+	if strings.Contains(out, "ACTIVE_LEASE="+doneLease) {
+		t.Fatalf("released lease still active: %q", out)
+	}
+	for _, lease := range []string{liveLease, noneLease} {
+		if !strings.Contains(out, "ACTIVE_LEASE="+lease) {
+			t.Fatalf("unproven lease %s was dropped: %q", lease, out)
+		}
+	}
+	// GLOBAL_USED counts only the two held leases now.
+	if !strings.Contains(out, "GLOBAL_USED=4\n") {
+		t.Fatalf("status output: %q", out)
 	}
 }
 

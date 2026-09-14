@@ -143,8 +143,9 @@ a full project reconciliation, never a liveness-only reply. One tick:
    commits in place.
 2. Bind the recorded Orca Run and read the live state of every project Task,
    its current Dispatch, and its supervised worker. Run
-   `bbs foreman resource status` and cross-check every global resource lease
-   against those live Dispatches; a lease has no time-based expiry.
+   `bbs foreman resource status` — it releases every lease whose Dispatch Orca
+   proves terminal and prints each as `RELEASED_LEASE`. A lease has
+   no time-based expiry, so anything still listed is held.
 3. Cross-check each child against disk: checkpoint freshness, current
    `review-pr`/`qa` verdicts, `bbs ticket readiness --json`, and the finish
    policy. Never infer completion from worker prose or a `worker_done`
@@ -313,16 +314,16 @@ is not a failed attempt. `reserved` means immediately persist the lease id as
 `pointers.resource_lease` on that ticket, then call `worker-start`. If worker
 creation fails, release the lease before retrying. Keep one writer per child worktree;
 never exceed `MAX_WORKERS` even when global capacity remains.
-
 A reservation is keyed by Foreman + Orca Task and is idempotent across resume.
 It deliberately never expires on a clock: a sleeping laptop can resume a live
 worker hours later. Release it with
 `bbs foreman resource release "$RESOURCE_LEASE"` only after Orca proves the
 Dispatch terminal, then clear `pointers.resource_lease`. When reusing a settled
 worker for a new Dispatch, release the old Task's lease and reserve the new
-Task's profile first. On cold resume, reconcile each durable lease to its
-recorded Task/Dispatch; an uncertain lease stays held and blocks capacity
-rather than risking duplicate heavy work.
+Task's profile first. `bbs foreman resource status` already reconciles durable
+leases against live Dispatches on every wake; a lease that survives it is
+unproven and stays held, blocking capacity rather than risking duplicate heavy
+work.
 
 Every worker Task spec must establish the execution envelope before naming its
 ticket work: this is a supervised Orca Dispatch, its effective

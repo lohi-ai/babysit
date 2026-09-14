@@ -39,9 +39,10 @@ preempted.
 
 Reservations are global across repositories and Foremen sharing the same
 `BABYSIT_HOME`. They are keyed by Foreman and Orca Task, making a retry
-idempotent. They do not expire by time: after sleep or a coordinator crash,
-Foreman reconciles them against Orca and releases only a proven terminal
-Dispatch.
+idempotent. They do not expire by time: `bbs foreman resource status`
+reconciles them against Orca on every call and releases a lease only when the
+Dispatch is proven terminal (`RELEASED_LEASE` lines); anything still listed is
+held, and a dead Foreman's leases wait for a manual `release`.
 
 ```bash
 bbs foreman resource status

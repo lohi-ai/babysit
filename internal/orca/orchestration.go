@@ -291,32 +291,66 @@ func (c *Client) TaskFor(runID, ticket string) (string, error) {
 // settle a dispatch — so a caller that cannot read this rings no doorbell and
 // should say so, not proceed as if it had.
 func (c *Client) DispatchFor(taskID string) (string, error) {
-	if !c.Orchestration() {
-		return "", ErrNoOrchestration
-	}
-	if taskID == "" {
-		return "", errors.New("orca dispatch-show: needs a task")
-	}
-	raw, err := c.run("orchestration", "dispatch-show", "--task", taskID)
+	d, err := c.dispatchShow(taskID)
 	if err != nil {
 		return "", err
-	}
-	var wrap struct {
-		Dispatch struct {
-			ID string `json:"id"`
-		} `json:"dispatch"`
-	}
-	if err := json.Unmarshal(raw, &wrap); err != nil {
-		return "", fmt.Errorf("orca dispatch-show: %w", err)
 	}
 	// A task nobody dispatched answers ok with `"dispatch": null`, which
 	// unmarshals to an empty id. Handing that back as a success would send the
 	// caller on to a worker_done orca is going to refuse anyway — say there is
 	// no dispatch instead, the way task-list says there is no task.
-	if wrap.Dispatch.ID == "" {
+	if d.ID == "" {
 		return "", fmt.Errorf("orca dispatch-show: task %s is not dispatched", taskID)
 	}
-	return wrap.Dispatch.ID, nil
+	return d.ID, nil
+}
+
+// DispatchStatusFor reads the status of a task's current dispatch. "" means
+// the task has no dispatch record — distinct from "pending", a dispatch that
+// exists but was never activated. Callers reconciling against terminal state
+// treat "" as unproven, not finished.
+func (c *Client) DispatchStatusFor(taskID string) (string, error) {
+	d, err := c.dispatchShow(taskID)
+	if err != nil {
+		return "", err
+	}
+	return d.Status, nil
+}
+
+// dispatchShow is the shared read behind DispatchFor and DispatchStatusFor.
+// dispatch_contexts.status is 'pending', 'dispatched', 'completed', 'failed',
+// or 'circuit_broken'; the last three are terminal.
+func (c *Client) dispatchShow(taskID string) (struct {
+	ID     string `json:"id"`
+	Status string `json:"status"`
+}, error) {
+	var dispatch struct {
+		ID     string `json:"id"`
+		Status string `json:"status"`
+	}
+	if !c.Orchestration() {
+		return dispatch, ErrNoOrchestration
+	}
+	if taskID == "" {
+		return dispatch, errors.New("orca dispatch-show: needs a task")
+	}
+	raw, err := c.run("orchestration", "dispatch-show", "--task", taskID)
+	if err != nil {
+		return dispatch, err
+	}
+	var wrap struct {
+		Dispatch *struct {
+			ID     string `json:"id"`
+			Status string `json:"status"`
+		} `json:"dispatch"`
+	}
+	if err := json.Unmarshal(raw, &wrap); err != nil {
+		return dispatch, fmt.Errorf("orca dispatch-show: %w", err)
+	}
+	if wrap.Dispatch != nil {
+		dispatch = *wrap.Dispatch
+	}
+	return dispatch, nil
 }
 
 // DoneOpts is the doorbell a worker rings on its way out.

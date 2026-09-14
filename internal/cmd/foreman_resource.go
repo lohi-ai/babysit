@@ -47,12 +47,61 @@ func foremanResourceStatus(args []string) error {
 	if err != nil {
 		return err
 	}
-	status, err := newResourceBroker().Status(capUnits)
+	broker := newResourceBroker()
+	status, err := broker.Status(capUnits)
 	if err != nil {
 		return err
 	}
+	// status is the reconcile entry point every foreman wake runs, so the
+	// cross-check lives here rather than in skill prose a caller can skip: a
+	// lease whose Dispatch Orca proves terminal is released on the spot.
+	released := reconcileResourceLeases(broker, status.Leases)
+	if len(released) > 0 {
+		status, err = broker.Status(capUnits)
+		if err != nil {
+			return err
+		}
+	}
 	printResourceStatus(status)
+	for _, id := range released {
+		fmt.Println("RELEASED_LEASE=" + id)
+	}
 	return nil
+}
+
+// reconcileResourceLeases releases each lease whose task's Dispatch Orca
+// proves terminal. Orca unreachable, a probe error, a task with no dispatch
+// record, and a live dispatch all leave the lease held: the failure mode is
+// capacity loss, never a false release that could race two heavy workers onto
+// one GPU/simulator stack.
+func reconcileResourceLeases(b *foreman.ResourceBroker, leases []foreman.ResourceLease) []string {
+	c := mailboxClient()
+	if c == nil || len(leases) == 0 {
+		return nil
+	}
+	var released []string
+	for _, lease := range leases {
+		status, err := c.DispatchStatusFor(lease.Task)
+		if err != nil || !dispatchTerminal(status) {
+			continue
+		}
+		if ok, err := b.Release(lease.ID); err == nil && ok {
+			released = append(released, lease.ID)
+		}
+	}
+	return released
+}
+
+// dispatchTerminal mirrors the terminal half of Orca's dispatch_contexts
+// status enum. 'pending', 'dispatched', and "" (no dispatch record) are all
+// unproven — a lease reserved before worker-start has no dispatch yet and is
+// still owed to the retry.
+func dispatchTerminal(status string) bool {
+	switch status {
+	case "completed", "failed", "circuit_broken":
+		return true
+	}
+	return false
 }
 
 func foremanResourceReserve(args []string) error {
