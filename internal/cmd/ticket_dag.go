@@ -2,10 +2,11 @@ package cmd
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
 
@@ -16,13 +17,15 @@ import (
 // dagUsage mirrors the `ticket` family's hand-parsed contract: subcommands
 // parse their own argv because the bash original did, and the quirks are part
 // of the interface callers script against.
-const dagUsage = `usage: bbs ticket dag [<ticket>] [--mermaid] [--json]
+const dagUsage = `usage: bbs-ticket dag [<ticket>] [--mermaid] [--json]
 
 Print a project DAG — the decomposition a parent ticket declares through
-`+ "`children`" + `, layered into waves by its children's dependency edges
-(`+ "`relations.blocked_by`/`blocks`" + `).
+` + "`children`" + `, layered into waves by its children's dependency edges
+(` + "`relations.blocked_by`/`blocks`" + `).
 
-Bare: every DAG in this project. <ticket>: just that one.
+Bare: the ticket this session is on, when one resolves — its own DAG, which
+prints as a leaf when it declares no children — otherwise every DAG in the
+project. <ticket>: just that one.
   --mermaid   emit a mermaid block (waves as columns; renders in an OMP
               session, readable as source anywhere else) instead of the
               text listing
@@ -37,18 +40,25 @@ Read-only: nothing here writes ticket state.
 func runDAG(args []string) {
 	var roots []string
 	format := "text"
-	for i := range len(args) {
+	for i := 0; i < len(args); i++ {
 		switch a := args[i]; a {
 		case "--mermaid":
 			format = "mermaid"
 		case "--json":
 			format = "json"
 		case "-h", "--help", "help":
-			fmt.Print(dagUsage)
+			fmt.Print(retarget(dagUsage))
 			return
 		default:
 			if strings.HasPrefix(a, "-") {
-				fmt.Fprintf(os.Stderr, "dag: unknown flag '%s'\n%s", a, dagUsage)
+				fmt.Fprintf(os.Stderr, "dag: unknown flag '%s'\n%s", a, retarget(dagUsage))
+				os.Exit(2)
+			}
+			if len(roots) > 0 {
+				// One root or none: the batch form is the bare invocation, and a
+				// second positional is a typo (a split value) far more often than
+				// it is an intent to compare two graphs.
+				fmt.Fprintf(os.Stderr, "dag: only one <ticket> may be named; bare lists every DAG in this project\n%s", retarget(dagUsage))
 				os.Exit(2)
 			}
 			roots = append(roots, a)
@@ -73,9 +83,17 @@ func runDAG(args []string) {
 		g, err := ticket.BuildGraph(env.ProjectHome, root)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "STATUS: BLOCKED")
-			fmt.Fprintf(os.Stderr, "REASON: %s has no ticket record at %s\n", root,
-				filepath.Join(env.ProjectHome, "tickets", root, "index.json"))
-			fmt.Fprintln(os.Stderr, retarget("RECOMMENDATION: check the id (bbs-ticket board), or run `bbs ticket dag` bare to list this project's DAGs."))
+			if errors.Is(err, fs.ErrNotExist) {
+				// The common case: a typo, or an id from another project.
+				fmt.Fprintf(os.Stderr, "REASON: %s has no ticket record at %s\n", root,
+					filepath.Join(env.ProjectHome, "tickets", root, "index.json"))
+				fmt.Fprintln(os.Stderr, retarget("RECOMMENDATION: check the id (bbs-ticket board), or run `bbs-ticket dag` bare to list this project's DAGs."))
+			} else {
+				// The record is there and did not read — saying "no record"
+				// here would send the human looking for a ticket that exists.
+				fmt.Fprintf(os.Stderr, "REASON: %s\n", err)
+				fmt.Fprintln(os.Stderr, retarget("RECOMMENDATION: read the record itself (bbs-ticket path index --read), fix what it reports, then re-run."))
+			}
 			os.Exit(2)
 		}
 		graphs = append(graphs, g)
@@ -111,10 +129,15 @@ func runDAG(args []string) {
 // dagText renders the wave listing. It is the form for a terminal with no
 // mermaid renderer, and it carries the same tally the dashboard panel shows —
 // the first question asked of a project graph is "can anything start now".
+//
+// Everything here stays inside printable ASCII: this is the default output, and
+// it is read by terminals, log scrapers and byte-oriented scripts that are not
+// promised UTF-8. The mermaid and json forms carry the same information without
+// that constraint.
 func dagText(g ticket.Graph, project string) string {
 	var b strings.Builder
 	c := g.Counts
-	fmt.Fprintf(&b, "DAG %s (%s) — %d ticket%s, %d wave%s: %d ready, %d waiting, %d running, %d done",
+	fmt.Fprintf(&b, "DAG %s (%s) - %d ticket%s, %d wave%s: %d ready, %d waiting, %d running, %d done",
 		g.Root, project, c.Nodes, plural(c.Nodes), c.Waves, plural(c.Waves),
 		c.Ready, c.Waiting, c.Running, c.Done)
 	if c.External > 0 {
@@ -155,7 +178,7 @@ func dagText(g ticket.Graph, project string) string {
 		}
 	}
 	if len(outside) > 0 {
-		b.WriteString("\nOUTSIDE THIS SUBTREE  (one hop — not expanded)\n")
+		b.WriteString("\nOUTSIDE THIS SUBTREE  (one hop - not expanded)\n")
 		for _, n := range outside {
 			where := ""
 			if n.Parent != "" {
@@ -172,8 +195,8 @@ func dagText(g ticket.Graph, project string) string {
 		b.WriteString("\nCYCLE\n")
 		for _, cyc := range g.Cycles {
 			// The first id closes the loop so the reading is unambiguous.
-			fmt.Fprintf(&b, "  %s — these tickets block each other, so no wave can go first.\n",
-				strings.Join(append(append([]string{}, cyc...), cyc[0]), " → "))
+			fmt.Fprintf(&b, "  %s - these tickets block each other, so no wave can go first.\n",
+				strings.Join(append(append([]string{}, cyc...), cyc[0]), " -> "))
 		}
 	}
 	return b.String()
@@ -183,12 +206,12 @@ func dagText(g ticket.Graph, project string) string {
 // ticket has no "why isn't this moving" to answer, and a wall of five-line done
 // rows buries the one ticket that can be dispatched.
 func dagRow(n ticket.GraphNode, byID map[string]ticket.GraphNode) string {
-	pos := "—"
+	pos := "-"
 	if n.Position != "" {
 		pos = "#" + n.Position
 	}
-	line := fmt.Sprintf("%-9s %-14s %-5s %-12s", stateLabel(n.State), n.ID, pos, orDash(n.Status))
-	if n.Status == "blocked" || n.State == ticket.StateWaiting {
+	line := fmt.Sprintf("%-9s %-14s %-5s %-12s", stateLabel(n.State), n.ID, pos, orDefault(n.Status, "-"))
+	if n.State == ticket.StateWaiting {
 		var waiting []string
 		for _, id := range n.BlockedBy {
 			dep, ok := byID[id]
@@ -196,16 +219,16 @@ func dagRow(n ticket.GraphNode, byID map[string]ticket.GraphNode) string {
 				waiting = append(waiting, id+" (not found)")
 				continue
 			}
-			waiting = append(waiting, fmt.Sprintf("%s (%s)", id, orDash(dep.Status)))
+			waiting = append(waiting, fmt.Sprintf("%s (%s)", id, orDefault(dep.Status, "-")))
 		}
 		if len(waiting) > 0 {
-			line += "← blocked by " + strings.Join(waiting, ", ")
+			line += "<- blocked by " + strings.Join(waiting, ", ")
 		}
 	}
 	// Verdicts are the gate a human reads next, so they ride on the rows that
 	// can still move; a done ticket's verdicts are history.
 	if n.State == ticket.StateReady || n.State == ticket.StateRunning || n.State == ticket.StateWaiting {
-		line += fmt.Sprintf("  qa:%s review-pr:%s", orDash(n.QA), orDash(n.ReviewPR))
+		line += fmt.Sprintf("  qa:%s review-pr:%s", orDefault(n.QA, "-"), orDefault(n.ReviewPR, "-"))
 	}
 	if len(n.Children) > 0 {
 		line += fmt.Sprintf("  (%d nested)", len(n.Children))
@@ -213,13 +236,23 @@ func dagRow(n ticket.GraphNode, byID map[string]ticket.GraphNode) string {
 	return line
 }
 
-// mermaidID keeps a mermaid node id to [A-Za-z0-9_]: a ticket id carries `-`
-// and would otherwise parse as edge syntax. The `n_` prefix also stops an id
-// that starts with a digit from reading as a number.
-var mermaidIDUnsafe = regexp.MustCompile(`[^A-Za-z0-9_]`)
-
+// mermaidID keeps a mermaid node id to [A-Za-z0-9_] and makes that mapping
+// injective: a ticket id carries `-`, which would otherwise parse as edge
+// syntax, and a lossy sanitizer would merge two distinct tickets into one node.
+// Every character outside the safe set becomes `_x<hex>`, so nothing is
+// ambiguous — `bs-a-b` and `bs-a_b` stay two nodes.
 func mermaidID(id string) string {
-	return "n_" + mermaidIDUnsafe.ReplaceAllString(id, "_")
+	var b strings.Builder
+	b.WriteString("n_")
+	for _, r := range id {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+			b.WriteRune(r)
+		default:
+			fmt.Fprintf(&b, "_x%02x", r)
+		}
+	}
+	return b.String()
 }
 
 // dagMermaid emits the graph as a mermaid diagram. This is the form a foreman
@@ -250,6 +283,10 @@ func dagMermaid(g ticket.Graph) string {
 		b.WriteString("  end\n")
 	}
 
+	// Edges come from the members' normalized `blocked_by`, and every endpoint of
+	// one is a node this graph holds: the walk collects a member's blockers as
+	// members or as externals, and an outside node carries no edges of its own
+	// (the model clears them, so the one-hop bound is not re-derived here).
 	seen := map[string]bool{}
 	var edges []string
 	for _, n := range g.Nodes {
@@ -270,17 +307,10 @@ func dagMermaid(g ticket.Graph) string {
 		b.WriteString(e + "\n")
 	}
 
-	// A node named only by an edge still needs a declaration, or the diagram
-	// shows a bare id where a ticket belongs.
-	declared := map[string]bool{}
-	for _, wave := range g.Waves {
-		for _, id := range wave {
-			declared[id] = true
-		}
-	}
+	// Every edge endpoint is a declared wave member or an outside node, so each
+	// id above already carries a declaration and a class.
 	for _, n := range g.Nodes {
-		if n.External && !declared[n.ID] {
-			declared[n.ID] = true
+		if n.External {
 			fmt.Fprintf(&b, "  %s\n", mermaidNode(n.ID, n))
 		}
 	}
@@ -296,6 +326,18 @@ func dagMermaid(g ticket.Graph) string {
 	b.WriteString("  classDef not_found stroke:#c92a2a,fill:none,stroke-width:2px,stroke-dasharray:4 3;\n")
 	b.WriteString("```\n")
 	return b.String()
+}
+
+// mermaidText escapes text that goes inside a mermaid label. Labels are
+// delimited by `"`, and `origin.position` is free text a planner writes
+// (`bbs ticket init --position`), so an unescaped quote would close the label
+// early — turning the rest of the line into diagram syntax — and a newline would
+// end the statement outright. `#quot;` is mermaid's own entity escape.
+func mermaidText(s string) string {
+	s = strings.ReplaceAll(s, `"`, "#quot;")
+	s = strings.ReplaceAll(s, "\r", " ")
+	s = strings.ReplaceAll(s, "\n", " ")
+	return s
 }
 
 // mermaidNode declares one node. The label carries the id, its raw status and —
@@ -317,7 +359,7 @@ func mermaidNode(id string, n ticket.GraphNode) string {
 	if len(bits) > 0 {
 		label += "<br/>" + strings.Join(bits, " · ")
 	}
-	return fmt.Sprintf(`%s["%s"]`, mermaidID(id), label)
+	return fmt.Sprintf(`%s["%s"]`, mermaidID(id), mermaidText(label))
 }
 
 // mermaidClass maps a state onto the classDef alphabet. `waiting` shares the
@@ -342,13 +384,6 @@ func mermaidClass(state string) string {
 // in `not_found` turned into the space the panel and the cycle callout use.
 func stateLabel(state string) string {
 	return strings.ToUpper(strings.ReplaceAll(state, "_", " "))
-}
-
-func orDash(s string) string {
-	if s == "" {
-		return "—"
-	}
-	return s
 }
 
 func plural(n int) string {

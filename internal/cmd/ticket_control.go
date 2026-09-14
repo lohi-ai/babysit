@@ -148,16 +148,16 @@ func clearControl(want string) {
 
 // undoVerb names the subcommand that clears a given control state.
 func undoVerb(state string) string {
-	if state == "cancelled" {
+	if state == ticket.ControlCancelled {
 		return "restore"
 	}
 	return "resume"
 }
 
-func runPause(args []string)  { applyControl("paused", args) }
-func runCancel(args []string) { applyControl("cancelled", args) }
-func runResume()              { clearControl("paused") }
-func runRestore()             { clearControl("cancelled") }
+func runPause(args []string)  { applyControl(ticket.ControlPaused, args) }
+func runCancel(args []string) { applyControl(ticket.ControlCancelled, args) }
+func runResume()              { clearControl(ticket.ControlPaused) }
+func runRestore()             { clearControl(ticket.ControlCancelled) }
 
 // assignSet is the locked mutation behind assign, shared with the dashboard's
 // POST handler. An empty foreman clears the assignment.

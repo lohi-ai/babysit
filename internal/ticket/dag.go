@@ -1,6 +1,7 @@
 package ticket
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -93,28 +94,66 @@ const (
 	StateNotFound = "not_found"
 )
 
-// settledStatuses are the statuses that count as "this dependency is over".
+// settledStatuses are the statuses that count as "this dependency is over", and
+// runningStatuses the ones that mean a worker is on it. Both are read through
+// the predicates below rather than as maps, so the board, the serving batch and
+// the DAG ask one question with one answer.
 var settledStatuses = map[string]bool{"done": true, "cancelled": true, "duplicate": true}
+
+// StatusSettled reports whether a lifecycle rung means the ticket is over: its
+// dependency is discharged and nothing downstream is waiting on its work. It is
+// the model layer's one definition of that set — a status added to the ladder
+// cannot leave one reader behind.
+func StatusSettled(status string) bool { return settledStatuses[status] }
 
 // runningStatuses are the statuses that mean a worker is on it.
 var runningStatuses = map[string]bool{"in_progress": true, "in_review": true}
+
+// The human override axis, which lives beside `status` and never rewrites it
+// (see internal/cmd/ticket_control.go): a cancelled ticket keeps the rung it
+// was parked at. Admission has to read both axes, or twenty real records —
+// control-cancelled, still parked on `triage`/`planned` — would be offered as
+// dispatchable work the moment they are rendered.
+const (
+	ControlPaused    = "paused"
+	ControlCancelled = "cancelled"
+)
+
+// plainID reports whether an id can name a ticket inside the project. An id
+// carrying a path separator, or one of the traversal components, is a path and
+// not a ticket: joining it would read a record outside <projectHome>/tickets and
+// render another project's graph under this project's name. The dashboard route
+// guard (`badDashSlug`, `idRe`) applies the same rule to the ids it accepts.
+func plainID(id string) bool {
+	return id != "" && id != "." && id != ".." && !strings.ContainsAny(id, `/\`)
+}
 
 // BuildGraph reads the project graph rooted at root. A missing root record is an
 // error — the caller asked about a specific ticket and silence would read as
 // "no children"; every other gap (a dangling child, a missing blocker) is data,
 // not an error.
+//
+// A root whose record exists but cannot be parsed is the same error to the
+// caller, carrying the read failure rather than a claim that nothing is there.
 func BuildGraph(projectHome, root string) (Graph, error) {
 	g := Graph{Root: root, Nodes: []GraphNode{}, Waves: [][]string{}, Cycles: [][]string{}}
 
 	home := func(id string) string { return filepath.Join(projectHome, "tickets", id) }
 	docs := map[string]Doc{}
+	readErrs := map[string]error{}
 	readDoc := func(id string) (Doc, bool) {
 		if d, ok := docs[id]; ok {
 			return d, d != nil
 		}
+		if !plainID(id) {
+			docs[id] = nil
+			readErrs[id] = fmt.Errorf("%q is not a ticket id", id)
+			return nil, false
+		}
 		d, err := ReadDocStrict(filepath.Join(home(id), "index.json"))
 		if err != nil {
 			docs[id] = nil
+			readErrs[id] = err
 			return nil, false
 		}
 		docs[id] = d
@@ -123,13 +162,19 @@ func BuildGraph(projectHome, root string) (Graph, error) {
 
 	rootDoc, ok := readDoc(root)
 	if !ok {
+		// The strict error rides out with the root: a record that exists but
+		// does not parse is not the same fact as a ticket that is not there, and
+		// the caller's message ("no record at <path>") would be a lie.
+		if err := readErrs[root]; err != nil {
+			return g, err
+		}
 		return g, os.ErrNotExist
 	}
 
 	// ─── the subtree: descend `children`, breadth-first, cycle-safe ──────────
 	var members []string
 	seen := map[string]bool{root: true}
-	frontier := strList(rootDoc.Value("children"))
+	frontier := rootDoc.Children()
 	for len(frontier) > 0 {
 		var next []string
 		for _, id := range frontier {
@@ -139,7 +184,7 @@ func BuildGraph(projectHome, root string) (Graph, error) {
 			seen[id] = true
 			members = append(members, id)
 			if d, ok := readDoc(id); ok {
-				next = append(next, strList(d.Value("children"))...)
+				next = append(next, d.Children()...)
 			}
 		}
 		frontier = next
@@ -164,7 +209,7 @@ func BuildGraph(projectHome, root string) (Graph, error) {
 		n.Parent = d.Get("parent")
 		n.Position = d.Get("origin.position")
 		n.Status = d.Get("status")
-		n.Children = strList(d.Value("children"))
+		n.Children = d.Children()
 		n.BlockedBy = strList(d.Value("relations.blocked_by"))
 		n.Blocks = strList(d.Value("relations.blocks"))
 		n.QA = VerdictStatusAt(filepath.Join(home(id), "verdicts", "qa.md"))
@@ -179,12 +224,14 @@ func BuildGraph(projectHome, root string) (Graph, error) {
 	}
 
 	// Dependencies are recorded on both sides — the dependent's blocked_by and
-	// the blocker's blocks — and real records disagree about which side was
-	// written. Reading both and deduping is what keeps a half-linked relation
-	// from silently removing an edge from the picture.
+	// the blocker's blocks — and a record may write only one of them. Reading
+	// both and deduping is what keeps a half-linked relation from silently
+	// removing an edge from the picture. A self-edge is kept: a ticket that
+	// blocks itself can never start, and the residue pass reports it as the
+	// cycle it is.
 	deps := map[string]map[string]bool{} // dependent -> blockers
 	addDep := func(dependent, blocker string) {
-		if dependent == "" || blocker == "" || dependent == blocker {
+		if dependent == "" || blocker == "" {
 			return
 		}
 		if deps[dependent] == nil {
@@ -211,12 +258,44 @@ func BuildGraph(projectHome, root string) (Graph, error) {
 				noteExternal(dep)
 			}
 		}
-		// `blocks` is read for layering only. Its outside end is a *dependent*,
-		// not a blocker: a lane of things waiting on this subtree explains none
-		// of the "why is this stuck" the graph exists to answer.
+		// `blocks` is read for layering only: a relation whose outside end is the
+		// dependent leaves no blocker to discover — only the members' blocked_by
+		// can name a blocker outside the subtree, and a project-wide scan for the
+		// reverse side is the unbounded expansion this walk deliberately refuses.
 		for _, down := range n.Blocks {
 			addDep(down, id)
 		}
+	}
+
+	// A member's serialized edges are the ones the model just used — both ways.
+	// A relation written only on the blocker's `blocks` side still moves the
+	// dependent's wave and state, so leaving `blocked_by` as the raw field would
+	// print a WAITING node with no visible reason for waiting; and the reverse
+	// field is filled from the same set, so a relation written on only one side
+	// does not leave the other card's `blocks` silently half-populated.
+	blocks := map[string][]string{}
+	for id := range deps {
+		if !inTree[id] {
+			continue // an outside dependent is not part of this graph
+		}
+		for blocker := range deps[id] {
+			blocks[blocker] = append(blocks[blocker], id)
+		}
+	}
+	for _, id := range members {
+		list := make([]string, 0, len(deps[id]))
+		for blocker := range deps[id] {
+			list = append(list, blocker)
+		}
+		sort.Strings(list)
+		byID[id].BlockedBy = list
+
+		down := blocks[id]
+		sort.Strings(down)
+		if down == nil {
+			down = []string{}
+		}
+		byID[id].Blocks = down
 	}
 
 	// ─── waves: longest path over dependency edges inside the tree ───────────
@@ -224,29 +303,46 @@ func BuildGraph(projectHome, root string) (Graph, error) {
 	// Kahn by layer rather than DFS: it hands back the layering and the residue
 	// in one pass, and the residue is exactly the cycle set. Both orders are
 	// sorted so a re-run of the same project prints the same graph.
-	rank := func(id string) string {
+	//
+	// Sort key for a fan-out: the planner's `origin.position` when the record
+	// carries one, then the id. A numbered position orders numerically, so
+	// `origin.position` 10 does not sort before 9; a position that is not a
+	// number orders lexically, and the two kinds never mix inside one comparison.
+	// Switching between numeric and lexical comparison per pair would be
+	// non-transitive — `sort.Slice` requires a strict weak order and would be
+	// free to return any arrangement at all.
+	type posKey struct {
+		numbered bool
+		number   int
+		raw      string
+		id       string
+	}
+	key := func(id string) posKey {
+		// A ticket with no position keys on its own id, the way the planner's
+		// fallback order reads: the id is the last tiebreak anyway, and an empty
+		// key would sort it ahead of a sibling that carries a non-numeric
+		// position — a real value, since `origin.position` is free text.
+		k := posKey{id: id, raw: id}
 		if n := byID[id]; n != nil && n.Position != "" {
+			k.raw = n.Position
 			if v, err := strconv.Atoi(n.Position); err == nil {
-				return strconv.Itoa(v)
+				k.numbered, k.number = true, v
 			}
-			return n.Position
 		}
-		return id
+		return k
 	}
 	less := func(ids []string) {
 		sort.Slice(ids, func(i, j int) bool {
-			ri, rj := rank(ids[i]), rank(ids[j])
-			if ri != rj {
-				// Numeric position when both sides have one, so `origin.position`
-				// 10 does not sort before 9 in a sibling fan-out.
-				if a, err := strconv.Atoi(ri); err == nil {
-					if b, err := strconv.Atoi(rj); err == nil {
-						return a < b
-					}
-				}
-				return ri < rj
+			a, b := key(ids[i]), key(ids[j])
+			switch {
+			case a.numbered != b.numbered:
+				return a.numbered // a real position leads a missing one
+			case a.numbered && a.number != b.number:
+				return a.number < b.number
+			case !a.numbered && a.raw != b.raw:
+				return a.raw < b.raw
 			}
-			return ids[i] < ids[j]
+			return a.id < b.id
 		})
 	}
 
@@ -312,7 +408,7 @@ func BuildGraph(projectHome, root string) (Graph, error) {
 
 	// ─── states ──────────────────────────────────────────────────────────────
 	//
-	// A blocker is judged by its *status*, never by the state already written to
+	// A blocker is judged by its *record*, never by the state already written to
 	// a node: the two are computed in one pass, so consulting a neighbour's
 	// State would make the answer depend on traversal order. Readmission is
 	// deliberately non-transitive — a dependent is ready only once its blockers
@@ -321,23 +417,39 @@ func BuildGraph(projectHome, root string) (Graph, error) {
 	// A blocker outside the tree is still a blocker, so its record is read here
 	// (one hop): "waiting on bs-x" should mean "bs-x is done" or "bs-x is gone",
 	// not "unknown".
-	statusState := func(id string) string {
-		var status string
-		if d, ok := readDoc(id); ok {
-			status = d.Get("status")
-		} else {
-			return StateNotFound
-		}
+	//
+	// Both axes are read. `status` is the lifecycle rung; `control` is the human
+	// override, which never rewrites it — a control-cancelled ticket is still
+	// parked on whatever rung it was dropped at. Reading status alone would
+	// offer that ticket as ready work, and would keep its dependents waiting on
+	// a dependency a human has already settled.
+	admission := func(status, control string) string {
 		switch {
-		case settledStatuses[status]:
+		case settledStatuses[status], control == ControlCancelled:
 			return StateDone
+		case control == ControlPaused:
+			// Pause deliberately leaves the rung alone, and a controlled ticket
+			// refuses to dispatch a new attempt at all
+			// (internal/cmd/ticket_control.go). So a paused ticket is never
+			// running — whatever rung it was parked at, including
+			// `in_progress` — and never ready.
+			return StateWaiting
 		case runningStatuses[status]:
 			return StateRunning
 		case status == "blocked":
+			// An explicit block is the ticket saying so; a graph that read it
+			// as ready would contradict the record it is displaying.
 			return StateWaiting
 		default:
 			return StateReady
 		}
+	}
+	stateOf := func(id string) string {
+		d, ok := readDoc(id)
+		if !ok {
+			return StateNotFound
+		}
+		return admission(d.Get("status"), d.Get("control.state"))
 	}
 
 	for _, id := range members {
@@ -348,22 +460,17 @@ func BuildGraph(projectHome, root string) (Graph, error) {
 			n.State = StateNotFound
 			continue
 		}
-		switch {
-		case settledStatuses[n.Status]:
-			n.State = StateDone
-		case runningStatuses[n.Status]:
-			n.State = StateRunning
-		case n.Status == "blocked":
-			// An explicit block is the ticket saying so; a graph that read it as
-			// ready would contradict the record it is displaying.
-			n.State = StateWaiting
-		default:
-			n.State = StateReady
-			for blocker := range deps[id] {
-				if statusState(blocker) != StateDone {
-					n.State = StateWaiting
-					break
-				}
+		if state := stateOf(id); state != StateReady {
+			n.State = state
+			continue
+		}
+		// READY is the only state that depends on the neighbours, and it is the
+		// question the graph exists to answer: can this be dispatched now.
+		n.State = StateReady
+		for blocker := range deps[id] {
+			if stateOf(blocker) != StateDone {
+				n.State = StateWaiting
+				break
 			}
 		}
 	}
@@ -375,7 +482,12 @@ func BuildGraph(projectHome, root string) (Graph, error) {
 	less(externals)
 	for _, id := range externals {
 		n := node(id, true)
-		n.State = statusState(id)
+		n.State = stateOf(id)
+		// An outside node is one hop of context, not a member: its own record's
+		// relations belong to a graph this one deliberately does not expand.
+		// Carrying them would hand every renderer a second hop to leak — the SPA
+		// did — plus edges whose far end the model never counted.
+		n.BlockedBy, n.Blocks = []string{}, []string{}
 		g.Nodes = append(g.Nodes, n)
 	}
 
@@ -490,10 +602,17 @@ func appendUniqueCycle(out [][]string, seen map[string]bool, cyc []string) [][]s
 	return append(out, rot)
 }
 
-// strList reads a Doc value that should be a list of ids. Anything else — a
-// missing key, a scalar where a list belongs — reads as empty rather than
-// failing the whole graph, matching how the rest of the record layer treats a
-// malformed field: the graph degrades one edge, it does not disappear.
+// Children reads the record's `children` as a list of ids, tolerating a bare
+// string for the one-child case. Exported because the dashboard asks the same
+// question when it decides whether a ticket gets a DAG tab: two parsers of one
+// field would let the CLI show a graph the tab hides.
+func (d Doc) Children() []string { return strList(d.Value("children")) }
+
+// strList reads a Doc value that should be a list of ids. A bare string reads as
+// a one-element list — a record may legitimately carry `blocked_by: "bs-x"` —
+// and anything else (a missing key, a number, an object) reads as empty rather
+// than failing the whole graph: the graph degrades one edge, it does not
+// disappear.
 func strList(v interface{}) []string {
 	out := []string{}
 	switch x := v.(type) {
@@ -528,7 +647,7 @@ func DAGRoots(projectHome string) []string {
 	var out []string
 	for _, id := range ids {
 		d := ReadDoc(filepath.Join(projectHome, "tickets", id, "index.json"))
-		if len(strList(d.Value("children"))) > 0 {
+		if len(d.Children()) > 0 {
 			out = append(out, id)
 		}
 	}

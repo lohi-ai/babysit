@@ -112,6 +112,12 @@ has_all "live-change-intake" \
   'bbs foreman inbox' 'change-request' \
   "Do not rewrite a settled ticket" 'prior Integration QA'
 
+has_all "dag-emission-contract" \
+  '## The project DAG' 'bbs ticket dag "$PARENT" --mermaid' \
+  'Read-only: it never writes ticket state' 'never re-type the edges' \
+  'Topology built' 'Topology changed' 'Status wake' \
+  're-emits the DAG' 'rides with the status it explains'
+
 has_all "goal-compaction-and-days" \
   'persistent goal proxy' 'Compaction is a cold-resume boundary' \
   'bbs foreman ensure <id>' 'cold-starts instead'
@@ -120,6 +126,14 @@ has_all "active-status-reconcile" \
   '## Status reconciliation' 'check --wait' \
   'never a liveness-only reply' 'Dispatch only newly ready work' \
   'active for the next bounded check'
+has_all "eager-per-ticket-finish" \
+  '## Eager per-ticket finish' 'done tickets never wait' \
+  'bbs ticket land <child>' 'create-pr' 'dependency order' \
+  'pending Integration QA Task' 'resets local base' \
+  'pointers.pr' 'merge-base --is-ancestor' \
+  'supervised repair Dispatch' 'never blind-retry' \
+  'Under `land`' 'under `pr`' '`review`'
+
 
 has_all "status-wake-full-snapshot" \
   'status wake' 'always prints the full' \

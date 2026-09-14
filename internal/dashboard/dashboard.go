@@ -307,9 +307,10 @@ func ticketDetail(o Options, projectDir, tdir string) (obj, bool) {
 // The children check reads the record the caller already opened: a ticket whose
 // `children` is empty cannot root a graph, so the walk (which re-reads every
 // child's index.json) is skipped entirely for the leaf tickets that make up
-// most of a project.
+// most of a project. The check is the model's own parser — a second opinion
+// about what `children` means would let the CLI show a graph the tab hides.
 func dagFor(projectDir, id string, idx ticket.Doc) interface{} {
-	if !hasChildren(idx) {
+	if len(idx.Children()) == 0 {
 		return nil
 	}
 	g, err := ticket.BuildGraph(projectDir, id)
@@ -317,20 +318,6 @@ func dagFor(projectDir, id string, idx ticket.Doc) interface{} {
 		return nil
 	}
 	return g
-}
-
-// hasChildren reports whether the record declares a fan-out. A malformed
-// `children` (a scalar where a list belongs) counts as none: the tab is
-// additive, and a ticket that cannot root a graph should render as a leaf
-// rather than fail the whole snapshot.
-func hasChildren(idx ticket.Doc) bool {
-	switch v := idx.Value("children").(type) {
-	case []interface{}:
-		return len(v) > 0
-	case []string:
-		return len(v) > 0
-	}
-	return false
 }
 
 // prototypeCap bounds the mock embedded in the snapshot. A design prototype is

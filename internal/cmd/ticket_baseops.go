@@ -598,8 +598,7 @@ func runServe(args []string) {
 		} else {
 			ids, _ := ticket.TicketIDs(env.ProjectHome)
 			for _, t := range ids {
-				switch ticket.ReadDoc(filepath.Join(env.ProjectHome, "tickets", t, "index.json")).Get("status") {
-				case "done", "cancelled", "duplicate":
+				if ticket.StatusSettled(ticket.ReadDoc(filepath.Join(env.ProjectHome, "tickets", t, "index.json")).Get("status")) {
 					continue
 				}
 				if !serveVerdictOK(primary, t, "qa") || !serveVerdictOK(primary, t, "review-pr") {

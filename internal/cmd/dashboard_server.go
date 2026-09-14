@@ -406,9 +406,9 @@ func (s *dashServer) handleControl(w http.ResponseWriter, r *http.Request) {
 
 	switch req.Action {
 	case "pause", "cancel":
-		state := "paused"
+		state := ticket.ControlPaused
 		if req.Action == "cancel" {
-			state = "cancelled"
+			state = ticket.ControlCancelled
 		}
 		status, conflict, err := controlApply(st, state, req.Note, actorRole())
 		if err != nil {
@@ -431,9 +431,9 @@ func (s *dashServer) handleControl(w http.ResponseWriter, r *http.Request) {
 			"ticket": st.Env.Ticket, "control": state, "status": status,
 		})
 	case "resume", "restore":
-		want := "paused"
+		want := ticket.ControlPaused
 		if req.Action == "restore" {
-			want = "cancelled"
+			want = ticket.ControlCancelled
 		}
 		cur, status, err := controlClear(st, want, actorRole())
 		if err != nil {

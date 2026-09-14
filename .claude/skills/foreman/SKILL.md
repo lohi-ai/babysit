@@ -151,14 +151,19 @@ a full project reconciliation, never a liveness-only reply. One tick:
    message alone.
 4. Report the status of every project Task and supervised worker plus global
    resource use — the full TICKETS/INTEGRATION_QA/RESOURCES snapshot, not only
-   state changes.
+   state changes — with the project DAG (`bbs ticket dag "$PARENT" --mermaid`,
+   **The project DAG**) so the shape rides with the status it explains.
 5. Dispatch only newly ready work that passes resource admission, retry only
    proven failed/stopped Dispatches, and release settled workers and their
    resource leases when not immediately reused. Remain active for the next bounded check;
    a tick with work remaining is not a terminal outcome.
-6. When every required ticket and integration gate passes, run the Finish
-   and cleanup sequence, report the user-facing terminal result, and only
-   then write the terminal `done` heartbeat described there.
+6. Run the eager per-ticket finish pass in dependency order — **Eager
+   per-ticket finish**: land or PR every eligible child, then release its
+   worker, lease, and worktree. Done tickets never wait for the project.
+7. When every required ticket and integration gate passes, run the Finish
+   and cleanup sequence for whatever the eager pass left — the integration
+   gate, held or failed lands — report the user-facing terminal result, and
+   only then write the terminal `done` heartbeat described there.
 
 ## Persistent goal and long-horizon loop
 
@@ -220,6 +225,8 @@ the coordinator, but it is not accepted scope until represented on disk.
   stale. Recompose and rerun it. If intake changes during finish, stop after the
   current safe handler boundary, reconcile the new DAG, and never report the
   old child snapshot as project completion.
+- Every accepted intake that moved an edge or added a ticket re-emits the DAG
+  in the same reply — **The project DAG**.
 
 ## Decompose and prepare topology
 
@@ -254,6 +261,8 @@ the coordinator, but it is not accepted scope until represented on disk.
    from the worktree records the ticket branch in `pointers.branch`; from
    the primary it would record `main`. Write `requirement.md`, link both
    sides of every relation, and assign parent and children to this foreman.
+   The moment both sides of every relation are linked, emit the DAG with the
+   dispatch plan — **The project DAG**.
 4. Validate the primary checkout, `git worktree list`, every recorded path,
    branch head, and configured base before dispatch. Recreate a missing clean
    worktree only from its recorded branch. A dirty or divergent worktree is a
@@ -324,6 +333,45 @@ Orca `ask` for a genuine User Challenge, and follows the injected lifecycle
 through exactly one `worker_done`. This statement in the Task spec is
 load-bearing because `worker-start --agent` does not expose an environment
 option; never assume a coordinator shell export reached the worker process.
+
+## The project DAG
+
+`bbs ticket dag` renders the owned parent's graph from ticket state alone —
+`children` plus `relations.blocked_by`/`blocks` — layered into waves, with
+blockers that live outside the subtree and dangling child ids labelled rather
+than dropped. Read-only: it never writes ticket state, so it is safe to run on
+every tick.
+
+```bash
+bbs ticket dag "$PARENT"              # ASCII listing — the default for a terminal
+                                      #   with no renderer
+bbs ticket dag "$PARENT" --mermaid    # a fenced flowchart LR block — the form to show
+bbs ticket dag "$PARENT" --json       # the same model, machine-readable
+```
+
+**Show the mermaid form**, not the ASCII listing: OMP renders the fenced block
+in-TUI, and on Claude Code and Codex it is still readable as source. Print the
+command's output verbatim — never re-type the edges, and never describe the
+graph from memory.
+
+Emit it in the reply at the three moments the graph is the answer:
+
+1. **Topology built** — once decomposition has created the children and linked
+   both sides of every relation, the DAG goes in the same reply as the dispatch
+   plan. That is the first moment the shape exists, and the human reviews it
+   before a worker starts on it.
+2. **Topology changed** — a new child ticket, an accepted change request, or any
+   `blocks`/`blocked_by` edit. The graph the coordinator acts on and the graph
+   the human last saw must not drift.
+3. **Status wake** — the full snapshot in **Status reconciliation** carries it
+   alongside the TICKETS/RESOURCES rows.
+
+"Show the DAG", "what's the DAG", or any equivalent ask is this command against
+the owned parent. A parent whose children have no children prints as a single
+wave of leaf nodes — that is the honest answer, not a reason to fall back to a
+prose summary. Any intake that changes the topology re-emits the graph in the
+same reply (**Live ticket and change-request intake**), and the graph rides in
+the terminal snapshot until the project finishes.
 
 ## Worker model and effort routing
 
@@ -446,12 +494,17 @@ Workers execute per-ticket QA; foreman owns when and where it runs.
   `bbs ticket surface compose` to compose exactly those child branches on
   the primary checkout, classify and reserve the Integration QA Task's global
   resource profile, and dispatch a QA worker there against the parent
-  requirement and plan.
+  requirement and plan. Under `land`, a child covered by a pending
+  Integration QA Task holds its land until that gate passes — `surface
+  compose` resets local base to `origin/<base>` and would discard an early
+  merge. Children outside the coverage set land eagerly.
 - Integration QA is read-only on the composed primary. It persists parent QA
   evidence but does not fix code there. A finding becomes a follow-up Dispatch
-  to the owning child worktree; rerun that child's review/QA and then rebuild
-  and rerun the Integration QA Task. Release the parent lease on every terminal
-  outcome.
+  to the owning child worktree — under `pr`, where the child may already be
+  PRed and its worktree removed, recreate the worktree from its recorded
+  branch and let the fix update that PR — then rerun that child's review/QA
+  and rebuild and rerun the Integration QA Task. Release the parent lease on
+  every terminal outcome.
 - If tickets are demonstrably independent and no parent journey crosses them,
   record why integration QA is `N/A`; current per-ticket evidence still gates
   completion.
@@ -462,7 +515,61 @@ the same recorded worktree. After three failures or a circuit-breaker, mark the
 ticket blocked with evidence and continue any independent Tasks. The project
 cannot report `DONE` while a required child or integration gate is blocked.
 
+## Eager per-ticket finish
+
+A child whose durable gates pass finishes at the tick that observes it —
+done tickets never wait for the project. Merged code reaches base early and
+the ticket's worker, lease, and worktree free up for the next wave. A child
+is eligible when all of these hold:
+
+- current `review-pr` + `qa` verdicts are DONE and `bbs ticket readiness
+  --action <land|pr> --json` allows the intended action;
+- every prerequisite child has itself finished (landed, PRed, or — under
+  `review` — gates passed); dependency order is preserved, never reordered;
+- under `land`, the child is not covered by a pending Integration QA Task —
+  `surface compose` resets local base to `origin/<base>` and would discard
+  an early merge. Covered children hold until that gate passes; children
+  outside the coverage set land at the next tick.
+
+Foreman runs the handler itself — a clean git operation is coordination, not
+code — in dependency order, one child at a time:
+
+- `land` — `bbs ticket land <child>` from the primary checkout. Revert any
+  scratch composition first (`bbs ticket surface revert`); `land` BLOCKs on
+  a nonempty `bbs-serving` marker. It merges locally and never pushes.
+- `pr` — invoke the real `create-pr` skill for that child as soon as its
+  gates pass; a PR does not mutate base, so integration coverage does not
+  hold it. Persist the result as `pointers.pr` on the child.
+- `review` — no merge is authorized; the eager pass only releases the
+  settled worker and its resource lease. Branches and worktrees stay for
+  the human.
+
+After a successful `land` or `pr`: archive the settled worker's output,
+`worker-release` it, release the resource lease, and remove the
+verified-clean non-primary worktree with ordinary `git worktree remove` —
+keep the branch. On any failure or hold, keep the worktree recoverable.
+
+Failure routing — never blind-retry an unchanged state:
+
+- surface-lease contention → leave the child eligible; the next tick retries;
+- stale or `ready:false` readiness → return the child to verification
+  (re-run the affected gate in its worktree) before landing;
+- merge conflict or land failure → a supervised repair Dispatch in the
+  child's worktree resolves it (merge `origin/<base>` in, never local base);
+  keep the worktree and do not retry the land until that Dispatch settles;
+- a `create-pr` failure → retry once at the next tick, then mark the child
+  blocked with evidence.
+
+On resume, recognize an eager-finished child before evaluating
+worktree-bound readiness: a persisted `pointers.pr`, or a branch already
+merged into base (`git merge-base --is-ancestor`), means the child is done —
+clean up leftovers; never BLOCK on a missing worktree for a finished child.
+
 ## Finish and cleanup
+
+The eager pass finishes most children; this sequence is the fallback for
+what it could not — integration-QA-held lands, failed lands awaiting repair,
+and the terminal heartbeat — and it still owns the integration gate.
 
 Finish only after every required child has current `review-pr` + `qa` DONE,
 the parent integration gate passed or is justified `N/A`, and readiness says
@@ -521,7 +628,10 @@ Cold resume must be sufficient with no conversation memory:
 3. Bind the recorded Orca Run and list its Tasks. For each Task, inspect the
    current Dispatch and supervised worker state using the live guide.
 4. Cross-check each Task against the child worktree and disk gate it claims to
-   own. Never synthesize `worker_done` or a PASS to repair disagreement.
+   own. Recognize an eager-finished child first — a persisted `pointers.pr`
+   or a branch already merged into base means done: clean up leftovers and
+   never BLOCK on its missing worktree. Never synthesize `worker_done` or a
+   PASS to repair disagreement.
 5. Recover a lost mutation by request receipt; keep waiting for live workers;
    retry only proven failed/stopped attempts; release every settled worker not
    immediately reused.
@@ -533,8 +643,9 @@ Cold resume must be sufficient with no conversation memory:
 Report only state changes, escalations, and terminal evidence; normal worker
 activity lives in Orca and the task board. One exception: a status wake
 ("check status" nudge or an explicit status request) always prints the full
-snapshot — every project Task and supervised worker — even when nothing
-changed, because the nudge exists to learn whether the foreman is wedged.
+snapshot — every project Task and supervised worker, plus the project DAG —
+even when nothing changed, because the nudge exists to learn whether the
+foreman is wedged.
 
 ```text
 STATUS: DONE | DONE_WITH_CONCERNS | NEEDS_CONTEXT | BLOCKED | IN_PROGRESS

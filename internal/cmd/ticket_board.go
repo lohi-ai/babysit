@@ -57,11 +57,8 @@ func runBoard(args []string) {
 		if status == "" {
 			status = "triage"
 		}
-		if !showAll {
-			switch status {
-			case "done", "cancelled", "duplicate":
-				continue
-			}
+		if !showAll && ticket.StatusSettled(status) {
+			continue
 		}
 
 		// Board renders manifests only at schema version 1 — the contract bash
