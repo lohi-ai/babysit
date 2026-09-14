@@ -99,6 +99,18 @@ else
   fail "review-pr-stays-in-current-session"
 fi
 
+# Goal support is capability-probed, never guessed from the harness brand.
+# Reading "without `/goal` support" as OMP's or Codex's path skips the
+# copy-paste handoff and with it the human design checkpoint.
+if grep -q 'verified for the harness actually running' "$AUTOPILOT_SKILL" \
+   && grep -q 'omp config get goal.enabled' "$AUTOPILOT_SKILL" \
+   && grep -q 'codex features list' "$AUTOPILOT_SKILL" \
+   && grep -q 'silently drops the design checkpoint' "$AUTOPILOT_SKILL"; then
+  ok "goal-support-probed-not-guessed"
+else
+  fail "goal-support-probed-not-guessed"
+fi
+
 for name in builder grower sweeper maintainer; do
   if grep -q 'review-pr.*current autopilot session' "$WF_DIR/$name.md"; then
     ok "$name-runs-review-in-current-session"

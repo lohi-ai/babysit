@@ -34,12 +34,19 @@ autopilot.
   model selectors. Native subagents need no new pane, terminal CLI, or
   orchestration bus. Use terminal-specific transport only when requested
   or already required by the invoking workflow; absence is not a gate.
-- `/goal` instructions below apply only where that command is supported.
-  Otherwise, after init continue the same work loop in this session, honoring
-  `--stop-after` and any invoker-held approval checkpoint. At such a checkpoint
-  report the artifacts and a native skill resume instruction, not an
-  unsupported `/goal` command. A received `/goal` block on such a harness
-  expresses the completion condition; it does not establish a Stop hook.
+- `/goal` instructions below apply only where that command is supported — and
+  support is verified for the harness actually running, never inferred from
+  the brand or its absence: all three supported harnesses expose it today
+  (Claude Code as `/goal`; `codex features list` for Codex's `goals` feature;
+  `omp config get goal.enabled` for OMP's built-in goal mode). Assume support
+  unless that harness's own probe or command list says otherwise: dropping the
+  handoff silently drops the design checkpoint, which is the worse error. Only
+  on a harness that genuinely lacks it, after init continue the same work loop
+  in this session, honoring `--stop-after` and any invoker-held approval
+  checkpoint. At such a checkpoint report the artifacts and a native skill
+  resume instruction, not an unsupported `/goal` command. A received `/goal`
+  block on such a harness expresses the completion condition; it does not
+  establish a Stop hook.
 ## Init (every fresh invocation)
 1. Resolve the invocation: inline requirement, ticket id, named workflow, or
    resume. A checkpoint with work in flight means loop re-entry (below), not
