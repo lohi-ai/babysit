@@ -18,7 +18,9 @@ owns the finish policy. There is no parent/orchestrate exception inside
 autopilot.
 ## Harness and terminal portability
 - Follow [the preamble](../references/preamble.md) and
-  [Auto-Decision Framework](../references/auto-decision-framework.md).
+  [Auto-Decision Framework](../references/auto-decision-framework.md) —
+  shared refs (`../references/*.md`) are filesystem paths beside this skill's
+  directory, so read them by path, not as `skill://`.
   Resolve the active harness from session metadata and exposed tools; use
   the preamble's `AGENT` / `SKILL_REF`, not the terminal brand or an installed
   CLI as evidence of which harness is running.
@@ -96,18 +98,18 @@ flags select a native model/profile and its reasoning effort.
   not silently substitute it.
 
 For automatic selection, inspect the native subagent tool's advertised models,
-profiles, and effort selector first; never invent an ID. Classify from the
-requirement and repo evidence: **simple** means an obvious local docs/config or
-tiny isolated change with no new contract or state; **critical/hard** means
-security, auth, money, irreversible/live-data migration, distributed
-concurrency, or a cross-system architecture decision; everything else is
-**normal**. Weak evidence stays normal. Apply this routing:
+profiles, and effort selector first; never invent an ID, and never read an
+agent type name as a model name. Classify the work into a tier from the
+requirement and repo evidence, then take that harness's row from the shared
+table ([model routing](../references/model-routing.md)) — it holds the tier
+definitions, the per-harness ladders with capacity and list prices, the
+tier → model rows, and the escalation trigger this skill applies.
 
-| Harness | Simple | Normal (default) | Critical / hard |
-|---------|--------|------------------|-----------------|
-| Codex | `gpt-5.6-terra`, `high` | `gpt-5.6-sol`, `high` | `gpt-6-astra`, `high` |
-| Claude Code | `opus`, `high` | `opus`, `high` | advertised Fable 5.1 model/profile, `high` |
-| OMP | `default` profile, `high` | `slow` profile, `high` | `slow` profile, `high` |
+The routine rungs — `gpt-5.6-sol`, `opus`, `@default` — plan almost every
+ticket, hard ones included. The top rung (`gpt-6-astra`, Fable 5.1) costs
+2–2.5x the workhorse per token and is an escalation, never a tier default: the
+shared table gates it on a floor reason plus a workhorse attempt that already
+came back short. Never climb there on a hunch, and never spend it on a gate.
 
 For an automatic choice whose preferred entry is not advertised, use the
 nearest capable advertised fallback in that harness and record the limitation;
@@ -269,6 +271,8 @@ flag.
    Honor an explicit user QA model choice. Otherwise choose the advertised
    smaller capable option; if model selection is unavailable, use a native
    child with its inherited/default model and record that limitation.
+   QA is a verification run, so it never takes the costly top rung: the gate
+   rung (`sonnet`, `terra`) or the workhorse, never `gpt-6-astra` or Fable 5.1.
    If native delegation is unavailable or forbidden, execute the real `qa`
    skill in-session and record why.
    Capability routing is Mechanical; a judgment-based model escalation is

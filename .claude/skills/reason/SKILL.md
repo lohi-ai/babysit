@@ -38,7 +38,8 @@ statements ("`npm test` passes and the 409 path has a test", not "works
 well"). Name what's out of scope. If two materially different readings
 exist, list them and classify per the
 [Auto-Decision Framework](../references/auto-decision-framework.md) —
-never pick silently.
+never pick silently. Shared refs (`../references/*.md`) are filesystem paths
+beside this skill's directory, so read them by path, not as `skill://`.
 ### 2. Gather
 Facts before opinions. Read the actual code, run the actual commands, and
 keep two labeled lists: **Facts** (each cited — `file:line`, command +
@@ -75,7 +76,7 @@ working, not a failure. Record the strongest *surviving* objection. If
 attacks kill two different candidates in a row, stop treating it as a
 design problem: the task is under-specified — escalate `NEEDS_CONTEXT`
 with both corpses as evidence (delivery per
-[preamble.md](../references/preamble.md#one-mode-three-escalation-channels)).
+[preamble.md](../references/preamble.md#one-mode-four-escalation-channels)).
 ### 5. Verify
 Define the check *before* declaring done — a command, test, or browser step
 that would fail if you're wrong — then run it. Check, don't attest: the

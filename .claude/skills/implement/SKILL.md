@@ -10,7 +10,8 @@ guardrails.
   task order, and steps from the code. If the work collapses to ≤3 trivial
   doc/comment-only edits, downgrade `ticket_size` one tier using the
   downgrade hook in `../references/ticket-size-rubric.md` (it writes the
-  audit-log line).
+  audit-log line). Shared refs (`../references/*.md`) are filesystem paths
+  beside this skill's directory, so read them by path, not as `skill://`.
 - The plan file is the Claude Code plan: derive the native task list
   (TaskCreate) from `plan.md` — you own task order, one task per verifiable
   unit — and keep it live: in_progress when started, completed only after its

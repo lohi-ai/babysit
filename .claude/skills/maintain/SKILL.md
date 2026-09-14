@@ -3,7 +3,9 @@ name: maintain
 description: Keep a mature system secure, reliable, and efficient at scale. Use for security and dependency audits, reliability hardening, db/query performance (schema, indexes, partitioning, caching, batching, async processing), and architecture reviews under change or scale pressure.
 ---
 # maintain
-The Maintainer archetype (see `../references/archetypes.md`). Audit a
+The Maintainer archetype (see `../references/archetypes.md`). Shared refs
+(`../references/*.md`) are filesystem paths beside this skill's directory, so
+read them by path, not as `skill://`. Audit a
 shipping system through one lens per run — **security**, **dependencies**,
 **reliability**, **scale/performance** (db schema, indexes, partitioning,
 caching, batching, async/background processing), or **architecture**

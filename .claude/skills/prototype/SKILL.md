@@ -3,7 +3,9 @@ name: prototype
 description: Build a fast, throwaway spike to validate one risky technical or product idea before committing to production work. Use to test feasibility, churn a rough proof, or de-risk an assumption — not to ship, and not for UI look-and-feel questions (that is design-ui).
 ---
 # prototype
-The Prototyper archetype (see `../references/archetypes.md`). Churn a rough
+The Prototyper archetype (see `../references/archetypes.md`). Shared refs
+(`../references/*.md`) are filesystem paths beside this skill's directory, so
+read them by path, not as `skill://`. Churn a rough
 throwaway proof that answers **one** question: name the single riskiest
 assumption and the observable signal that proves or kills it, build the
 smallest thing that produces that signal, run it, capture the signal

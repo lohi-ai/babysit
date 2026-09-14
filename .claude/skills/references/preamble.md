@@ -11,6 +11,19 @@ The preamble prints `AGENT` and `SKILL_REF`. Use that prefix for every
 user-facing or spawned babysit skill invocation, including literal `/bbs:`
 examples later in this pack: Codex uses `$bbs:<skill>`, omp uses `/<skill>`,
 and Claude Code/grok use `/bbs:<skill>`.
+
+## Resolving shared references
+
+This pack's shared references live in one directory beside the skills
+(`references/`), and skills link them as `../references/<file>.md`.
+Those are **filesystem paths resolved against the skill's own directory**, not
+`skill://` targets: that scheme addresses one skill directory only, so a
+harness that strips `..` from the URL silently retargets it —
+`skill://autopilot/../references/preamble.md` becomes
+`skill://autopilot/references/preamble.md` and fails as `File not found`
+(OMP). The invoking harness prints the skill's directory
+(`[Skill directory: …]`); join that with `../references/<file>.md` and read
+the file by path.
 ## Output style — terse by default
 Drop filler, pleasantries, hedging. Route by consumer:
 
@@ -231,7 +244,7 @@ echo "TELEMETRY: $_TEL"
 echo "SPAWNED: $_SPAWNED"
 
 # Ticket folder — idempotent. Seeds index.json if missing; no-op otherwise.
-# Layout C (see references/ticket-layout.md) stores all per-ticket state here.
+# Layout C (see ticket-layout.md) stores all per-ticket state here.
 if [ -n "$TICKET" ]; then
   bbs ticket init 2>/dev/null || true
 fi

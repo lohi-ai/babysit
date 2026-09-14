@@ -116,6 +116,14 @@ Two things it does not own:
   sigil. A hard-coded `/bbs:autopilot` resolves incorrectly for both. (`omp plugin install <git-url>`
   looks like the fix and is not: it reports success under `--dry-run` and then
   fails for real, being an npm-shaped installer rather than a plugin store.)
+  A flat list also bounds what `skill://` can address: one skill directory, no
+  `..`. Anything a skill names outside its own directory — the shared
+  `references/` one level up, a sibling skill, a pack-level doc — is silently
+  retargeted inside the skill (`skill://qa/../references/worktrees.md` becomes
+  `skill://qa/references/worktrees.md`) and dies as `File not found`. SKILL.md
+  files therefore say to read those by path, and
+  `tests/test_skill_reference_links.sh` guards both halves: that the targets
+  resolve, and that every skill which names one says how to read it.
 - **A foreman's session is pinned to the agent that minted it.** `spawn` records
   it and reuses it on resume, because a conversation handle means nothing to a
   different CLI. Changing `foreman_agent` takes effect on the next *new*
@@ -151,6 +159,54 @@ cd <repo> && grok      # answer the trust prompt, then quit
 
 Workers launch with `--cwd <repo>`, so this is one decision per repo, not per
 worktree.
+
+### Which model runs a worker
+
+Foreman does not run every ticket on whatever model its CLI defaults to. Each
+child ticket is classified into a task tier — `simple`, `normal`,
+`critical/hard` — from its requirement, plan, and acceptance commands, with
+weak evidence staying `normal`. The canonical harness → tier → model list,
+with each harness's ladder, capacity order, and list prices, is
+`.claude/skills/references/model-routing.md` — the pack's single place to edit
+those IDs. Both `autopilot` (its planner and its QA child) and `foreman` (the
+worker CLI session it dispatches) route through it.
+
+Almost every ticket runs on the routine rung — `gpt-5.6-sol`, `opus`,
+`@default`. OMP's `critical` column adds `@slow`, its strongest configured role.
+The top rung (`gpt-6-astra`, Fable 5.1) costs 2–2.5x the workhorse per
+token and needs the table's escalation trigger: floor work (security, auth,
+money, irreversible data, a cross-system architecture decision) whose workhorse
+attempt already came back short. A `critical` classification alone never buys
+it, so an unattended batch cannot quietly climb to it.
+
+```bash
+orca orchestration worker-start --task <task> --worktree current \
+  --agent <agent> --model <model> --effort <effort> --json
+```
+
+The model must belong to the worker's own CLI (`worker_agent`), and Orca only
+forwards `--model`/`--effort` for a fresh Claude, Codex, or Cursor terminal
+whose connected worker server advertises launch preferences — an `omp` worker
+starts on its own role binding, and a `grok` worker on `grok-4.6`, the model
+the table routes for every tier. The receipt's
+`launch.effective` is what the worker actually got; a Dispatch that could not
+carry the preference records the limitation in its handoff, and the worker's
+`autopilot` still routes its own planner and QA models by tier.
+
+The resolved pair is persisted as `worker_model` / `worker_effort` pointers on
+the child ticket, so a resume, retry, or reused worker cannot silently
+change the model a ticket ran on:
+
+```bash
+BABYSIT_TICKET=<child> bbs ticket get-pointer worker_model
+```
+
+A model or effort named explicitly for the project wins over the tier. No
+config key pins a worker model: the choice is per ticket, and that is the only
+knob. Foreman's *own* session model is separate — it is whatever
+`foreman_agent` launched on, it cannot change mid-run, and a multi-day
+coordinator belongs on a routine rung, because the top rung charges its rate on
+every reconcile tick.
 
 ## Telemetry
 

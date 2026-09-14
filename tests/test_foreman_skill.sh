@@ -150,6 +150,26 @@ has_all "shared-reconciliation-interval" \
   'check --wait' 'missed-event/restart/stale-state' \
   'never let a bad value shrink the wait'
 
+has_all "worker-model-routing" \
+  '## Worker model and effort routing' '../references/model-routing.md' \
+  'canonical harness' 'invent a model ID' 'Classify it once' \
+  '--model <model> --effort <effort>' 'launch.effective' 'grok-4.6' \
+  'set-pointer worker_model' 'set-pointer worker_effort' \
+  'starts a fresh worker rather than `--terminal`' 'Taste decision'
+
+has_all "worker-model-cost-discipline" \
+  'routine rung' 'top rung' 'came back short' \
+  'log the cost' 'stay on the workhorse'
+
+REF="$ROOT/.claude/skills/references/model-routing.md"
+if grep -q 'model-routing.md' "$F" \
+   && grep -q 'model-routing.md' "$A" \
+   && grep -q '^| Codex | #3 `gpt-5.6-terra`, `high` |' "$REF"; then
+  ok "canonical-model-table-shared"
+else
+  fail "canonical-model-table-shared"
+fi
+
 echo
 echo "PASS: $PASS  FAIL: $FAIL"
 if [ "$FAIL" -gt 0 ]; then

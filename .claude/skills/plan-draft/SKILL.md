@@ -22,7 +22,9 @@ Record the *why* behind a choice in one clause, not a paragraph.
    one silently — citing a file, commit, or doc; uncited items
    are guesses, cut them. Mine git history too — the git-archaeology recipe
    in `../references/finding-unknowns.md` turns the last similar commit into
-   a touchpoint checklist and pothole map.
+   a touchpoint checklist and pothole map. Shared refs (`../references/*.md`)
+   are filesystem paths beside this skill's directory, so read them by path,
+   not as `skill://`.
 2. Survey what already exists before proposing anything new. For UI/frontend
    work this is mandatory in an enterprise codebase: list existing components
    (`bbs design components`) and design tokens (`bbs design tokens`), and find

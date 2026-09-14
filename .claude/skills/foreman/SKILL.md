@@ -12,7 +12,9 @@ compact, or restart, but the project goal continues from ticket and Orca state.
 
 Follow [the preamble](../references/preamble.md),
 [Auto-Decision Framework](../references/auto-decision-framework.md), and
-[worktree protocol](../references/worktrees.md). Taste is decided and logged.
+[worktree protocol](../references/worktrees.md). Shared refs
+(`../references/*.md`) are filesystem paths beside this skill's directory, so
+read them by path, not as `skill://`. Taste is decided and logged.
 Escalate only User Challenges, the non-delegable money/auth/irreversible-data
 floor, an explicit human hold, or an action the repo did not authorize.
 
@@ -317,6 +319,77 @@ Orca `ask` for a genuine User Challenge, and follows the injected lifecycle
 through exactly one `worker_done`. This statement in the Task spec is
 load-bearing because `worker-start --agent` does not expose an environment
 option; never assume a coordinator shell export reached the worker process.
+
+## Worker model and effort routing
+
+The pack's canonical harness → model list is
+[model routing](../references/model-routing.md): the tier definitions, each
+harness's ladder with capacity and list prices, and the tier → model rows.
+Read it before dispatch and apply the same three tiers to the CLI session a
+child ticket runs in. It is the one place those IDs are written down, so never
+invent a model ID and never read an agent type name as a model name.
+
+The tier belongs to the ticket, not to the Dispatch. Classify it once, from the
+requirement, plan, and acceptance commands, using that table's definitions. A
+child's Plan, Build, and QA Dispatches all use its one tier; an Integration QA
+Task classifies the composed surface instead, at `critical` when the parent
+criteria cross money, auth, or irreversible data.
+
+Almost every child runs on the routine rung — `gpt-5.6-sol`, `opus`,
+`@default`. The top rung (`gpt-6-astra`, Fable 5.1) costs 2–2.5x the workhorse
+per token and a foreman multiplies that across a whole batch, so a `critical`
+classification alone never buys it. Escalate, and only under the shared table's
+trigger: floor work whose workhorse attempt already came back short. Name the
+trigger beside the model, log the cost, and keep the escalation to the
+Dispatches that need it — when in doubt, stay on the workhorse and let the
+ticket's own evidence promote it.
+
+Take the row for the harness this worker actually runs on — the CLI
+`worker_agent` selects for this run, which `bbs foreman worker-command
+--prompt <text>` resolves and preflights (its printed command leads with that
+agent). A model ID from another harness's ladder is not a valid start for this
+one. Pass both values on the fresh-worker start:
+
+```bash
+orca orchestration worker-start --task "$ORCA_TASK_ID" --worktree current \
+  --agent <worker agent> --model <model> --effort <effort> --json
+```
+
+`--effort` requires `--model`, neither combines with `--terminal`, and both
+apply only where that agent and model take them. Read the receipt:
+`launch.effective` is the model the worker actually got, and a receipt
+that does not echo the request means the start ran without it — record that
+limitation, never assume the tier was honored. An explicit model or effort the
+user named for the project wins over the tier.
+
+Two cases start without a model flag, each recorded with the Dispatch's
+handoff: the harness or its connected worker server does not accept launch
+preferences — Orca forwards `--model`/`--effort` for a fresh Claude, Codex, or
+Cursor terminal — or the harness has no ladder in the shared table. An `omp`
+worker keeps its role binding and a `grok` worker its `grok-4.6` default;
+persist that resolved value in the pointers rather than leaving them empty. The
+worker's own autopilot routing still tiers its planner and QA models, so such a
+ticket is not unstaffed; only its session model is unset.
+
+Persist the resolved pair on the child, so resume, retry, and worker reuse
+cannot silently change it:
+
+```bash
+BABYSIT_TICKET="$TICKET" bbs ticket set-pointer worker_model "<model>"
+BABYSIT_TICKET="$TICKET" bbs ticket set-pointer worker_effort "<effort-or-unsupported>"
+```
+
+A reused settled worker keeps the model it was started with, so a Dispatch that
+now needs a stronger tier starts a fresh worker rather than `--terminal`.
+Re-classify, and overwrite both pointers, only when accepted scope changes —
+a `change-request` that widens the ticket. Tier → model is a Taste decision:
+log the tier, harness, model, effort, and the evidence that classified it
+through the Auto-Decision Framework.
+
+This routes the workers. Foreman's own session model is whatever
+`foreman_agent` launched on, it cannot be changed mid-run, and a multi-day
+coordinator should stay on a routine rung: the top rung charges that rate on
+every reconcile tick.
 
 ## Two-phase ticket dispatch
 

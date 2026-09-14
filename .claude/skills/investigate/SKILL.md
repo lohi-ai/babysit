@@ -9,7 +9,9 @@ name the root cause in one sentence before editing, confirm it by toggling
 the smallest fix, then re-run the reproducer plus one nearby regression
 check. Check the pothole map first — the git-archaeology recipe in
 `../references/finding-unknowns.md`: a prior fix commit in the failing area
-often names this same root cause. Competing theories: list them, test the
+often names this same root cause. Shared refs (`../references/*.md`) are
+filesystem paths beside this skill's directory, so read them by path, not as
+`skill://`. Competing theories: list them, test the
 cheapest — never guess silently. No symptom-papering (broad retries,
 catches, sleeps, guards) unless the root cause demands it. Preserve
 unrelated user changes. If the failure depends on external state you cannot

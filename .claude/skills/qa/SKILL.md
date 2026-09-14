@@ -49,7 +49,9 @@ Exercise the application like a user and leave reproducible evidence.
    per repo — never npm-install or boot a server in a worktree), so this
    skill runs the surface protocol itself — `surface acquire`, `surface
    compose`, and `QA_ENV_REVERT` before `surface release` — see
-   `../references/worktrees.md § QA loop`.
+   `../references/worktrees.md § QA loop`. Shared refs (`../references/*.md`)
+   are filesystem paths beside this skill's directory, so read them by path,
+   not as `skill://`.
 3. Code-level checks (tests, typecheck, lint) first — they gate, they don't
    prove.
 4. Size the matrix to the repo's rigor: `eval "$(bbs autopilot git-flow)"` →
