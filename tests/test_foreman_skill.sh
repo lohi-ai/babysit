@@ -33,7 +33,7 @@ has_all "foreman-owns-topology" \
   'git worktree remove' 'dependency-order finish'
 
 has_all "finish-cleans-worker-workspace" \
-  'worker-terminal' 'verified-clean non-primary worktree' \
+  'Dispatch-owned agent terminal' 'verified-clean non-primary worktree' \
   'git worktree remove' 'keep its branch' 'Under `review`' \
   'keep the worktree'
 
