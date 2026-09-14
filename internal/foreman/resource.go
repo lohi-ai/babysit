@@ -263,13 +263,10 @@ func resourceBudget(host HostResources, capUnits int) int {
 	if cpus < 1 {
 		cpus = 1
 	}
-	budget := cpus / 2
-	if budget < 1 {
-		budget = 1
-	}
+	budget := cpus
 	if host.TotalMemoryBytes > 0 {
 		totalGiB := int(host.TotalMemoryBytes / gib)
-		ramBudget := (totalGiB - 6) / 2
+		ramBudget := totalGiB - 6
 		if ramBudget < 1 {
 			ramBudget = 1
 		}

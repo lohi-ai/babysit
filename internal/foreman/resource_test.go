@@ -27,24 +27,26 @@ func healthyHost(cpus, memoryGiB int) HostResources {
 	}
 }
 
-func TestResourceBudgetUsesCPUAndRAMConservatively(t *testing.T) {
-	if got := resourceBudget(healthyHost(8, 16), 0); got != 4 {
-		t.Fatalf("8 CPU / 16 GiB budget = %d, want 4", got)
+func TestResourceBudgetUsesCPUAndRAM(t *testing.T) {
+	if got := resourceBudget(healthyHost(8, 16), 0); got != 8 {
+		t.Fatalf("8 CPU / 16 GiB budget = %d, want 8", got)
 	}
 	if got := resourceBudget(healthyHost(16, 64), 3); got != 3 {
 		t.Fatalf("configured ceiling budget = %d, want 3", got)
 	}
-	if got := resourceBudget(healthyHost(2, 8), 0); got != 1 {
-		t.Fatalf("small host budget = %d, want 1", got)
+	if got := resourceBudget(healthyHost(2, 8), 0); got != 2 {
+		t.Fatalf("small host budget = %d, want 2", got)
 	}
 }
 
 func TestResourceReservationsAreGlobalAcrossForemen(t *testing.T) {
-	broker := testResourceBroker(t, healthyHost(8, 16)) // four global units
+	broker := testResourceBroker(t, healthyHost(8, 16)) // eight global units
 	requests := []ResourceRequest{
 		{ForemanID: "fm-a", Ticket: "bs-a", Task: "task-a", Profile: "standard"},
 		{ForemanID: "fm-b", Ticket: "bs-b", Task: "task-b", Profile: "standard"},
 		{ForemanID: "fm-c", Ticket: "bs-c", Task: "task-c", Profile: "standard"},
+		{ForemanID: "fm-d", Ticket: "bs-d", Task: "task-d", Profile: "standard"},
+		{ForemanID: "fm-e", Ticket: "bs-e", Task: "task-e", Profile: "standard"},
 	}
 
 	results := make([]ResourceStatus, len(requests))
@@ -73,20 +75,20 @@ func TestResourceReservationsAreGlobalAcrossForemen(t *testing.T) {
 			t.Fatalf("reserve %d admission = %q", i, result.Admission)
 		}
 	}
-	if reserved != 2 || queued != 1 {
-		t.Fatalf("reserved=%d queued=%d, want 2/1", reserved, queued)
+	if reserved != 4 || queued != 1 {
+		t.Fatalf("reserved=%d queued=%d, want 4/1", reserved, queued)
 	}
 	status, err := broker.Status(0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if status.Used != 4 || len(status.Leases) != 2 {
-		t.Fatalf("used=%d leases=%d, want 4/2", status.Used, len(status.Leases))
+	if status.Used != 8 || len(status.Leases) != 4 {
+		t.Fatalf("used=%d leases=%d, want 8/4", status.Used, len(status.Leases))
 	}
 }
 
 func TestHeavyResourcesAreExclusiveAcrossForemen(t *testing.T) {
-	broker := testResourceBroker(t, healthyHost(16, 64)) // eight global units
+	broker := testResourceBroker(t, healthyHost(16, 64)) // sixteen global units
 	first, err := broker.Reserve(ResourceRequest{
 		ForemanID: "fm-a", Ticket: "bs-a", Task: "android", Profile: "android-simulator",
 	}, 0)

@@ -22,8 +22,8 @@ machine running several Foremen: three coordinators with a ceiling of eight
 could otherwise launch 24 workers. Every Foreman therefore also reserves from
 one atomic weighted pool under `~/.babysit/resources/`.
 
-With `parallel_global_units: auto`, the pool uses the smaller of half the
-machine's CPUs and one unit per 2 GiB after a 6 GiB OS reserve, with a minimum
+With `parallel_global_units: auto`, the pool uses the smaller of the
+machine's CPUs and one unit per GiB after a 6 GiB OS reserve, with a minimum
 of one unit. A configured positive value can lower, but not raise, that
 host-derived budget. New work also queues while available memory is below 20%
 or one-minute load reaches 80% of the machine's CPUs. Running workers are never

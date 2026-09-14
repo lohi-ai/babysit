@@ -42,7 +42,7 @@ func TestForemanResourceReserveStatusRelease(t *testing.T) {
 			t.Fatal(err)
 		}
 	})
-	if !strings.Contains(out, "ADMISSION=reserved\n") || !strings.Contains(out, "GLOBAL_BUDGET=4\n") {
+	if !strings.Contains(out, "ADMISSION=reserved\n") || !strings.Contains(out, "GLOBAL_BUDGET=8\n") {
 		t.Fatalf("reserve output: %q", out)
 	}
 	var lease string

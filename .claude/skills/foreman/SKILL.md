@@ -283,7 +283,7 @@ An explicit `MAX_WORKERS` value must be a positive integer; otherwise report
 `BLOCKED` with the invalid value. It is a per-foreman ceiling, not the host
 safety limit. Every ready Task must also reserve machine-global weighted
 capacity through `bbs foreman resource` before `worker-start`; the broker
-atomically serializes all foremen and derives a conservative CPU/RAM budget
+atomically serializes all foremen and derives a host CPU/RAM budget
 from the current host. `parallel_global_units` may lower that automatic budget
 but never raise it. Current CPU or memory pressure queues new work without
 stopping a running worker.
@@ -546,9 +546,30 @@ code — in dependency order, one child at a time:
   the human.
 
 After a successful `land` or `pr`: archive the settled worker's output,
-`worker-release` it, release the resource lease, and remove the
-verified-clean non-primary worktree with ordinary `git worktree remove` —
-keep the branch. On any failure or hold, keep the worktree recoverable.
+`worker-release` it, release the resource lease, run the Orca worktree
+close-out, and remove the verified-clean non-primary worktree with
+ordinary `git worktree remove` — keep the branch. On any failure or
+hold, keep the worktree recoverable.
+
+**Orca worktree close-out** — `worker-release` closes only the one agent
+terminal its Dispatch owns. Before `git worktree remove`, close every
+other Orca surface opened in that worktree so no agent keeps running
+against a deleted checkout:
+
+```bash
+orca terminal stop --worktree path:<worktreePath> --json   # every remaining terminal
+orca tab list --worktree path:<worktreePath> --json        # then per row:
+orca tab close --page <browserPageId> --json
+orca emulator list --worktree path:<worktreePath> --json   # then per row:
+orca emulator kill --emulator <id> --json
+git worktree remove <worktreePath>                          # last; keeps the branch
+```
+
+`selector_not_found` on a `path:` selector means Orca tracks nothing
+there — the clean case, not an error. A surface that refuses to close
+keeps the worktree recoverable like any other hold. Never substitute
+`orca worktree rm`: it also tries to delete the checked-out local
+branch, which the ticket keeps.
 
 Failure routing — never blind-retry an unchanged state:
 
@@ -600,14 +621,15 @@ eval "$(bbs autopilot git-flow)"   # BBS_FINISH=review | land | pr
   Never replace it with raw git/GitHub commands.
 
 Archive every settled worker's readable output through Orca, then call
-`worker-release` unless immediately reusing it; that is the worker-terminal
-close operation. Only after a successful `land` or `pr` — `land` evaluates
-readiness inside the recorded worktree and BLOCKs on chdir if it is gone —
-remove its verified-clean non-primary worktree with ordinary
-`git worktree remove`, and keep its branch. Under `review`, or on any
-failure/hold, keep the worktree recoverable. Never use `--force`, broad
-worktree removal, or terminal-close
-commands in place of Orca `worker-release`.
+`worker-release` unless immediately reusing it; that closes only the
+Dispatch-owned agent terminal. Only after a successful `land` or `pr` —
+`land` evaluates readiness inside the recorded worktree and BLOCKs on
+chdir if it is gone — run the Orca worktree close-out from **Eager
+per-ticket finish**, then remove the verified-clean non-primary
+worktree with ordinary `git worktree remove`, and keep its branch.
+Under `review`, or on any failure/hold, keep the worktree recoverable.
+Never use `--force`, broad worktree removal, or terminal-close commands
+in place of Orca `worker-release`.
 
 The terminal write is the `done` heartbeat, and it is last:
 
