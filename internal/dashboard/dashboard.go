@@ -182,7 +182,7 @@ func projectBlock(o Options, projectDir string) obj {
 		if _, err := os.Stat(filepath.Join(tdir, "index.json")); err != nil {
 			continue
 		}
-		detail, ok := ticketDetail(o, tdir)
+		detail, ok := ticketDetail(o, projectDir, tdir)
 		if !ok {
 			continue
 		}
@@ -226,7 +226,7 @@ func projectBlock(o Options, projectDir string) obj {
 	}
 }
 
-func ticketDetail(o Options, tdir string) (obj, bool) {
+func ticketDetail(o Options, projectDir, tdir string) (obj, bool) {
 	id := filepath.Base(tdir)
 	idx, err := ticket.ReadDocStrict(filepath.Join(tdir, "index.json"))
 	if err != nil {
@@ -274,6 +274,12 @@ func ticketDetail(o Options, tdir string) (obj, bool) {
 		"origin":    digRaw(idx, "origin"),
 		"relations": digRaw(idx, "relations"),
 		"siblings":  digRaw(idx, "siblings"),
+		// The graph itself, built here rather than derived in the SPA for the
+		// same reason the edges above travel verbatim: waves, admission state
+		// and cycles are one model with one implementation, and a browser that
+		// recomputed them would be a second place for them to be wrong.
+		// Absent on a leaf ticket — the panel's tab is not rendered for those.
+		"dag": dagFor(projectDir, id, idx),
 		// The approval record and the artifacts it points at travel together:
 		// the record is the question, these are what the human reads to answer
 		// it, and a screen that had one without the other could not decide.
@@ -292,6 +298,39 @@ func ticketDetail(o Options, tdir string) (obj, bool) {
 		"reviews":          namedFiles(filepath.Join(tdir, "reviews"), ".md"),
 		"evidence":         evidenceFiles(filepath.Join(tdir, "evidence")),
 	}, true
+}
+
+// dagFor builds the project graph a decomposed ticket roots, or nil when the
+// ticket has no children — a leaf has no DAG, and `null` is what tells the SPA
+// not to offer the tab at all.
+//
+// The children check reads the record the caller already opened: a ticket whose
+// `children` is empty cannot root a graph, so the walk (which re-reads every
+// child's index.json) is skipped entirely for the leaf tickets that make up
+// most of a project.
+func dagFor(projectDir, id string, idx ticket.Doc) interface{} {
+	if !hasChildren(idx) {
+		return nil
+	}
+	g, err := ticket.BuildGraph(projectDir, id)
+	if err != nil {
+		return nil
+	}
+	return g
+}
+
+// hasChildren reports whether the record declares a fan-out. A malformed
+// `children` (a scalar where a list belongs) counts as none: the tab is
+// additive, and a ticket that cannot root a graph should render as a leaf
+// rather than fail the whole snapshot.
+func hasChildren(idx ticket.Doc) bool {
+	switch v := idx.Value("children").(type) {
+	case []interface{}:
+		return len(v) > 0
+	case []string:
+		return len(v) > 0
+	}
+	return false
 }
 
 // prototypeCap bounds the mock embedded in the snapshot. A design prototype is

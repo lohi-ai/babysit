@@ -49,6 +49,8 @@ func newTicketCmd() *cobra.Command {
 				runSession(args[1:])
 			case "board":
 				runBoard(args[1:])
+			case "dag":
+				runDAG(args[1:])
 			case "env":
 				runTicketEnv()
 			case "get":
@@ -221,6 +223,13 @@ standing on, so none of the next four apply:
 
   board [--all] [--pr]           read-only ticket board: status, branch, qa/
                                  review verdicts, session, PR, surface lease, serving
+  dag [<ticket>] [--mermaid|--json]
+                                 print a project DAG: a parent's declared
+                                 children, layered into waves by
+                                 relations.blocked_by/blocks. Bare = every
+                                 DAG in the project; --mermaid emits a
+                                 mermaid block for a session that renders it.
+                                 Read-only.
   path <kind> [selectors] --read|--write   resolve a ticket file path (canonical → legacy)
   list <kind> [selectors]                  list ticket files of a kind
   reconcile [--ticket <id> | --all] [--dry-run] [--quiet]
