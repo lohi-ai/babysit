@@ -50,13 +50,12 @@ Step by step:
 **The human checkpoints — where you stay in control.** Autopilot only pauses at the moments that are actually yours to own; pick which one by flag:
 
 - `--stop-after=plan` — approve the approach before any code is written.
-- `--planner <model>` / `--planner-effort <effort>` — delegate plan and UI
-  prototype creation to that native model/profile and reasoning effort. Omit
-  either value to let autopilot select it from task difficulty and the models
-  the current harness actually advertises. On OMP, `default` and `slow` select
-  its configured model roles; normal work defaults to `slow`.
 - *default* — stops QA-ready, you review the evidence.
 - **`/bbs:create-pr`** — you invoke it; autopilot never opens PRs itself.
+
+Planning, implementation, review, and QA all run in the session you start —
+one model, nothing dispatched behind your back. To plan on a different model,
+start autopilot on that model; there is no per-step model flag.
 
 **Add as you need it:**
 
@@ -255,7 +254,7 @@ The commands that move work between a worktree and the shared surface — `bbs t
 /bbs:autopilot "add a settings page with dark mode toggle"
 ```
 
-Autopilot inits the ticket — requirement, plan — then stops and prints a `/goal` block as its **last message**. That block is the one thing you do next: **copy it, paste it back into the same agent, and walk away.** The goal session then writes the code, reviews it, runs QA, and commits the work on the branch you're on — autopilot never cuts branches, pushes, or opens PRs. Open the PR yourself after review. Pass `--planner gpt-5.6-sol --planner-effort high` to choose the native model that creates the plan and UI prototype; omit those flags and autopilot selects from task difficulty and the current harness's advertised capabilities.
+Autopilot inits the ticket — requirement, plan — then stops and prints a `/goal` block as its **last message**. That block is the one thing you do next: **copy it, paste it back into the same agent, and walk away.** The goal session then writes the code, reviews it, runs QA, and commits the work on the branch you're on — autopilot never cuts branches, pushes, or opens PRs. Open the PR yourself after review. Autopilot holds no model of its own: the plan and UI prototype are created in the same session that then builds and gates, so to plan on a different model, start autopilot on that model.
 
 > **The handoff looks like this** — autopilot ends with a plain-language preamble, then the block to copy:
 >
@@ -290,7 +289,7 @@ Once a requirement spans multiple tickets, `foreman` owns the whole project. Eac
 /bbs:foreman                              # attach/resume from ticket + Orca state
 ```
 
-Foreman creates one parent project and bounded child tickets, records their dependency edges, and starts supervised workers through Orca orchestration. Every child gets a plan-only Dispatch, an autonomous design gate, then a build/QA Dispatch. Each worker is started on the model that ticket's difficulty earns — `simple` / `normal` / `critical` tiers read from the shared [model-routing table](.claude/skills/references/model-routing.md) that autopilot's planner also uses, with the resolved model recorded on the child. Almost every ticket runs on the routine rung (`gpt-5.6-sol` / `opus` / `@default`); the costly top rung (`gpt-6-astra`, Fable 5.1) needs the table's escalation trigger, so a batch cannot quietly climb to it. Foreman verifies verdicts from disk, serializes the shared test surface, runs composed integration QA when tickets interact, and applies the repo's `finish:` policy to each eligible child in dependency order — `land` merges it into base, `pr` opens its PR, `review` releases the settled worker — so done tickets never wait for the project; a child covered by a pending integration gate holds its land until that passes. The project DAG rides with its status and dispatch replies, and `bbs ticket dag <parent> --mermaid` prints it on demand. Orca messages and Dispatch ids replace pane-text polling, and an auto-started watcher nudges a stalled coordinator and re-asks it for status on the configured interval, so a restarted session resumes without conversation memory.
+Foreman creates one parent project and bounded child tickets, records their dependency edges, and starts supervised workers through Orca orchestration. Every child gets a plan-only Dispatch, an autonomous design gate, then a build/QA Dispatch. Each worker is started on the model that ticket's difficulty earns — `simple` / `normal` / `critical` tiers read from the shared [model-routing table](.claude/skills/references/model-routing.md) that foreman applies, with the resolved model recorded on the child. Almost every ticket runs on the routine rung (`gpt-5.6-sol` / `opus` / `@default`); the costly top rung (`gpt-6-astra`, Fable 5.1) needs the table's escalation trigger, so a batch cannot quietly climb to it. Foreman verifies verdicts from disk, serializes the shared test surface, runs composed integration QA when tickets interact, and applies the repo's `finish:` policy to each eligible child in dependency order — `land` merges it into base, `pr` opens its PR, `review` releases the settled worker — so done tickets never wait for the project; a child covered by a pending integration gate holds its land until that passes. The project DAG rides with its status and dispatch replies, and `bbs ticket dag <parent> --mermaid` prints it on demand. Orca messages and Dispatch ids replace pane-text polling, and an auto-started watcher nudges a stalled coordinator and re-asks it for status on the configured interval, so a restarted session resumes without conversation memory.
 
 **One hard prerequisite, which is why it's the second thing to learn:** [Orca](https://www.onorca.dev) with orchestration enabled. Foreman loads Orca's installed, version-matched orchestration guide, fails fast without that runtime, and creates a worktree per child regardless of profile. Your profile still decides rigor and finish policy. On a single serial ticket it buys you nothing over `/bbs:autopilot`.
 
@@ -324,7 +323,7 @@ When a stage finishes, the ticket gets a `Next:` line — literally what to do n
 /bbs:autopilot                       # resume — picks up from the resolved ticket's checkpoint
 ```
 
-That's the whole surface. Three flags extend it — `--stop-after=requirement|plan` to stop at an earlier checkpoint, and `--planner <model>` / `--planner-effort <effort>` to route plan/prototype creation. Autopilot always works on the checkout you start it in; isolation is `bbs ticket ensure --mode=…` or `/bbs:foreman`, never an autopilot flag. Verb tokens don't exist.
+That's the whole surface. One flag extends it — `--stop-after=requirement|plan` to stop at an earlier checkpoint. The model is not a flag: autopilot plans, builds, reviews, and gates on the session you launch it in. Autopilot always works on the checkout you start it in; isolation is `bbs ticket ensure --mode=…` or `/bbs:foreman`, never an autopilot flag. Verb tokens don't exist.
 
 ### Working tickets in parallel (worktree mode)
 

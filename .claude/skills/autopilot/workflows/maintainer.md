@@ -24,10 +24,10 @@ production system safe as it scales. Two modes, chosen from the invocation:
    fix) is a valid run. **fix:** run `investigate` to root-cause, then apply the
    smallest fix via `implement` with a regression check.
 3. If code changed, run `review-pr --fix` in the current autopilot session via
-   autopilot's Current-session review / automatic QA subagent policy (applies
-   fixes to the working tree).
-4. Run `qa` through the same policy's automatic QA path (or the strongest
-   fallback) to confirm no regression. Persist the verdict with
+   autopilot's Current-session gates (`review-pr`, `qa`) policy (applies fixes
+   to the working tree).
+4. Run `qa` in the same session (or the strongest fallback) to confirm no
+   regression. Persist the verdict with
    `bbs ticket set-verdict --skill qa`.
 5. Commit any fix locally. Autopilot never pushes, lands, or opens a PR —
    close-out is the human's `create-pr` (or the dispatching foreman's).

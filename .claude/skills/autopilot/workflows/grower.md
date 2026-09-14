@@ -20,9 +20,8 @@ reversible experiment per run.
 3. If asked to implement, scaffold the smallest flagged, reversible variant with
    exposure and conversion tracking. Otherwise stop at the ranked recommendation.
 4. If code changed: run `review-pr --fix` in the current autopilot session,
-   then run `qa` through autopilot's automatic QA subagent policy (or the
-   strongest fallback), and persist the verdict with
-   `bbs ticket set-verdict --skill qa`.
+   then run `qa` in the same session (or the strongest fallback), and persist
+   the verdict with `bbs ticket set-verdict --skill qa`.
 5. Commit any scaffolded variant locally. Autopilot never pushes, lands, or
    opens a PR — close-out is the human's `create-pr` (or the dispatching
    foreman's).

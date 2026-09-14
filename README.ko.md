@@ -50,13 +50,10 @@ ticket의 코드는 당신이 이미 서 있는 branch 위에 있으므로, dev 
 **인간 checkpoint — 당신이 통제권을 쥐는 지점.** Autopilot은 정말로 당신이 소유해야 하는 순간에만 멈춥니다. 어느 순간인지는 flag로 고르세요:
 
 - `--stop-after=plan` — 코드가 한 줄이라도 쓰이기 전에 접근 방식을 승인합니다.
-- `--planner <model>` / `--planner-effort <effort>` — plan과 UI
-  prototype 생성을 해당 native model/profile과 reasoning effort에 위임합니다. 값
-  을 생략하면 autopilot이 task 난이도와 현재 harness가 실제로 광고하는
-  model들에서 고릅니다. OMP에서는 `default`와 `slow`가 설정된 model role을
-  고르며, 일반 작업의 기본값은 `slow`입니다.
 - *default* — QA-ready 상태로 멈추고, 당신이 evidence를 review합니다.
 - **`/bbs:create-pr`** — 당신이 호출합니다. autopilot은 스스로 PR을 열지 않습니다.
+
+plan, 구현, review, QA는 모두 당신이 시작한 session 안에서 돌아갑니다 — model은 하나뿐이고, 뒤에서 무언가를 따로 띄우지 않습니다. 다른 model로 plan을 쓰고 싶다면 그 model로 autopilot을 시작하세요. 단계별로 model을 라우팅하는 flag는 없습니다.
 
 **필요할 때 추가하세요:**
 
@@ -255,7 +252,7 @@ worktree와 공유 surface 사이에서 작업을 옮기는 command들 — `bbs 
 /bbs:autopilot "add a settings page with dark mode toggle"
 ```
 
-Autopilot은 ticket을 init하고 — requirement, plan — 멈춘 뒤 **마지막 메시지**로 `/goal` 블록을 출력합니다. 그 블록이 당신이 다음에 할 유일한 일입니다: **복사해서, 같은 agent에 다시 붙여넣고, 자리를 뜨세요.** 그러면 goal session이 code를 쓰고, review하고, QA를 돌리고, 당신이 있는 branch에 작업을 commit합니다 — autopilot은 branch를 자르거나 push하거나 PR을 열지 않습니다. review 후 PR은 당신이 직접 여세요. plan과 UI prototype을 만드는 native model을 고르려면 `--planner gpt-5.6-sol --planner-effort high`를 넘기세요. flag를 생략하면 autopilot이 task 난이도와 현재 harness가 광고하는 capability에서 고릅니다.
+Autopilot은 ticket을 init하고 — requirement, plan — 멈춘 뒤 **마지막 메시지**로 `/goal` 블록을 출력합니다. 그 블록이 당신이 다음에 할 유일한 일입니다: **복사해서, 같은 agent에 다시 붙여넣고, 자리를 뜨세요.** 그러면 goal session이 code를 쓰고, review하고, QA를 돌리고, 당신이 있는 branch에 작업을 commit합니다 — autopilot은 branch를 자르거나 push하거나 PR을 열지 않습니다. review 후 PR은 당신이 직접 여세요. autopilot은 자기 model을 따로 두지 않습니다. plan과 UI prototype은 곧바로 code를 쓰고 gate를 돌릴 같은 session에서 만들어지므로, 다른 model로 plan을 쓰고 싶다면 그 model로 autopilot을 시작하세요.
 
 > **handoff는 이렇게 생겼습니다** — autopilot은 평범한 언어의 preamble로 끝나고, 그다음 복사할 블록이 옵니다:
 >
@@ -290,7 +287,7 @@ requirement가 여러 ticket에 걸치면, `foreman`이 프로젝트 전체를 �
 /bbs:foreman                              # ticket + Orca state에서 attach/resume
 ```
 
-Foreman은 parent project 하나와 경계가 정해진 child ticket들을 만들고, 그 dependency edge를 기록하고, Orca orchestration을 통해 감독되는 worker들을 시작합니다. 모든 child는 plan-only Dispatch, 자율 design gate, 그다음 build/QA Dispatch를 받습니다. 각 worker는 그 ticket의 난이도가 벌어주는 model로 시작됩니다 — `simple` / `normal` / `critical` tier는 autopilot의 planner도 쓰는 공유 [model-routing table](.claude/skills/references/model-routing.md)에서 읽고, 결정된 model은 child에 기록됩니다. 거의 모든 ticket은 routine rung(`gpt-5.6-sol` / `opus` / `@default`)에서 돌고, 값비싼 top rung(`gpt-6-astra`, Fable 5.1)은 table의 escalation trigger가 필요하므로 batch가 조용히 거기까지 올라갈 수 없습니다. Foreman은 disk에서 verdict를 검증하고, 공유 test surface를 직렬화하고, ticket들이 상호작용할 때 조합된 integration QA를 돌리고, repo의 `finish:` policy를 dependency 순서대로 자격 있는 각 child에 적용합니다 — `land`는 base로 merge하고, `pr`은 PR을 열고, `review`는 정리된 worker를 release합니다 — 그래서 끝난 ticket이 프로젝트를 기다리는 일은 없습니다. 다만 pending integration gate에 걸린 child는 그것이 통과할 때까지 land를 붙잡습니다. 프로젝트 DAG는 status와 dispatch reply에 함께 실리고, `bbs ticket dag <parent> --mermaid`가 요청 시 출력합니다. Orca message와 Dispatch id가 pane-text polling을 대체하고, 자동 시작된 watcher가 멈춘 coordinator를 찌르고 설정된 interval마다 status를 다시 묻습니다. 그래서 재시작한 session도 대화 기억 없이 이어갑니다.
+Foreman은 parent project 하나와 경계가 정해진 child ticket들을 만들고, 그 dependency edge를 기록하고, Orca orchestration을 통해 감독되는 worker들을 시작합니다. 모든 child는 plan-only Dispatch, 자율 design gate, 그다음 build/QA Dispatch를 받습니다. 각 worker는 그 ticket의 난이도가 벌어주는 model로 시작됩니다 — `simple` / `normal` / `critical` tier는 foreman이 직접 적용하는 공유 [model-routing table](.claude/skills/references/model-routing.md)에서 읽고, 결정된 model은 child에 기록됩니다. 거의 모든 ticket은 routine rung(`gpt-5.6-sol` / `opus` / `@default`)에서 돌고, 값비싼 top rung(`gpt-6-astra`, Fable 5.1)은 table의 escalation trigger가 필요하므로 batch가 조용히 거기까지 올라갈 수 없습니다. Foreman은 disk에서 verdict를 검증하고, 공유 test surface를 직렬화하고, ticket들이 상호작용할 때 조합된 integration QA를 돌리고, repo의 `finish:` policy를 dependency 순서대로 자격 있는 각 child에 적용합니다 — `land`는 base로 merge하고, `pr`은 PR을 열고, `review`는 정리된 worker를 release합니다 — 그래서 끝난 ticket이 프로젝트를 기다리는 일은 없습니다. 다만 pending integration gate에 걸린 child는 그것이 통과할 때까지 land를 붙잡습니다. 프로젝트 DAG는 status와 dispatch reply에 함께 실리고, `bbs ticket dag <parent> --mermaid`가 요청 시 출력합니다. Orca message와 Dispatch id가 pane-text polling을 대체하고, 자동 시작된 watcher가 멈춘 coordinator를 찌르고 설정된 interval마다 status를 다시 묻습니다. 그래서 재시작한 session도 대화 기억 없이 이어갑니다.
 
 **hard prerequisite 하나, 그래서 이게 두 번째로 배울 것:** orchestration이 켜진 [Orca](https://www.onorca.dev). Foreman은 설치되어 version이 맞는 Orca orchestration guide를 load하고, 그 runtime이 없으면 빠르게 실패하며, profile과 무관하게 child마다 worktree를 만듭니다. rigor와 finish policy는 여전히 당신의 profile이 정합니다. serial ticket 하나에서는 `/bbs:autopilot` 대비 얻는 것이 없습니다.
 
@@ -324,7 +321,7 @@ stage가 끝나면 ticket에 `Next:` 줄이 생깁니다 — 말 그대로 다�
 /bbs:autopilot                       # resume — 결정된 ticket의 checkpoint에서 이어받기
 ```
 
-이게 surface 전부입니다. flag 세 개가 이를 확장합니다 — 더 이른 checkpoint에서 멈추는 `--stop-after=requirement|plan`, plan/prototype 생성을 라우팅하는 `--planner <model>` / `--planner-effort <effort>`. Autopilot은 항상 시작한 checkout에서 작업합니다. 격리는 `bbs ticket ensure --mode=…` 또는 `/bbs:foreman`이고, autopilot flag로는 절대 안 됩니다. Verb token은 존재하지 않습니다.
+이게 surface 전부입니다. flag는 하나뿐입니다 — 더 이른 checkpoint에서 멈추는 `--stop-after=requirement|plan`. model은 flag가 아닙니다: autopilot은 시작한 session 안에서 plan하고, 구현하고, review하고, gate를 돌립니다. Autopilot은 항상 시작한 checkout에서 작업합니다. 격리는 `bbs ticket ensure --mode=…` 또는 `/bbs:foreman`이고, autopilot flag로는 절대 안 됩니다. Verb token은 존재하지 않습니다.
 
 ### ticket을 병렬로 작업하기 (worktree 모드)
 

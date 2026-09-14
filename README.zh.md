@@ -50,13 +50,10 @@ bbs ticket serve bs-ab123                 # 仅当该 ticket 跑在自己的 wor
 **人来把关的 checkpoint —— 你继续掌权的地方。** Autopilot 只在真正属于你的时刻暂停；用 flag 挑停在哪一个：
 
 - `--stop-after=plan` —— 在任何代码被写出来之前，先批准方案。
-- `--planner <model>` / `--planner-effort <effort>` —— 把 plan 与 UI
-  prototype 的创建委派给那个原生 model/profile 和推理 effort。省掉
-  任一取值，就让 autopilot 按任务难度以及当前 harness 实际
-  宣称拥有的 model 来选。在 OMP 上，`default` 与 `slow` 选中
-  它配置好的 model role；常规工作默认 `slow`。
 - *默认* —— 停在 QA 就绪，由你 review 证据。
 - **`/bbs:create-pr`** —— 由你调用；autopilot 从不自己开 PR。
+
+规划、实现、review、QA 全部在你启动的那个 session 里跑 —— 一个 model，不会在你背后派活。想在别的 model 上规划，就用那个 model 启动 autopilot；不存在按步骤路由 model 的 flag。
 
 **按需加载：**
 
@@ -251,7 +248,7 @@ skill、workflow，以及 DESIGN.md/CSV 数据都来自 plugin。这就是为什
 /bbs:autopilot "add a settings page with dark mode toggle"
 ```
 
-Autopilot 初始化 ticket —— requirement、plan —— 然后停下，并把一个 `/goal` block 作为它的**最后一条消息**打印出来。那个 block 就是你接下来唯一要做的事：**复制它，粘回同一个 agent，然后走人。** goal session 随后写代码、review、跑 QA，并在你所在的 branch 上 commit 这些工作 —— autopilot 从不切 branch、从不 push、从不开 PR。review 之后由你自己开 PR。传 `--planner gpt-5.6-sol --planner-effort high` 可以指定创建 plan 与 UI prototype 的原生 model；省掉这些 flag，autopilot 就会按任务难度和当前 harness 实际宣称的能力来选。
+Autopilot 初始化 ticket —— requirement、plan —— 然后停下，并把一个 `/goal` block 作为它的**最后一条消息**打印出来。那个 block 就是你接下来唯一要做的事：**复制它，粘回同一个 agent，然后走人。** goal session 随后写代码、review、跑 QA，并在你所在的 branch 上 commit 这些工作 —— autopilot 从不切 branch、从不 push、从不开 PR。review 之后由你自己开 PR。autopilot 没有自己的 model：plan 与 UI prototype 就在随后写代码、跑 gate 的同一个 session 里生成；想在别的 model 上规划，就用那个 model 启动 autopilot。
 
 > **handoff 长这样** —— autopilot 最后给一段白话前言，然后是你要复制的那段 block：
 >
@@ -286,7 +283,7 @@ Autopilot 初始化 ticket —— requirement、plan —— 然后停下，并�
 /bbs:foreman                              # 从 ticket + Orca state 附着/恢复
 ```
 
-Foreman 创建一个父项目和有边界的子 ticket，记录它们的依赖边，并通过 Orca 编排启动受监督的 worker。每个子 ticket 先拿到一个只出 plan 的 Dispatch，再过一个自主 design gate，然后是一个 build/QA Dispatch。每个 worker 都跑在该 ticket 难度应得的 model 上 —— 从 autopilot 的 planner 也在用的共享 [model-routing table](.claude/skills/references/model-routing.md) 里读取 `simple` / `normal` / `critical` 档位，并把解析出的 model 记录在子 ticket 上。几乎每个 ticket 都跑在常规档（`gpt-5.6-sol` / `opus` / `@default`）；昂贵的高档（`gpt-6-astra`、Fable 5.1）需要触及表里的升级触发条件，所以一个批次没法悄悄爬上去。Foreman 从磁盘校验 verdict，串行化共享的测试 surface，在 ticket 互相影响时跑组合式 integration QA，并按依赖顺序把 repo 的 `finish:` 策略应用到每个够格的子 ticket —— `land` 把它 merge 进 base、`pr` 开它的 PR、`review` 放走已定局的 worker —— 所以做完的 ticket 从不等整个项目；某个子 ticket 若被尚未通过的 integration gate 覆盖，它的 land 会一直扣着直到那个 gate 通过。项目 DAG 随它的状态和 dispatch 回复一起走，`bbs ticket dag <parent> --mermaid` 可以按需打印它。Orca 消息和 Dispatch id 取代了 pane 文本轮询，一个自动启动的 watcher 会按配置的间隔轻推卡住的协调者并再次询问它的状态，所以重启的 session 没有对话记忆也能接着跑。
+Foreman 创建一个父项目和有边界的子 ticket，记录它们的依赖边，并通过 Orca 编排启动受监督的 worker。每个子 ticket 先拿到一个只出 plan 的 Dispatch，再过一个自主 design gate，然后是一个 build/QA Dispatch。每个 worker 都跑在该 ticket 难度应得的 model 上 —— 从 foreman 自己套用的共享 [model-routing table](.claude/skills/references/model-routing.md) 里读取 `simple` / `normal` / `critical` 档位，并把解析出的 model 记录在子 ticket 上。几乎每个 ticket 都跑在常规档（`gpt-5.6-sol` / `opus` / `@default`）；昂贵的高档（`gpt-6-astra`、Fable 5.1）需要触及表里的升级触发条件，所以一个批次没法悄悄爬上去。Foreman 从磁盘校验 verdict，串行化共享的测试 surface，在 ticket 互相影响时跑组合式 integration QA，并按依赖顺序把 repo 的 `finish:` 策略应用到每个够格的子 ticket —— `land` 把它 merge 进 base、`pr` 开它的 PR、`review` 放走已定局的 worker —— 所以做完的 ticket 从不等整个项目；某个子 ticket 若被尚未通过的 integration gate 覆盖，它的 land 会一直扣着直到那个 gate 通过。项目 DAG 随它的状态和 dispatch 回复一起走，`bbs ticket dag <parent> --mermaid` 可以按需打印它。Orca 消息和 Dispatch id 取代了 pane 文本轮询，一个自动启动的 watcher 会按配置的间隔轻推卡住的协调者并再次询问它的状态，所以重启的 session 没有对话记忆也能接着跑。
 
 **一个硬前置条件，这也是它为什么是第二个要学的东西：** 启用 orchestration 的 [Orca](https://www.onorca.dev)。Foreman 加载 Orca 已安装、版本匹配的 orchestration 指南，没有那个 runtime 就快速失败，并且无论 profile 如何都为每个子 ticket 建 worktree。你的 profile 仍然决定严格度与收尾策略。只有一个串行 ticket 时，它相比 `/bbs:autopilot` 不带来任何额外好处。
 
@@ -320,7 +317,7 @@ Babysit 是一条用来交付改动的流水线。你在一头丢进一个想法
 /bbs:autopilot                       # 恢复 —— 从解析出的 ticket 的 checkpoint 接着跑
 ```
 
-这就是全部表面。三个 flag 扩展它 —— `--stop-after=requirement|plan` 让它在更早的 checkpoint 停下，`--planner <model>` / `--planner-effort <effort>` 用来路由 plan/prototype 的创建。Autopilot 永远在你启动它的那个 checkout 上工作；隔离靠 `bbs ticket ensure --mode=…` 或 `/bbs:foreman`，从来不是某个 autopilot flag。动词 token 不存在。
+这就是全部表面。一个 flag 扩展它 —— `--stop-after=requirement|plan` 让它在更早的 checkpoint 停下。model 不是 flag：autopilot 就在你启动它的那个 session 里规划、实现、review、跑 gate。Autopilot 永远在你启动它的那个 checkout 上工作；隔离靠 `bbs ticket ensure --mode=…` 或 `/bbs:foreman`，从来不是某个 autopilot flag。动词 token 不存在。
 
 ### 并行处理 ticket (worktree 模式)
 

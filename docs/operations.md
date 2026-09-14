@@ -174,8 +174,9 @@ child ticket is classified into a task tier — `simple`, `normal`,
 weak evidence staying `normal`. The canonical harness → tier → model list,
 with each harness's ladder, capacity order, and list prices, is
 `.claude/skills/references/model-routing.md` — the pack's single place to edit
-those IDs. Both `autopilot` (its planner and its QA child) and `foreman` (the
-worker CLI session it dispatches) route through it.
+those IDs. `foreman` — the worker CLI session it dispatches — is the only
+skill that routes through it; an `autopilot` worker inherits whatever model it
+was started with and plans, implements, and gates on that one model.
 
 Almost every ticket runs on the routine rung — `gpt-5.6-sol`, `opus`,
 `@default`. OMP's `critical` column adds `@slow`, its strongest configured role.
@@ -197,7 +198,8 @@ starts on its own role binding, and a `grok` worker on `grok-4.6`, the model
 the table routes for every tier. The receipt's
 `launch.effective` is what the worker actually got; a Dispatch that could not
 carry the preference records the limitation in its handoff, and the worker's
-`autopilot` still routes its own planner and QA models by tier.
+`autopilot` then plans, implements, and gates on whatever model the worker
+started with — it routes no models of its own.
 
 The resolved pair is persisted as `worker_model` / `worker_effort` pointers on
 the child ticket, so a resume, retry, or reused worker cannot silently

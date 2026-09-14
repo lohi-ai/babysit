@@ -24,15 +24,15 @@ autopilot.
   Resolve the active harness from session metadata and exposed tools; use
   the preamble's `AGENT` / `SKILL_REF`, not the terminal brand or an installed
   CLI as evidence of which harness is running.
-- Claude Code, Codex, and OMP use the same workflow and disk gates. Adapt
-  skill loading, task tracking, subagent dispatch, and waiting to the tools
-  actually exposed. No Skill tool → read the resolved skill's `SKILL.md` in
-  full and follow its references, preamble/telemetry, and output contract.
+- Claude Code, Codex, and OMP use the same workflow and disk gates, on the
+  same rule: every step runs in this session. Adapt skill loading and task
+  tracking to the tools actually exposed. No Skill tool → read the resolved
+  skill's `SKILL.md` in full and follow its references, preamble/telemetry,
+  and output contract.
   No TaskCreate → use the harness's task/plan tool; if absent, checkpoint
   milestones on disk. Never invent a tool or claim a hook fired.
 - Plain terminal, cmux, and Orca are presentation/transport choices, not
-  model selectors. Native subagents need no new pane, terminal CLI, or
-  orchestration bus. Use terminal-specific transport only when requested
+  model selectors. Use terminal-specific transport only when requested
   or already required by the invoking workflow; absence is not a gate.
 - `/goal` instructions below apply only where that command is supported — and
   support is verified for the harness actually running, never inferred from
@@ -82,7 +82,7 @@ autopilot.
    requirement, plan, manifest, or branch work at all *and* no archetype was
    named — a named archetype is direction enough to proceed.
 4. Seed the plan when the routed mode needs one (build mode, size above XS):
-   run `plan-draft` through the planner subagent policy below — `plan.md` on
+   run `plan-draft` in this session, per the planning policy below — `plan.md` on
    disk is what a crashed loop recovers from. User-facing work routes through
    `design-ui` inside `plan-draft`; make sure that ran, so the spec and
    prototype exist *before* the `/goal` handoff — design is reviewed before
@@ -92,89 +92,32 @@ autopilot.
 5. Hand the work to the harness's work loop (below). Init never executes
    workflow steps; without `/goal`, transition directly to execution.
 
-### Planner subagent (`--planner`, `--planner-effort`)
-Planning is a fresh-context job when native delegation is available. These
-flags select a native model/profile and its reasoning effort.
-- `--planner <model>` — use that exact advertised model or profile for
-  `plan-draft` and its nested `design-ui` prototype work.
-- `--planner-effort <effort>` — use that exact advertised reasoning effort.
-- A missing flag is automatic: an explicit model with no effort gets the
-  auto-selected effort, and an explicit effort with no model gets the
-  auto-selected model. Explicit values always win. If the native tool cannot
-  honor an explicit value, report `BLOCKED` naming the unsupported value; do
-  not silently substitute it.
+### Planning runs in this session
+`plan-draft` — including the `design-ui` it invokes when the work adds or
+reshapes a user-facing surface — executes in the current autopilot session, on
+the session's model. Never dispatch it to a native child, a second session, or
+an external process: a routed planner is a second model, a second usage bill,
+and a second context to reconcile, selected by a run that can see neither its
+cost nor its state. There is no `--planner` flag and no per-step model
+selector. The planning model is a **launch** decision: start autopilot on the
+model you want to plan with, and that model plans, implements, and gates.
 
-For automatic selection, inspect the native subagent tool's advertised models,
-profiles, and effort selector first; never invent an ID, and never read an
-agent type name as a model name. Classify the work into a tier from the
-requirement and repo evidence, then take that harness's row from the shared
-table ([model routing](../references/model-routing.md)) — it holds the tier
-definitions, the per-harness ladders with capacity and list prices, the
-tier → model rows, and the escalation trigger this skill applies.
+The step owns one writer, not one child: load and execute the real `plan-draft`
+skill here, in this context, with the same bounded assignment a dispatched
+child would have received — the resolved `SKILL.md` path; ticket id and
+absolute repo/ticket paths; requirement and checkpoint paths; permission to
+write the plan, design spec, prototype artifacts, pointers, `plan-draft`
+verdict, and handoff — and no implementation, git, push, or close-out
+authority.
 
-The routine rungs — `gpt-5.6-sol`, `opus`, `@default` — plan almost every
-ticket, hard ones included. The top rung (`gpt-6-astra`, Fable 5.1) costs
-2–2.5x the workhorse per token and is an escalation, never a tier default: the
-shared table gates it on a floor reason plus a workhorse attempt that already
-came back short. Never climb there on a hunch, and never spend it on a gate.
-
-For an automatic choice whose preferred entry is not advertised, use the
-nearest capable advertised fallback in that harness and record the limitation;
-if no native model/profile selector is exposed, use an inherited/default child.
-If native delegation itself is unavailable or forbidden, run the real
-`plan-draft` skill in-session and record why. Automatic task-tier/model routing
-is a Taste decision: log the tier, selected model/profile, effort (or
-unsupported), and evidence through the Auto-Decision Framework.
-
-**OMP launch rule:** OMP's bundled general-purpose `task` subagent is bound to
-its `@task` model role and its task tool does not expose a per-child model
-selector. Do not use that child for a routed `default` or `slow` planner. Start
-one fresh OMP process in the target repo instead, activating the selected role
-with `omp --model @default|@slow --thinking <effort> --auto-approve -p
-<assignment>` (use the exact explicit model in place of `@<role>` when the user
-named one). Add an isolated `--session-dir` and a reasonable `--max-time` bound
-so the parent can verify the effective model/effort and cannot wait forever.
-The assignment invokes `/plan-draft` with the already-initialized ticket
-context; never invoke `/autopilot` in the child, which would recurse and choose
-another planner. `--slow <model>` configures the role; it does not activate it,
-so it is not a substitute for `--model @slow`. Preserve OMP's normal
-configuration root; do not use `PI_CODING_AGENT_DIR`, which replaces that root.
-Treat this process as the one planner child, wait for it, and validate its disk
-artifacts exactly like a native-tool child. A terminal final response plus the
-expected `DONE` verdict and artifacts is completion; if that exact child stays
-resident afterward, terminate only its verified PID and record the runtime
-concern rather than launching a replacement planner. If the launcher rejects an
-automatic role, apply the advertised fallback rule above; if it rejects an
-explicit value, report `BLOCKED`.
-
-Before dispatch, persist the resolved values so cold resume cannot choose a
-different planner:
-```bash
-BABYSIT_TICKET="$TICKET" bbs ticket set-pointer planner_model "<resolved-model-or-profile>"
-BABYSIT_TICKET="$TICKET" bbs ticket set-pointer planner_effort "<resolved-effort-or-unsupported>"
-```
-On resume, those pointers win unless the new invocation explicitly supplies a
-planner flag; an explicit change overwrites the affected pointer and re-plans
-only when the plan has not already passed its checkpoint. Never silently
-replace an accepted plan because a later invocation names a different planner.
-
-Dispatch exactly one planner and wait; the parent must not edit the shared
-checkout meanwhile. Give the child a complete bounded assignment: the real
-`plan-draft` skill reference and resolved `SKILL.md` path; ticket id and
-absolute repo/worktree/ticket paths; requirement and checkpoint paths; the
-selected model/profile and effort; permission to write the plan, design,
-prototype-only route/artifacts, pointers, handoff, and `plan-draft` verdict;
-and no implementation, git, push, or close-out authority. The child loads and
-executes `plan-draft`, which invokes `design-ui` when required; do not split
-those two writers across parallel children. Require its status body and exact
-artifact paths.
-
-After it returns, inspect the artifacts, confirm the result belongs to this
-attempt, and read `bbs ticket verdict-status --skill plan-draft`. Missing or
-inadequate output is not a plan: retry once with the next stronger advertised
-automatic option, or report `BLOCKED` for an explicit planner. Record the child
-handle, selected model/profile, effort, artifact paths, and result in the
-checkpoint/handoff.
+Then inspect the artifacts, confirm they belong to this attempt, and read
+`bbs ticket verdict-status --skill plan-draft`. Missing or inadequate output is
+not a plan: re-run it in-session once, naming the gap. If the plan is
+inadequate because this session's model cannot carry it, that is a launch
+problem rather than a dispatch problem — stop with `NEEDS_CONTEXT` naming the
+model to restart the run on, instead of silently planning at a lower tier.
+Never silently replace an accepted plan. Record the session model, artifact
+paths, and result in the checkpoint/handoff.
 ## The work loop (`/goal`)
 On a harness that supports `/goal`, `/goal <condition>` arms a Stop hook
 that blocks stopping until the condition holds. Autopilot cannot arm it
@@ -248,9 +191,10 @@ Planning: `plan-draft`. Coding: `implement`. Landing review: `review-pr`.
 QA: `qa` (no runnable target → record the fallback, use `browse` or a narrow
 local check). Debug: `investigate`. Closing out is the human's `create-pr`
 (or foreman's finish policy) — never autopilot's.
-### Current-session review / automatic QA subagent
+### Current-session gates (`review-pr`, `qa`)
 Applies to every workflow's `review-pr` and `qa` steps, without an opt-in
-flag.
+flag. Both gates run in this session, on the session's model: no autopilot
+step is ever dispatched to a child, a second session, or an external process.
 1. **Run review in the current session.** Always load and execute the real
    `review-pr --fix` skill in the current autopilot session, on the session's
    model. Never dispatch the whole review skill to a native child or external
@@ -262,61 +206,45 @@ flag.
    resolved effort; if the current session cannot provide the required
    fan-out, record `BLOCKED` rather than delegating the whole skill or silently
    lowering review effort.
-2. **Select QA capabilities automatically.** QA may run in one native child.
-   Inspect the native subagent tool schema and advertised models/agent profiles
-   before dispatch:
-   - **Claude Code:** prefer `sonnet` through the subagent tool's model
-     selector when supported, with an agent allowed to read, edit, and run
-     the required checks.
-   - **Codex:** prefer `terra` only when the session advertises that model
-     or an agent profile explicitly mapped to it. Use the exposed model
-     selector or that configured profile; do not assume `spawn_agent`
-     accepts a `model` argument or that an agent type is a model name.
-   - **OMP / other harnesses:** use an advertised smaller coding-capable
-     model/profile with the required tools; never guess a model ID or assume
-     a read-only scout can perform QA fixes.
-   Honor an explicit user QA model choice. Otherwise choose the advertised
-   smaller capable option; if model selection is unavailable, use a native
-   child with its inherited/default model and record that limitation.
-   QA is a verification run, so it never takes the costly top rung: the gate
-   rung (`sonnet`, `terra`) or the workhorse, never `gpt-6-astra` or Fable 5.1.
-   If native delegation is unavailable or forbidden, execute the real `qa`
-   skill in-session and record why.
-   Capability routing is Mechanical; a judgment-based model escalation is
-   Taste and is logged via the framework, without prompting.
+2. **Run QA in this session too.** After the review pass and its fixes, load
+   and execute the real `qa` skill here and run the checks yourself — no child
+   dispatch, no per-harness model selection, no worker to wait on. A gate is
+   exactly where you want an auditable bill and an auditable context, and
+   handing verification to an agent the run cannot see gives up both. If the
+   session lacks what a check needs (no browser, no runnable target), the
+   skill's named fallback applies and the limitation is recorded; a missing
+   capability is never a fabricated PASS and never a reason to spin up a
+   child.
 3. **Run one mutating gate at a time:** finish the current-session
-   `review-pr --fix` pass and its fixes before dispatching `qa`. Never run
+   `review-pr --fix` pass and its fixes before starting `qa`. Never run
    either gate concurrently with implementation or with the other gate. The
-   autopilot session retains ticket/checkpoint ownership and commits. The QA
-   worker does not invoke autopilot or recursively delegate another gate.
-4. **Give the QA child a complete, bounded assignment:** skill reference and
-   resolved file path; ticket id and absolute ticket/repo paths; requirement,
-   plan and relevant handoff paths; acceptance criteria, available check
-   commands, QA URL/surface; permitted edits and no git/close-out authority.
-   Use a fresh task context, not a copy of the implementation conversation.
-   Require the actual skill, evidence paths, changed files, unresolved
-   findings, and its status/verdict body. Require real runtime QA, including a
-   relevant error/empty/validation/responsive case, or the skill's named
-   fallback. A child lacking required browser/runtime access returns that
-   limitation, not a fabricated PASS; route the gate to a capable child or
-   the parent.
-5. **Accept evidence, not completion text.** For review, record the current
-   session model, reviewed revision, report, fixes, and evidence paths in the
-   checkpoint/handoff. For QA, also record the child handle and selected model
-   (or unknown/inherited). Wait with the native tool; the parent must not edit
-   the shared checkout while QA runs. If the harness isolates QA edits,
-   integrate them before continuing. Inspect each report and unresolved
+   session retains ticket/checkpoint ownership and commits, and a gate run
+   never invokes autopilot or recursively delegates another gate.
+4. **Scope each gate from the ticket, not from memory:** the resolved skill
+   path; ticket id and absolute ticket/repo paths; requirement, plan and
+   relevant handoff paths; acceptance criteria, available check commands, QA
+   URL/surface; permitted edits and no git/close-out authority. Read those
+   artifacts rather than replaying the implementation narrative, so the gate
+   judges the revision on disk, not what you intended to write. Require the
+   actual skill, evidence paths, changed files, unresolved findings, and its
+   status/verdict body. Require real runtime QA, including a relevant
+   error/empty/validation/responsive case, or the skill's named fallback.
+   Lacking required browser/runtime access, return that limitation, not a
+   fabricated PASS.
+5. **Accept evidence, not completion text.** Record the session model,
+   reviewed revision, report, fixes, and evidence paths in the
+   checkpoint/handoff. A gate owns the checkout while it runs — no editing the
+   same files until its report is in. Inspect each report and unresolved
    finding; persist each accepted body with
    `BABYSIT_TICKET="$TICKET" bbs ticket set-verdict --skill <review-pr|qa> --body-file <path>` unless
    the skill already persisted it, then read `BABYSIT_TICKET="$TICKET" bbs ticket verdict-status`.
    Require evidence from this attempt and the current change, not an old
    `DONE` left on disk. A crash, missing report, or inadequate check is not a
-   pass: fix and re-run review in-session, or retry QA on a capable model /
-   record `BLOCKED`. Never overwrite a failed gate with a parent-authored
-   success without fixing and re-verifying. Subsequent edits invalidate
-   affected gates; run them again before finish. On cold resume recover any
-   recorded QA attempt and artifacts; do not start a duplicate writer while
-   its child is still running.
+   pass: fix and re-run the gate, or record `BLOCKED`. Never overwrite a failed
+   gate with a parent-authored success without fixing and re-verifying.
+   Subsequent edits invalidate affected gates; run them again before finish.
+   On cold resume recover any recorded gate attempt and artifacts; do not
+   start a duplicate run while one is still in flight.
 ## Rules
 - Disk state must always be enough for a cold session to resume — but disk is
   the backup, not the brain; in a live session use everything already learned.

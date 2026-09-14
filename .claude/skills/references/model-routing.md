@@ -1,9 +1,16 @@
 # Model routing
 
-The pack's canonical harness → model list. `autopilot` routes its planner and
-QA models through it; `foreman` routes the CLI session it dispatches each child
-ticket's worker on. Every model ID, effort, and price the pack reasons about is
-written down here — a second copy inside a SKILL.md is a second thing to drift.
+The pack's canonical harness → model list. `foreman` routes the CLI session it
+dispatches each child ticket's worker on. Every model ID, effort, and price the
+pack reasons about is written down here — a second copy inside a SKILL.md is a
+second thing to drift.
+
+`autopilot` deliberately does not route models: plan, implement, and both gates
+run in the session it was launched in, on that session's model (see
+[autopilot § Planning runs in this session](../autopilot/SKILL.md)). Tiering is
+therefore a *launch* decision for a single ticket — start the session on the
+model the work deserves — and a `foreman` decision for a batch, which is the
+one place this table is read.
 
 ## Tiers
 
@@ -41,7 +48,7 @@ harness whose ladder lists it.
 |---|-------|--------|----------|------:|-------:|
 | 1 | Fable 5.1 (`fable`) | `high` | escalation rung — ~2x the workhorse, see below | 10.00 | 50.00 |
 | 2 | Opus 5 (`opus`) | `high` | the workhorse rung — handles almost every ticket | 5.00 | 25.00 |
-| 3 | Sonnet 5 (`sonnet`) | `high` | gate rung — the cheap capable option for review and QA fan-out | 3.00 | 15.00 |
+| 3 | Sonnet 5 (`sonnet`) | `high` | gate rung — the cheapest capable option for review and verification work | 3.00 | 15.00 |
 | 4 | Haiku 4.5 (`haiku`) | — | mechanical work only | 1.00 | 5.00 |
 
 ### OMP — operator-configured roles

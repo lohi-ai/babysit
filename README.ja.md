@@ -50,13 +50,10 @@ ticket の code は、あなたがすでに立っている branch の上にあ�
 **人間の checkpoint — あなたが制御を保つ場所。** autopilot が止まるのは、本当にあなたが持つべき瞬間だけ。どれにするかは flag で選ぶ:
 
 - `--stop-after=plan` — code が 1 行も書かれる前にアプローチを承認する。
-- `--planner <model>` / `--planner-effort <effort>` — plan と UI
-  prototype の作成を、その native model/profile と reasoning effort に委譲する。どちらかの
-  値を省くと、autopilot がタスクの難易度と、現在の harness が実際に advertise している
-  model から選ぶ。OMP では `default` と `slow` が設定済みの model role を選び、
-  通常の作業はデフォルトで `slow` になる。
 - *default* — QA-ready で止まる。あなたがエビデンスをレビューする。
 - **`/bbs:create-pr`** — 呼ぶのはあなた。autopilot 自身は決して PR を開かない。
+
+plan、実装、レビュー、QA はすべて、あなたが起動した session の中で走る — model は 1 つだけで、背後で何かを差し向けることはない。別の model で plan を書きたければ、その model で autopilot を起動する。ステップごとに model を route する flag は存在しない。
 
 **必要になったら足す:**
 
@@ -255,7 +252,7 @@ worktree と shared surface の間で作業を動かすコマンド — `bbs tic
 /bbs:autopilot "add a settings page with dark mode toggle"
 ```
 
-autopilot は ticket を init する — requirement、plan — それから止まり、`/goal` ブロックを **最後のメッセージ** として出力する。そのブロックが、あなたが次にやる唯一のことだ: **コピーして、同じ agent に貼り戻して、席を立つ。** すると goal session が code を書き、レビューし、QA を回し、あなたが立っている branch に作業を commit する — autopilot は決して branch を切らず、push せず、PR を開かない。PR はレビューのあと自分で開く。plan と UI prototype を作る native model を選ぶには `--planner gpt-5.6-sol --planner-effort high` を渡す。これらの flag を省くと、autopilot がタスクの難易度と、現在の harness が advertise している capability から選ぶ。
+autopilot は ticket を init する — requirement、plan — それから止まり、`/goal` ブロックを **最後のメッセージ** として出力する。そのブロックが、あなたが次にやる唯一のことだ: **コピーして、同じ agent に貼り戻して、席を立つ。** すると goal session が code を書き、レビューし、QA を回し、あなたが立っている branch に作業を commit する — autopilot は決して branch を切らず、push せず、PR を開かない。PR はレビューのあと自分で開く。autopilot は自分の model を持たない。plan と UI prototype は、そのあと code を書き gate を回すのと同じ session で作られる — 別の model で plan を書きたければ、その model で autopilot を起動する。
 
 > **handoff はこんな形だ** — autopilot は平易な言葉の前置きで終わり、そのあとにコピーするブロックが続く:
 >
@@ -290,7 +287,7 @@ requirement が複数 ticket にまたがったら、`foreman` がプロジェ�
 /bbs:foreman                              # ticket + Orca state から attach/resume
 ```
 
-foreman は 1 つの親プロジェクトと、範囲を限定された子 ticket を作り、依存 edge を記録し、監督下の worker を Orca orchestration 経由で起動する。子はすべて plan-only の Dispatch、自律 design gate、そして build/QA Dispatch を受け取る。各 worker は、その ticket の難易度が稼ぐ model で起動される — `simple` / `normal` / `critical` の tier は、autopilot の planner も使う共有の [model-routing table](.claude/skills/references/model-routing.md) から読まれ、解決された model は子に記録される。ほぼすべての ticket は routine の段 (`gpt-5.6-sol` / `opus` / `@default`) で走る。コストの高い最上位の段 (`gpt-6-astra`、Fable 5.1) には table の escalation trigger が要るので、batch が黙ってそこまで上がることはない。Foreman は verdict を disk から検証し、共有の test surface を直列化し、ticket が相互作用するときは composed な統合 QA を回し、repo の `finish:` policy を依存順に該当する子へ適用する — `land` は base に merge し、`pr` は PR を開き、`review` は落ち着いた worker を release する — なので done の ticket がプロジェクトを待つことはない。pending の統合 gate に覆われた子は、それが通るまで land を保留する。プロジェクトの DAG は status と dispatch の返信とともに運ばれ、`bbs ticket dag <parent> --mermaid` が要求時に出力する。Orca の message と Dispatch id が pane-text の polling を置き換え、自動起動の watcher が停滞した coordinator をつつき、設定された間隔で status を再要求するので、再起動した session は会話 memory なしで再開する。
+foreman は 1 つの親プロジェクトと、範囲を限定された子 ticket を作り、依存 edge を記録し、監督下の worker を Orca orchestration 経由で起動する。子はすべて plan-only の Dispatch、自律 design gate、そして build/QA Dispatch を受け取る。各 worker は、その ticket の難易度が稼ぐ model で起動される — `simple` / `normal` / `critical` の tier は、foreman 自身が適用する共有の [model-routing table](.claude/skills/references/model-routing.md) から読まれ、解決された model は子に記録される。ほぼすべての ticket は routine の段 (`gpt-5.6-sol` / `opus` / `@default`) で走る。コストの高い最上位の段 (`gpt-6-astra`、Fable 5.1) には table の escalation trigger が要るので、batch が黙ってそこまで上がることはない。Foreman は verdict を disk から検証し、共有の test surface を直列化し、ticket が相互作用するときは composed な統合 QA を回し、repo の `finish:` policy を依存順に該当する子へ適用する — `land` は base に merge し、`pr` は PR を開き、`review` は落ち着いた worker を release する — なので done の ticket がプロジェクトを待つことはない。pending の統合 gate に覆われた子は、それが通るまで land を保留する。プロジェクトの DAG は status と dispatch の返信とともに運ばれ、`bbs ticket dag <parent> --mermaid` が要求時に出力する。Orca の message と Dispatch id が pane-text の polling を置き換え、自動起動の watcher が停滞した coordinator をつつき、設定された間隔で status を再要求するので、再起動した session は会話 memory なしで再開する。
 
 **hard prerequisite が 1 つあり、だからこれは 2 番目に学ぶべきものだ:** orchestration を有効にした [Orca](https://www.onorca.dev)。foreman は Orca にインストールされた version の一致する orchestration guide を読み込み、その runtime がなければ即座に失敗し、profile に関係なく子ごとに worktree を作る。厳しさと finish policy を決めるのは依然あなたの profile だ。直列の 1 ticket では `/bbs:autopilot` に対して何も得るものはない。
 
@@ -324,7 +321,7 @@ stage が終わると、ticket に `Next:` 行が付く — 次にやること�
 /bbs:autopilot                       # resume — 解決された ticket の checkpoint から再開する
 ```
 
-表面はこれで全部だ。3 つの flag がそれを広げる — より手前の checkpoint で止める `--stop-after=requirement|plan`、plan/prototype の作成を route する `--planner <model>` / `--planner-effort <effort>`。autopilot は常に、起動した checkout で作業する。分離は `bbs ticket ensure --mode=…` か `/bbs:foreman` であって、autopilot の flag ではない。verb token は存在しない。
+表面はこれで全部だ。flag は 1 つだけ — より手前の checkpoint で止める `--stop-after=requirement|plan`。model は flag ではない: autopilot は、起動した session の中で plan し、実装し、review し、gate を回す。autopilot は常に、起動した checkout で作業する。分離は `bbs ticket ensure --mode=…` か `/bbs:foreman` であって、autopilot の flag ではない。verb token は存在しない。
 
 ### ticket を並列で回す (worktree mode)
 

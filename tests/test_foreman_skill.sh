@@ -177,11 +177,11 @@ has_all "worker-model-cost-discipline" \
 
 REF="$ROOT/.claude/skills/references/model-routing.md"
 if grep -q 'model-routing.md' "$F" \
-   && grep -q 'model-routing.md' "$A" \
+   && ! grep -q 'model-routing.md' "$A" \
    && grep -q '^| Codex | #3 `gpt-5.6-terra`, `high` |' "$REF"; then
-  ok "canonical-model-table-shared"
+  ok "canonical-model-table-foreman-only"
 else
-  fail "canonical-model-table-shared"
+  fail "canonical-model-table-foreman-only"
 fi
 
 echo

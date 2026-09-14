@@ -50,9 +50,10 @@ Từng bước:
 **Các chốt của con người — nơi bạn giữ quyền.** Autopilot chỉ dừng ở những khoảnh khắc thật sự thuộc về bạn; chọn khoảnh khắc nào bằng flag:
 
 - `--stop-after=plan` — duyệt hướng đi trước khi viết một dòng code.
-- `--planner <model>` / `--planner-effort <effort>` — giao việc tạo plan và prototype UI cho đúng model/profile và mức effort đó. Bỏ trống một trong hai thì autopilot tự chọn theo độ khó của việc và theo những model mà harness hiện tại thật sự quảng cáo. Trên OMP, `default` và `slow` chọn đúng model role đã cấu hình; việc thường mặc định về `slow`.
 - *mặc định* — dừng ở trạng thái QA-xong, bạn review bằng chứng.
 - **`/bbs:create-pr`** — bạn tự gọi; autopilot không bao giờ tự mở PR.
+
+Plan, implementation, review và QA đều chạy trong đúng session bạn khởi động — một model duy nhất, không có gì được phái đi sau lưng bạn. Muốn plan bằng model khác thì hãy khởi động autopilot bằng model đó; không có flag nào route model theo từng bước.
 
 **Thêm khi cần:**
 
@@ -251,7 +252,7 @@ Các lệnh chuyển việc giữa worktree và bề mặt dùng chung — `bbs 
 /bbs:autopilot "add a settings page with dark mode toggle"
 ```
 
-Autopilot init ticket — requirement, plan — rồi dừng lại và in ra một block `/goal` làm **tin nhắn cuối cùng**. Block đó chính là việc duy nhất bạn làm tiếp theo: **copy nó, dán lại vào đúng agent đang mở, rồi đi chơi.** Session đang giữ goal sẽ viết code, review, chạy QA, và commit lên branch bạn đang đứng — autopilot không bao giờ cắt branch, push, hay mở PR. Review xong thì tự mở PR. Truyền `--planner gpt-5.6-sol --planner-effort high` để tự chọn model native tạo plan và prototype UI; bỏ hai flag đó thì autopilot tự chọn theo độ khó của việc và những gì harness hiện tại quảng cáo.
+Autopilot init ticket — requirement, plan — rồi dừng lại và in ra một block `/goal` làm **tin nhắn cuối cùng**. Block đó chính là việc duy nhất bạn làm tiếp theo: **copy nó, dán lại vào đúng agent đang mở, rồi đi chơi.** Session đang giữ goal sẽ viết code, review, chạy QA, và commit lên branch bạn đang đứng — autopilot không bao giờ cắt branch, push, hay mở PR. Review xong thì tự mở PR. Autopilot không có model riêng: plan và prototype UI được tạo ngay trong session sẽ viết code và chạy gate, nên muốn plan bằng model khác thì hãy khởi động autopilot bằng model đó.
 
 > **Bản bàn giao trông như vầy** — autopilot kết thúc bằng một đoạn dẫn bằng lời thường, rồi tới block để copy:
 >
@@ -286,7 +287,7 @@ Khi một requirement trải qua nhiều ticket, `foreman` sở hữu cả dự 
 /bbs:foreman                          # attach/resume từ ticket + state Orca
 ```
 
-Foreman tạo một parent project và các child ticket có biên rõ, ghi cạnh phụ thuộc, rồi khởi động worker được giám sát qua Orca orchestration. Mỗi child có một Dispatch chỉ-plan, một design gate tự xử lý, rồi một Dispatch build/QA. Mỗi worker khởi động trên model mà độ khó của ticket đó xứng đáng — các mức `simple` / `normal` / `critical` đọc từ [bảng model-routing](.claude/skills/references/model-routing.md) dùng chung mà planner của autopilot cũng dùng, và model đã chọn được ghi lại trên child. Gần như mọi ticket chạy ở nấc thường (`gpt-5.6-sol` / `opus` / `@default`); nấc đắt nhất (`gpt-6-astra`, Fable 5.1) cần đúng trigger escalation trong bảng, nên cả batch không thể âm thầm leo lên đó. Foreman kiểm verdict trên đĩa, tuần tự hóa test surface dùng chung, chạy QA tích hợp có compose khi các ticket tương tác, và áp dụng `finish:` policy của repo cho từng child đủ điều kiện theo thứ tự phụ thuộc — `land` merge vào base, `pr` mở PR, `review` giải phóng worker đã settle — nên ticket xong không phải chờ cả dự án; child nằm trong một integration gate đang chờ thì giữ land của nó tới khi gate đó pass. Project DAG đi kèm các reply trạng thái và dispatch, và `bbs ticket dag <parent> --mermaid` in nó ra khi cần. Message và Dispatch id của Orca thay cho việc dò chữ trong pane, còn watcher tự khởi động sẽ nudge một coordinator đang kẹt và hỏi lại trạng thái theo interval đã cấu hình, nên session khởi động lại vẫn resume được mà không cần nhớ hội thoại.
+Foreman tạo một parent project và các child ticket có biên rõ, ghi cạnh phụ thuộc, rồi khởi động worker được giám sát qua Orca orchestration. Mỗi child có một Dispatch chỉ-plan, một design gate tự xử lý, rồi một Dispatch build/QA. Mỗi worker khởi động trên model mà độ khó của ticket đó xứng đáng — các mức `simple` / `normal` / `critical` đọc từ [bảng model-routing](.claude/skills/references/model-routing.md) mà chính foreman áp dụng, và model đã chọn được ghi lại trên child. Gần như mọi ticket chạy ở nấc thường (`gpt-5.6-sol` / `opus` / `@default`); nấc đắt nhất (`gpt-6-astra`, Fable 5.1) cần đúng trigger escalation trong bảng, nên cả batch không thể âm thầm leo lên đó. Foreman kiểm verdict trên đĩa, tuần tự hóa test surface dùng chung, chạy QA tích hợp có compose khi các ticket tương tác, và áp dụng `finish:` policy của repo cho từng child đủ điều kiện theo thứ tự phụ thuộc — `land` merge vào base, `pr` mở PR, `review` giải phóng worker đã settle — nên ticket xong không phải chờ cả dự án; child nằm trong một integration gate đang chờ thì giữ land của nó tới khi gate đó pass. Project DAG đi kèm các reply trạng thái và dispatch, và `bbs ticket dag <parent> --mermaid` in nó ra khi cần. Message và Dispatch id của Orca thay cho việc dò chữ trong pane, còn watcher tự khởi động sẽ nudge một coordinator đang kẹt và hỏi lại trạng thái theo interval đã cấu hình, nên session khởi động lại vẫn resume được mà không cần nhớ hội thoại.
 
 **Một thứ phải có trước, nên nó mới là bài học thứ hai:** [Orca](https://www.onorca.dev) với orchestration được bật. Foreman nạp guide orchestration đúng phiên bản đang cài, dừng rõ ràng nếu runtime thiếu, và tạo worktree cho từng child bất kể profile. Profile vẫn quyết định độ gắt và finish policy. Với một ticket lẻ chạy tuần tự, nó chẳng hơn `/bbs:autopilot` chỗ nào.
 
@@ -320,7 +321,7 @@ Mỗi khi một stage xong, ticket có thêm một dòng `Next:` — đúng ngh�
 /bbs:autopilot                       # resume — nối lại từ checkpoint của ticket đã resolve
 ```
 
-Cả bề mặt chỉ có vậy. Ba flag mở rộng thêm — `--stop-after=requirement|plan` để dừng ở checkpoint sớm hơn, và `--planner <model>` / `--planner-effort <effort>` để chọn model tạo plan/prototype. Autopilot luôn chạy trên checkout bạn khởi động nó; cô lập là `bbs ticket ensure --mode=…` hoặc `/bbs:foreman`, không bao giờ là flag của autopilot. Không có token động từ nào cả.
+Cả bề mặt chỉ có vậy. Chỉ một flag mở rộng thêm — `--stop-after=requirement|plan` để dừng ở checkpoint sớm hơn. Model không phải là flag: autopilot plan, implement, review và chạy gate ngay trong session bạn khởi động. Autopilot luôn chạy trên checkout bạn khởi động nó; cô lập là `bbs ticket ensure --mode=…` hoặc `/bbs:foreman`, không bao giờ là flag của autopilot. Không có token động từ nào cả.
 
 ### Làm nhiều ticket song song (mode `worktree`)
 

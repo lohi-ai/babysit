@@ -422,8 +422,8 @@ preferences — Orca forwards `--model`/`--effort` for a fresh Claude, Codex, or
 Cursor terminal — or the harness has no ladder in the shared table. An `omp`
 worker keeps its role binding and a `grok` worker its `grok-4.6` default;
 persist that resolved value in the pointers rather than leaving them empty. The
-worker's own autopilot routing still tiers its planner and QA models, so such a
-ticket is not unstaffed; only its session model is unset.
+worker's own autopilot then plans, implements, and gates on that session model,
+so such a ticket is not unstaffed; only its resolved session model is unset.
 
 Persist the resolved pair on the child, so resume, retry, and worker reuse
 cannot silently change it:
