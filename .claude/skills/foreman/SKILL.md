@@ -522,8 +522,9 @@ done tickets never wait for the project. Merged code reaches base early and
 the ticket's worker, lease, and worktree free up for the next wave. A child
 is eligible when all of these hold:
 
-- current `review-pr` + `qa` verdicts are DONE and `bbs ticket readiness
-  --action <land|pr> --json` allows the intended action;
+- current `review-pr` + `qa` verdicts are DONE or DONE_WITH_CONCERNS and
+  `bbs ticket readiness --action <land|pr> --json` allows the intended
+  action;
 - every prerequisite child has itself finished (landed, PRed, or — under
   `review` — gates passed); dependency order is preserved, never reordered;
 - under `land`, the child is not covered by a pending Integration QA Task —
@@ -554,9 +555,16 @@ Failure routing — never blind-retry an unchanged state:
 - surface-lease contention → leave the child eligible; the next tick retries;
 - stale or `ready:false` readiness → return the child to verification
   (re-run the affected gate in its worktree) before landing;
-- merge conflict or land failure → a supervised repair Dispatch in the
-  child's worktree resolves it (merge `origin/<base>` in, never local base);
-  keep the worktree and do not retry the land until that Dispatch settles;
+- merge conflict → a supervised repair Dispatch in the child's worktree
+  resolves it (merge `origin/<base>` in, never local base); keep the
+  worktree and do not retry the land until that Dispatch settles;
+- a `land` BLOCK that is not a conflict (dirty primary, off-base checkout,
+  scratch marker) → report it in the tick output and stop retrying until the
+  primary state changes;
+- a discarded merge — a `surface compose`/`revert` reset base after the
+  land, so the branch is no longer an ancestor — → re-land at the next tick;
+  if the worktree was already removed, recreate it from the recorded branch
+  first (`land` evaluates readiness inside it);
 - a `create-pr` failure → retry once at the next tick, then mark the child
   blocked with evidence.
 
