@@ -24,8 +24,8 @@ import (
 //
 // One lock guards the shared test surface: the lease at <gitdir>/bbs-qa-lease.
 // Every op that changes what the primary checkout serves — surface compose,
-// surface revert — holds it for the length of its work, and a QA session holds
-// the same lease across many such ops.
+// surface revert, surface clear — holds it for the length of its work, and a QA
+// session holds the same lease across many such ops.
 //
 // There used to be a second mutex (bbs-merge-base.lock) for the merge itself,
 // with the lease layered over it as an advisory guard. Guard and action then

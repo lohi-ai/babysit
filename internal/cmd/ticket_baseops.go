@@ -246,6 +246,8 @@ func runSurface(args []string) { os.Exit(surfaceCmd(args)) }
 //	compose  reset the primary to origin/base, then merge exactly the named
 //	         ticket branches — the surface is never observably half-built
 //	revert   reset the primary to origin/base, discarding the composition
+//	clear    clear a stale marker only after proving its completed ticket head
+//	         is already retained on the current base; never changes the tree
 //	release  drop the lease
 //	status   who holds the lease, for how long, under which ttl
 //
@@ -265,8 +267,10 @@ func surfaceCmd(args []string) int {
 		return surfaceCompose(args)
 	case "revert":
 		return surfaceRevert(args)
+	case "clear":
+		return surfaceClear(args)
 	default:
-		fmt.Fprintln(os.Stderr, retarget("usage: bbs-ticket surface <acquire|compose|revert|release|status> [<ticket>...] [--base BRANCH] [--ticket ID] [--ttl-min N] [--force]"))
+		fmt.Fprintln(os.Stderr, retarget("usage: bbs-ticket surface <acquire|compose|revert|clear|release|status> [<ticket>...] [--base BRANCH] [--ticket ID] [--head SHA] [--ttl-min N] [--force]"))
 		return 2
 	}
 }
@@ -497,6 +501,127 @@ func surfaceRevert(args []string) int {
 	if !s.resetToOrigin(base, quiet, env) {
 		return 2
 	}
+	return 0
+}
+
+// surfaceClear removes only a stale scratch marker after a retained landing.
+// It exists for the recovery case surfaceRevert deliberately refuses: the
+// primary contains local commits that must stay, or unrelated dirty work that
+// reset --hard must not touch. The explicit ticket + head proof keeps this from
+// turning an ordinary scratch composition into an unmarked pseudo-landing.
+func surfaceClear(args []string) int {
+	env := resolveEnv()
+	ticketID, head, base := "", "", ""
+	needValue := func(flag string, i int) (string, bool) {
+		if i+1 >= len(args) {
+			fmt.Fprintf(os.Stderr, "surface clear: %s needs a value\n", flag)
+			return "", false
+		}
+		return args[i+1], true
+	}
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--ticket":
+			v, ok := needValue(args[i], i)
+			if !ok {
+				return 2
+			}
+			ticketID, i = v, i+1
+		case "--head":
+			v, ok := needValue(args[i], i)
+			if !ok {
+				return 2
+			}
+			head, i = v, i+1
+		case "--base":
+			v, ok := needValue(args[i], i)
+			if !ok {
+				return 2
+			}
+			base, i = v, i+1
+		default:
+			fmt.Fprintf(os.Stderr, "surface clear: unknown arg '%s'\n", args[i])
+			return 2
+		}
+	}
+	if ticketID == "" {
+		ticketID = env.Ticket
+	}
+	if ticketID == "" {
+		fmt.Fprintln(os.Stderr, retarget("usage: bbs-ticket surface clear --ticket ID --head SHA [--base BRANCH]"))
+		return 2
+	}
+
+	primary := baseOpsPrimary("surface clear")
+	if primary == "" {
+		return 2
+	}
+	if base == "" {
+		base = baseBranchIn(primary)
+	}
+	s, ok := acquireSurface("surface clear", primary, ticketID)
+	if !ok {
+		return 2
+	}
+	defer s.release()
+	if !s.guardOnBase(base, " — clearing its marker would bless the wrong branch.",
+		fmt.Sprintf("RECOMMENDATION: checkout '%s' there (or pass --base), then re-run.", base)) {
+		return 2
+	}
+
+	serving := servingTickets(s.gitdir)
+	if len(serving) == 0 {
+		fmt.Println("CLEARED=0")
+		fmt.Printf("BASE=%s\nPRIMARY=%s\n", base, primary)
+		return 0
+	}
+	if len(serving) != 1 || serving[0] != ticketID {
+		fmt.Fprintln(os.Stderr, "STATUS: BLOCKED")
+		fmt.Fprintf(os.Stderr, "REASON: marker serves '%s', not exactly ticket '%s' — clear never guesses which composition was retained.\n",
+			strings.Join(serving, ","), ticketID)
+		fmt.Fprintln(os.Stderr, "RECOMMENDATION: name the exact single serving ticket, or use surface revert for a multi-ticket scratch composition.")
+		return 2
+	}
+	if head == "" {
+		fmt.Fprintln(os.Stderr, "STATUS: BLOCKED")
+		fmt.Fprintln(os.Stderr, "REASON: --head is required — clear needs the completed ticket commit it must prove is on the base.")
+		fmt.Fprintln(os.Stderr, "RECOMMENDATION: pass the reviewed ticket HEAD, then re-run.")
+		return 2
+	}
+
+	st := storeForTicket(env, ticketID)
+	status := ""
+	if fileExists(st.IndexPath()) {
+		status = ticket.ReadDoc(st.IndexPath()).Get("status")
+	}
+	if status != "done" {
+		fmt.Fprintln(os.Stderr, "STATUS: BLOCKED")
+		fmt.Fprintf(os.Stderr, "REASON: ticket '%s' is '%s', not done — an in-flight composition cannot be unmarked as landed.\n",
+			ticketID, orDefault(status, "unknown"))
+		fmt.Fprintln(os.Stderr, "RECOMMENDATION: finish and land the ticket first; use surface revert to discard scratch work.")
+		return 2
+	}
+
+	resolved := gitCOut(primary, "rev-parse", "--verify", head+"^{commit}")
+	if resolved == "" {
+		fmt.Fprintln(os.Stderr, "STATUS: BLOCKED")
+		fmt.Fprintf(os.Stderr, "REASON: --head '%s' does not resolve to a commit.\n", head)
+		fmt.Fprintln(os.Stderr, "RECOMMENDATION: pass the reviewed ticket HEAD, then re-run.")
+		return 2
+	}
+	if !gitCOK(primary, "merge-base", "--is-ancestor", resolved, "HEAD") {
+		fmt.Fprintln(os.Stderr, "STATUS: BLOCKED")
+		fmt.Fprintf(os.Stderr, "REASON: ticket head %s is not retained on '%s' — clearing the marker would hide scratch-only work.\n",
+			resolved, base)
+		fmt.Fprintln(os.Stderr, retarget("RECOMMENDATION: land the ticket on the base first, then re-run surface clear."))
+		return 2
+	}
+
+	servingWrite(s.gitdir, "set", nil)
+	st.HistoryAppendExtra("surface_clear", actorRole(),
+		fmt.Sprintf(`{"base":"%s","head":"%s"}`, base, resolved))
+	fmt.Println("CLEARED=1")
+	fmt.Printf("TICKET=%s\nBASE=%s\nPRIMARY=%s\nHEAD=%s\n", ticketID, base, primary, resolved)
 	return 0
 }
 

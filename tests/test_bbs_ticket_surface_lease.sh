@@ -15,12 +15,14 @@
 #                              STOLE_FROM=A
 #   lease-release-owner-only   B can't release A's lease (exit 2), --force
 #                              can; release when free → FREE=1 exit 0
-#   lease-blocks-compose    A holds → B's surface compose BLOCKs naming A;
+#   lease-blocks-compose       A holds → B's surface compose BLOCKs naming A;
 #                              after A releases, the same compose lands
 #   lease-blocks-surface-ops   A holds → compose/revert as B BLOCK; compose
 #                              as A (own lease) passes
 #   lease-stale-guard-clears   stale lease → B's surface compose clears it with a
 #                              warning and proceeds
+#   clear-retained-marker-only clear refuses an absent head, then preserves a
+#                              manually landed head and unrelated dirty work
 
 set -u
 SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
@@ -235,6 +237,57 @@ T="$(mktemp -d)"
   [ -f b.txt ] || { echo "b.txt missing after stale-clear compose"; exit 1; }
   [ "$("$BBS_TICKET_BIN" surface status)" = "FREE" ] || { echo "stale lease not cleared"; exit 1; }
 ) && ok "lease-stale-guard-clears" || fail "lease-stale-guard-clears"
+rm -rf "$T"
+
+# ── clear-retained-marker-only ────────────────────────────────────────
+# A manual retained land can leave the old compose marker behind when revert
+# is unsafe. `clear` must preserve both the retained commits and unrelated dirty
+# work, while refusing a marker whose reviewed head is not actually on base.
+T="$(mktemp -d)"
+(
+  export PATH="$SCRIPT_DIR/bin:$PATH"
+  export HOME="$T/home"; mkdir -p "$HOME"
+  export AGENT_ROLE=mayor
+  build_two_tickets "$T" || { echo "fixture failed"; exit 1; }
+  head_a="$(git -C "$WT_A" rev-parse HEAD)"
+
+  (cd "$WT_A" && "$BBS_TICKET_BIN" surface compose >/dev/null 2>&1) \
+    || { echo "compose A failed"; exit 1; }
+  "$BBS_TICKET_BIN" surface clear --ticket "$TK_A" --head "$head_a" \
+    >"$T/clear-in-flight" 2>"$T/err"; rc=$?
+  [ "$rc" -eq 2 ] || { echo "clear accepted an unfinished ticket: $(cat "$T/clear-in-flight" "$T/err")"; exit 1; }
+  grep -q "not done" "$T/err" || { echo "missing unfinished-ticket reason: $(cat "$T/err")"; exit 1; }
+  "$BBS_TICKET_BIN" board | grep -q "^SERVING: $TK_A$" \
+    || { echo "unfinished clear removed marker"; exit 1; }
+
+  git -C "$T/repo" reset --hard -q origin/main # stale marker, ticket not retained
+  BABYSIT_TICKET="$TK_A" "$BBS_TICKET_BIN" set-status done >/dev/null 2>&1
+  "$BBS_TICKET_BIN" surface clear --ticket "$TK_B" --head "$head_a" \
+    >"$T/clear-wrong-ticket" 2>"$T/err"; rc=$?
+  [ "$rc" -eq 2 ] || { echo "clear accepted the wrong marker ticket: $(cat "$T/clear-wrong-ticket" "$T/err")"; exit 1; }
+  grep -q "not exactly ticket" "$T/err" || { echo "missing marker-mismatch reason: $(cat "$T/err")"; exit 1; }
+
+
+  "$BBS_TICKET_BIN" surface clear --ticket "$TK_A" --head "$head_a" \
+    >"$T/clear-before" 2>"$T/err"; rc=$?
+  [ "$rc" -eq 2 ] || { echo "clear accepted a head absent from base: $(cat "$T/clear-before" "$T/err")"; exit 1; }
+  grep -q "not retained" "$T/err" || { echo "missing not-retained reason: $(cat "$T/err")"; exit 1; }
+  "$BBS_TICKET_BIN" board | grep -q "^SERVING: $TK_A$" \
+    || { echo "failed clear removed marker"; exit 1; }
+
+  git -C "$T/repo" -c user.email=t@t -c user.name=t merge --no-ff -q "$head_a" -m "land A"
+  echo dirty >> "$T/repo/.babysit/git-flow.yaml"
+  echo keep > "$T/repo/untracked.txt"
+  pre="$(git -C "$T/repo" rev-parse HEAD)"
+  out="$("$BBS_TICKET_BIN" surface clear --ticket "$TK_A" --head "$head_a" 2>"$T/err")" \
+    || { echo "clear of retained marker failed: $(cat "$T/err")"; exit 1; }
+  printf '%s\n' "$out" | grep -q "^CLEARED=1$" || { echo "missing CLEARED=1: $out"; exit 1; }
+  [ "$(git -C "$T/repo" rev-parse HEAD)" = "$pre" ] || { echo "clear moved HEAD"; exit 1; }
+  grep -q dirty "$T/repo/.babysit/git-flow.yaml" || { echo "clear overwrote tracked dirt"; exit 1; }
+  [ "$(cat "$T/repo/untracked.txt")" = keep ] || { echo "clear removed untracked work"; exit 1; }
+  "$BBS_TICKET_BIN" board | grep -q "^SERVING: (base only)$" \
+    || { echo "marker survived successful clear"; exit 1; }
+) && ok "clear-retained-marker-only" || fail "clear-retained-marker-only"
 rm -rf "$T"
 
 # ── lease-race-single-owner ───────────────────────────────────────────

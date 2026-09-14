@@ -272,10 +272,17 @@ can leave a bad one out and each still lands as its own clean PR.
 | `bbs ticket surface compose` | run **bare from a worktree** — lands that ticket on the shared surface for QA |
 | `bbs ticket surface compose <t…>` | run **from the primary** — resets to base, then merges exactly the named tickets |
 | `bbs ticket surface revert` | after PRs merge upstream, snap local base back to `origin/<base>` |
+| `bbs ticket surface clear --ticket <t> --head <sha>` | recovery only: clear one stale marker after a retained landing; proves the ticket is done and its reviewed head is on base, without changing the tree |
 | `bbs ticket surface acquire` | one QA session at a time on the shared surface; others BLOCK naming the owner |
 | `bbs ticket land <t…>` | merge finished tickets into local base and **keep** the merge (see below) |
 
 All of them refuse loudly rather than losing work.
+
+`surface clear` is not a substitute for `surface revert`. Use it only when the
+ticket was retained on the local base but the old marker survived and reverting
+would discard valid commits. It takes the surface lease and BLOCKs unless the
+marker names exactly one completed ticket and `<sha>` is an ancestor of the
+current base. Tracked and untracked work is left untouched.
 
 ### The QA loop, when tickets live in worktrees
 

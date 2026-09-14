@@ -205,6 +205,10 @@ standing on, so none of the next four apply:
       revert [--base BRANCH]     reset the primary checkout's base branch to
                                  origin/<base> (drops local integration merges);
                                  BLOCKs on dirty/off-base/non-merge local commits
+      clear --ticket ID --head SHA [--base BRANCH]
+                                 recovery only: clear one stale marker after a
+                                 retained landing; requires status=done and the
+                                 reviewed head on base; never changes the tree
       release [--ticket ID] [--force]
                                  drop the lease; --force overrides ownership
       status                     lease owner, age, ttl

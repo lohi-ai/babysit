@@ -245,7 +245,7 @@ Isolation is asked for per run, when you actually want it:
 
 **Worktrees cost something, so know what you bought.** The inner loop is no longer 0-step: because the code lives in a worktree and the dev server serves the primary checkout, every test iteration is a commit plus `bbs ticket surface compose` instead of edit-and-refresh. What it buys is separable tickets — you can review one in isolation, drop a bad one, and land each as its own clean PR. A repo that wants that shape every time can write `mode: worktree` + `land: local` by hand; nothing writes it for you.
 
-The commands that move work between a worktree and the shared surface — `bbs ticket surface <acquire|compose|revert|release|status>`, plus the human layer `board`, `serve`, `/bbs:fix-pr` — are in [Working tickets in parallel](#working-tickets-in-parallel-worktree-mode). Details: [`references/git-flow.md`](.claude/skills/references/git-flow.md) and [`references/worktrees.md`](.claude/skills/references/worktrees.md).
+The commands that move work between a worktree and the shared surface — `bbs ticket surface <acquire|compose|revert|clear|release|status>`, plus the human layer `board`, `serve`, `/bbs:fix-pr` — are in [Working tickets in parallel](#working-tickets-in-parallel-worktree-mode). Details: [`references/git-flow.md`](.claude/skills/references/git-flow.md) and [`references/worktrees.md`](.claude/skills/references/worktrees.md).
 
 ### 3. Run it
 

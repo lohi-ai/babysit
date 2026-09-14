@@ -273,10 +273,17 @@ bỏ một cái tồi ra ngoài mà mỗi cái còn lại vẫn về đích bằ
 | `bbs ticket surface compose` | chạy **trần từ worktree** — đưa ticket đó lên bề mặt dùng chung để QA |
 | `bbs ticket surface compose <t…>` | chạy **từ checkout chính** — reset về base rồi merge đúng các ticket được gọi tên |
 | `bbs ticket surface revert` | sau khi PR merge trên remote, kéo base ở máy về đúng `origin/<base>` |
+| `bbs ticket surface clear --ticket <t> --head <sha>` | chỉ để khôi phục: xóa một marker cũ sau khi ticket đã được giữ lại; chứng minh ticket đã `done` và head đã review nằm trên base, không đổi cây làm việc |
 | `bbs ticket surface acquire` | mỗi lúc một phiên QA trên bề mặt dùng chung; người khác BLOCK kèm tên chủ lease |
 | `bbs ticket land <t…>` | merge các ticket đã xong vào base ở máy và **giữ** merge đó (xem dưới) |
 
 Tất cả đều từ chối lớn tiếng chứ không làm mất việc.
+
+`surface clear` không thay thế `surface revert`. Chỉ dùng nó khi ticket đã được
+giữ lại trên base ở máy nhưng marker cũ còn sót, còn revert sẽ làm mất commit hợp
+lệ. Lệnh giữ surface lease và sẽ BLOCK nếu marker không gọi tên đúng một ticket
+đã hoàn tất hoặc `<sha>` không phải ancestor của base hiện tại. Mọi thay đổi
+tracked và untracked được giữ nguyên.
 
 ### Vòng QA khi ticket sống trong worktree
 
