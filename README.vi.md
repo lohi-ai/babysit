@@ -1,6 +1,6 @@
 # babysit
 
-[English](README.md) | Tiếng Việt
+[English](README.md) | Tiếng Việt | [中文](README.zh.md) | [日本語](README.ja.md) | [한국어](README.ko.md)
 
 **Ném cho nó một dòng. Nó plan, code, review, QA trong lúc bạn đi vắng. Bạn chỉ review một branch.**
 
@@ -11,7 +11,7 @@
 Trong Codex, cùng skill đó được gọi là `$bbs:autopilot`; README này dùng cách
 viết `/bbs:` của Claude Code trừ khi lệnh dành riêng cho Codex.
 
-~40 phút tự chạy mỗi ticket — mà vẫn xong xuôi, dù chẳng session Claude nào ôm nổi ngần ấy việc trong một hơi. Bạn ngó lại branch, ưng thì tự bấm mở PR.
+~40 phút tự chạy mỗi ticket — mà vẫn xong xuôi, dù chẳng session agent nào ôm nổi ngần ấy việc trong một hơi. Bạn ngó lại branch, ưng thì tự bấm mở PR.
 
 **Bắt đầu bằng `autopilot`.** Nó là cả sản phẩm gói trong một lệnh, chạy được trên terminal bất kỳ và repo kiểu gì cũng được, và cũng chính là thứ mà mỗi worker song song chạy — nên mọi thứ bạn học ở đây đều xài lại được.
 
@@ -23,7 +23,7 @@ viết `/bbs:` của Claude Code trừ khi lệnh dành riêng cho Codex.
 
 Foreman tách dự án thành đồ thị phụ thuộc, tạo branch và worktree cho từng ticket, rồi giám sát mỗi autopilot assistant bằng vòng đời Run/Task/Dispatch của Orca. Nó duyệt plan trước khi build, điều phối QA dùng chung và QA tích hợp, phục hồi từ state trên đĩa cộng với Orca, rồi áp dụng finish policy theo thứ tự phụ thuộc. Luồng này cần [Orca](https://www.onorca.dev); một ticket tuần tự thì gọi autopilot thẳng.
 
-*babysit là việc bạn làm khi khỏi cần ai trông.* Nó chuộng mấy quyết định Claude tự làm tự kiểm được, hơn là mấy quyết định phải có người ngồi kè kè — đẻ ra cho các lần chạy theo lịch, pipeline được điều phối, và bất cứ thứ gì bạn muốn giao rồi đi chơi.
+*babysit là việc bạn làm khi khỏi cần ai trông.* Nó chuộng mấy quyết định mà agent tự làm tự kiểm được, hơn là mấy quyết định phải có người ngồi kè kè — đẻ ra cho các lần chạy theo lịch, pipeline được điều phối, và bất cứ thứ gì bạn muốn giao rồi đi chơi.
 
 ## Cách dễ nhất để thử
 
@@ -50,6 +50,7 @@ Từng bước:
 **Các chốt của con người — nơi bạn giữ quyền.** Autopilot chỉ dừng ở những khoảnh khắc thật sự thuộc về bạn; chọn khoảnh khắc nào bằng flag:
 
 - `--stop-after=plan` — duyệt hướng đi trước khi viết một dòng code.
+- `--planner <model>` / `--planner-effort <effort>` — giao việc tạo plan và prototype UI cho đúng model/profile và mức effort đó. Bỏ trống một trong hai thì autopilot tự chọn theo độ khó của việc và theo những model mà harness hiện tại thật sự quảng cáo. Trên OMP, `default` và `slow` chọn đúng model role đã cấu hình; việc thường mặc định về `slow`.
 - *mặc định* — dừng ở trạng thái QA-xong, bạn review bằng chứng.
 - **`/bbs:create-pr`** — bạn tự gọi; autopilot không bao giờ tự mở PR.
 
@@ -60,8 +61,8 @@ Từng bước:
 
 ## Vì sao nó chạy được
 
-- **Nó chạy tới cùng.** `/bbs:autopilot` là một **goal proxy**: phần init gieo state bền — ticket, requirement, plan, checkpoint — rồi giao phần việc cho [`/goal`](#3-chạy), cái Stop hook theo session của Claude Code chặn không cho session dừng chừng nào nó chưa ghi xong verdict QA và review. Trong vòng lặp, model làm việc thoải mái với đầy đủ context, y như khi bạn hỏi thẳng nó; checkpoint trên disk giúp một session mới nối tiếp đúng chỗ con cũ dừng.
-- **Nó không treo.** Mọi quyết định đều đi qua [Auto-Decision Framework](.claude/skills/references/auto-decision-framework.md). Claude quyết rồi ghi log; nếu thật sự cần người, nó viết một block `NEEDS_CONTEXT` vào ticket chứ không ngồi đợi một cái pop-up.
+- **Nó chạy tới cùng.** `/bbs:autopilot` là một **goal proxy**: phần init gieo state bền — ticket, requirement, plan, checkpoint — rồi giao phần việc cho [`/goal`](#3-chạy), chế độ goal bền của agent, cho tới khi verdict QA và review được ghi xuống. Trong vòng lặp, model làm việc thoải mái với đầy đủ context, y như khi bạn hỏi thẳng nó; checkpoint trên disk giúp một session mới nối tiếp đúng chỗ con cũ dừng.
+- **Nó không treo.** Mọi quyết định đều đi qua [Auto-Decision Framework](.claude/skills/references/auto-decision-framework.md). Agent quyết rồi ghi log; nếu thật sự cần người, nó viết một block `NEEDS_CONTEXT` vào ticket chứ không ngồi đợi một cái pop-up.
 - **Nó tự kiểm.** QA nằm sẵn trong vòng lặp mặc định của autopilot. Muốn PASS thì phải có target chạy được ở local hoặc một blocker gọi tên rõ ràng, kèm thêm mấy ca không-suôn-sẻ. Không có cái kiểu "compile được là ship".
 - **Nó soi lại được.** Telemetry dạng JSONL đổ vào `~/.babysit/analytics/`, cộng với mấy comment checkpoint `[WORK]`. Xem lại băng sau cũng được — đây là kênh feedback chính khi chẳng ai ngồi coi trực tiếp.
 
@@ -70,7 +71,7 @@ Từng bước:
 Khi engineering, product, design và data science tan vào nhau thành một kiểu
 người dựng sản phẩm, đơn vị công việc đáng nói tới không còn là chức danh nữa —
 mà là cái *archetype* việc đang cần ngay lúc đó. Babysit chính là cái team dựng
-sản phẩm ấy: nó ánh xạ năm archetype của team Claude Code vào các skill và
+sản phẩm ấy: nó ánh xạ năm archetype của một team sản phẩm vào các skill và
 workflow autopilot, nên một lần chạy đóng được vai bất kỳ đồng đội nào việc cần.
 
 Một người ôm 2–3 archetype; một lần chạy babysit cũng vậy. Chọn theo **hình dạng
@@ -128,13 +129,12 @@ codex plugin add bbs@babysit
 ```
 
 Khởi động lại agent. Claude Code có `/bbs:autopilot`; Codex có
-`$bbs:autopilot`. `bbs upgrade` cập nhật CLI và plugin Claude Code; plugin
-Codex được cập nhật bằng CLI của Codex:
+`$bbs:autopilot`.
+
+Cập nhật CLI và mọi plugin agent đã cài bằng `bbs update`:
 
 ```bash
-bbs upgrade
-codex plugin marketplace upgrade babysit
-codex plugin add bbs@babysit
+bbs update
 ```
 
 **`brew install bbs` không phải tùy chọn.** `bin/bbs` là sản phẩm build, không
@@ -170,8 +170,8 @@ codex plugin add bbs@babysit
 Cách này đã đặt `bbs` lên `PATH` tại `~/.local/bin/bbs` → checkout của bạn, nên
 khỏi cần cài thêm bản Homebrew. Nâng cấp bằng `git pull && ./bin/setup-skills`.
 
-Lưu ý: plugin từ marketplace được *copy* vào `~/.claude/plugins/cache/`, còn một
-thư mục nằm dưới `~/.claude/skills/<tên>/` thì được nạp **tại chỗ** — chính cái
+Lưu ý: plugin từ marketplace được *copy* vào cache của agent (`~/.claude/plugins/cache/` hoặc `~/.codex/plugins/cache/`), còn một
+thư mục Claude Code nằm dưới `~/.claude/skills/<tên>/` thì được nạp **tại chỗ** — chính cái
 thứ hai mới làm cho sửa-là-thấy. Đừng chạy cả hai hình dạng cùng lúc: plugin
 marketplace đã cài sẽ thắng khi trùng tên.
 
@@ -251,7 +251,7 @@ Các lệnh chuyển việc giữa worktree và bề mặt dùng chung — `bbs 
 /bbs:autopilot "add a settings page with dark mode toggle"
 ```
 
-Autopilot init ticket — requirement, plan — rồi dừng lại và in ra một block `/goal` làm **tin nhắn cuối cùng**. Block đó chính là việc duy nhất bạn làm tiếp theo: **copy nó, dán lại vào Claude Code, rồi đi chơi.** Session goal sẽ viết code, review, chạy QA, và commit lên branch bạn đang đứng — autopilot không bao giờ cắt branch, push, hay mở PR. Review xong thì tự mở PR.
+Autopilot init ticket — requirement, plan — rồi dừng lại và in ra một block `/goal` làm **tin nhắn cuối cùng**. Block đó chính là việc duy nhất bạn làm tiếp theo: **copy nó, dán lại vào đúng agent đang mở, rồi đi chơi.** Session đang giữ goal sẽ viết code, review, chạy QA, và commit lên branch bạn đang đứng — autopilot không bao giờ cắt branch, push, hay mở PR. Review xong thì tự mở PR. Truyền `--planner gpt-5.6-sol --planner-effort high` để tự chọn model native tạo plan và prototype UI; bỏ hai flag đó thì autopilot tự chọn theo độ khó của việc và những gì harness hiện tại quảng cáo.
 
 > **Bản bàn giao trông như vầy** — autopilot kết thúc bằng một đoạn dẫn bằng lời thường, rồi tới block để copy:
 >
@@ -261,7 +261,7 @@ Autopilot init ticket — requirement, plan — rồi dừng lại và in ra m�
 >   prototype: tickets/bs-ab123/prototype.html
 > Redirect the design now if it's wrong — otherwise you're one paste from done.
 >
-> 👉 Copy the block below and paste it into Claude Code to build it:
+> 👉 Copy the block below and paste it into your agent to build it:
 >
 > /goal bs-ab123 is done: work committed locally, qa verdict PASS/FIXED persisted
 > via bbs ticket set-verdict, review-pr verdict persisted, handoff note written — or a
@@ -271,7 +271,7 @@ Autopilot init ticket — requirement, plan — rồi dừng lại và in ra m�
 
 #### Vì sao `/goal` nắm phần việc
 
-`/goal <condition>` (có sẵn, Claude Code 2.1.139+) gắn một Stop hook theo session: model làm việc thoải mái với đầy đủ context — không nghi thức từng bước — và cái hook chặn không cho dừng chừng nào điều kiện chưa thỏa. Đó là lý do bước tiếp theo là *dán block `/goal`* chứ không phải "chạy một lệnh": chính việc dán nó là cái gắn hook lên. Block autopilot in ra đã gói sẵn các cổng gác của babysit lẫn điều khoản thoát.
+`/goal <condition>` bật chế độ goal bền của agent đang hỗ trợ: model làm việc thoải mái với đầy đủ context — không nghi thức từng bước — và chạy tiếp cho tới khi điều kiện đúng. Đó là lý do bước tiếp theo là *dán block `/goal`* chứ không phải "chạy một lệnh": chính việc dán nó là cái bật goal lên. Block autopilot in ra đã gói sẵn các cổng gác của babysit lẫn điều khoản thoát.
 
 Nhờ điều khoản thoát, vòng lặp kết thúc khi cần leo thang, thay vì nghiến răng cày mãi vào một input còn thiếu. Muốn thoát giữa chừng: `/goal clear`, `Ctrl-C`, hoặc touch `~/.babysit/projects/<slug>/tickets/<ticket>/STOP`.
 
@@ -344,7 +344,7 @@ bbs ticket serve            # để trống: gộp mọi ticket đã xong (qa + 
 4. Ưng rồi → `bbs ticket serve --release`, rồi `/bbs:create-pr` cho từng repo. Reviewer comment sau đó → `/bbs:fix-pr`.
 5. `bbs ticket board --pr` chỉ ra các PR đã merge và in đúng các lệnh dọn dẹp (`surface revert`, `set-status done`).
 
-**Một ticket, hai repo** (feature trải cả frontend + backend): `/bbs:setup-project` ghi lại các repo anh em một lần; builder của autopilot tự băng qua — tạo ticket anh em đã liên kết, code và QA cả hai bên — và `serve` bày cả cặp ra trước mặt bạn bằng một lệnh. Trong lúc đó session của các ticket khác vẫn code và review trong worktree riêng của chúng; `board` chỉ mặt từng người đang giữ bề mặt và còn giữ bao lâu. Công thức đầy đủ: [`references/git-flow.md` § Attended parallel review](.claude/skills/references/git-flow.md).
+**Một ticket, hai repo** (feature trải cả frontend + backend): `/bbs:setup-project` ghi lại các repo anh em một lần; builder của autopilot tự băng qua — tạo ticket anh em đã liên kết, code và QA cả hai bên — và `serve` bày cả cặp ra trước mặt bạn bằng một lệnh. Trong lúc đó session của các ticket khác vẫn code và review trong worktree riêng của chúng; `board` chỉ mặt từng người đang giữ bề mặt và còn giữ bao lâu. Công thức đầy đủ: [`references/worktrees.md` § Attended parallel review](.claude/skills/references/worktrees.md).
 
 ## Đào sâu hơn
 
@@ -382,17 +382,15 @@ Tất cả là một binary duy nhất, gọi dạng `bbs <sub>` — `bbs autopi
 
 ## Vận hành
 
-Config ngày-2 (`bbs config`), telemetry (JSONL đổ vào `~/.babysit/analytics/`, mặc định chỉ ở local), và xử lý upgrade (`bbs upgrade check` + `bbs upgrade`) nằm trong [`docs/operations.md`](docs/operations.md).
+Config ngày-2 (`bbs config`), telemetry (JSONL đổ vào `~/.babysit/analytics/`, mặc định chỉ ở local), và xử lý update (`bbs update check` + `bbs update`) nằm trong [`docs/operations.md`](docs/operations.md).
 
-**Upgrade.** Cập nhật CLI và bản plugin của agent bạn dùng, rồi khởi động lại agent:
+**Upgrade.** Làm mới CLI và bản plugin của agent bạn dùng, rồi khởi động lại agent đó:
 
 ```bash
-bbs upgrade
-codex plugin marketplace upgrade babysit
-codex plugin add bbs@babysit
+bbs update
 ```
 
-babysit gồm hai nửa do hai công cụ khác nhau quản — CLI qua brew và plugin của Claude Code — và `bbs upgrade` chạy nửa nào máy này có, đồng thời nêu tên nửa nào nó không với tới được. Nếu cài từ checkout thì nó pull rồi chạy lại `setup-skills` cho nửa CLI, sau đó vẫn cập nhật plugin marketplace nếu máy có cài: checkout nằm trên `PATH` và plugin trong `~/.claude/plugins/cache/` là hai bản sao khác nhau, và bản Claude Code nạp chính là plugin đã cài.
+babysit gồm hai nửa do hai công cụ khác nhau quản — CLI qua brew và plugin của agent. `bbs update` chạy cả CLI lẫn các bản plugin Claude Code và Codex đã cài. Plugin marketplace được cache chứ không nạp thẳng từ checkout, nên chỉ pull checkout thì bản đã cài không tự mới.
 
 ## Gỡ cài
 
@@ -423,8 +421,8 @@ rm -f ~/.claude/babysit ~/.claude/bbs-*
 | Vấn đề | Cách sửa |
 |--------|----------|
 | Mọi `git push` đều bị chặn, báo "GATE OFFLINE" | Chưa có `bbs` trên `PATH` — `brew install lohi-ai/babysit/bbs`. Plugin không kèm binary, và cổng gác cố tình fail closed |
-| Skill biến mất hoặc cũ mèm sau khi upgrade | Khởi động lại Claude Code; vẫn cũ thì chạy lại `bbs upgrade` và đọc xem nó báo không với tới được nửa nào |
-| `/bbs:*` không tìm thấy | `claude plugin install bbs@babysit`, rồi khởi động lại; hoặc `/reload-plugins` |
+| Skill biến mất hoặc cũ mèm sau khi update | Chạy `bbs update`, rồi khởi động lại agent liên quan |
+| `/bbs:*` không tìm thấy trong Claude Code | `claude plugin install bbs@babysit`, rồi khởi động lại; hoặc `/reload-plugins` |
 | `$bbs:*` không tìm thấy trong Codex | `codex plugin add bbs@babysit`, rồi mở session mới |
 | Skill hiện ra mà thiếu tiền tố `bbs:` | Bản cài cũ — `find ~/.claude/skills -maxdepth 1 -type l -name 'bbs:*' -delete`, rồi cài lại plugin |
 | `env resolve` trả về rỗng | Kiểm xem đúng file `.env.base` có nằm dưới `config/<app>/` không |

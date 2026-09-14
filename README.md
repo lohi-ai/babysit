@@ -1,6 +1,6 @@
 # babysit
 
-English | [Tiếng Việt](README.vi.md)
+English | [Tiếng Việt](README.vi.md) | [中文](README.zh.md) | [日本語](README.ja.md) | [한국어](README.ko.md)
 
 **Hand it one line. It plans, builds, reviews, and QAs while you're away. You review a branch.**
 

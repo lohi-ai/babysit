@@ -123,7 +123,7 @@ done
 #    spike whose subject *is* the standalone scripts).
 ALIAS_RE='(^|[^/[:alnum:]_-])bbs-(ticket|design|secrets|qa-config|autopilot|config|slug|env|update|upgrade|update-check|dashboard)([^[:alnum:]_-]|$)'
 STRAY="$(grep -rnoE "$ALIAS_RE" \
-    "$REPO/.claude/skills" "$REPO/docs" "$REPO/README.md" "$REPO/README.vi.md" "$REPO/CLAUDE.md" \
+    "$REPO/.claude/skills" "$REPO/docs" "$REPO"/README*.md "$REPO/CLAUDE.md" \
     --include='*.md' 2>/dev/null \
   | grep -v 'bin-decomposition-spike' \
   | grep -vE 'bbs-ticket-(test|lint)' || true)"
