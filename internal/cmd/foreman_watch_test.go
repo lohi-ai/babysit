@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -494,6 +495,27 @@ func TestWatchStatusIntervalFromConfig(t *testing.T) {
 		if _, err := watchOptsFrom(map[string]string{"status-interval": "60"}); err != nil {
 			t.Errorf("explicit flag should bypass invalid config %q: %v", v, err)
 		}
+	}
+}
+
+// The auto-started watcher makes `bbs foreman watch` re-entrant: adopt and
+// spawn call it on every check-in, so a second invocation must exit cleanly
+// while the first holds the lock — and the lock must free when it exits.
+func TestWatchSingleInstance(t *testing.T) {
+	watchFixture(t)
+	release, err := acquireWatchLock("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := acquireWatchLock(""); !errors.Is(err, errWatchRunning) {
+		t.Fatalf("second acquire should report a running watcher, got %v", err)
+	}
+	if err := foremanWatch([]string{"--once"}); err != nil {
+		t.Fatalf("watch under a held lock should exit cleanly, got %v", err)
+	}
+	release()
+	if _, err := acquireWatchLock(""); err != nil {
+		t.Fatalf("lock should be free after release: %v", err)
 	}
 }
 

@@ -424,6 +424,9 @@ func foremanAdopt(args []string) error {
 	if err := foreman.Save(r); err != nil {
 		return err
 	}
+	// Check-in: the watcher is the out-of-session fallback for this foreman's
+	// own check --wait loop, so adopting a terminal guarantees one exists.
+	spawnWatcher()
 	fmt.Printf("adopted %s in %s as %s\n", id, title, agentName)
 	return nil
 }
@@ -478,6 +481,11 @@ func foremanEnsure(args []string) error {
 		return err
 	}
 	if _, err := client.Ref(rec.WorkspaceTitle); err == nil {
+		// Check-in again on every ensure, including an already-open terminal:
+		// the watcher may have exited while Orca kept the terminal alive.
+		if !rec.ManualCommand {
+			spawnWatcher()
+		}
 		fmt.Printf("running %s in %s\n", id, rec.WorkspaceTitle)
 		return nil
 	} else if !errors.Is(err, orca.ErrNoTerminal) {
@@ -666,6 +674,7 @@ func spawnForeman(id, dir, command, agentFlag string) (string, error) {
 	if resumable {
 		verb = "resumed"
 	}
+	explicitCommand := command != ""
 
 	title := "bbs foreman " + id
 	if command == "" {
@@ -695,11 +704,15 @@ func spawnForeman(id, dir, command, agentFlag string) (string, error) {
 	r.WorkspaceRef, r.WorkspaceTitle = ref, title
 	r.Session = session
 	r.Agent = prof.Name
+	r.ManualCommand = explicitCommand
 	r.Status = "idle"
 	r.Heartbeat = foreman.Now()
 	r.Unreachable = ""
 	if err := foreman.Save(r); err != nil {
 		return "", fmt.Errorf("workspace %s created but registering %s failed: %w", ref, id, err)
+	}
+	if !explicitCommand {
+		spawnWatcher()
 	}
 	fmt.Printf("%s %s in %s (%s, session %s)\n", verb, id, ref, dir, session)
 	return id, nil

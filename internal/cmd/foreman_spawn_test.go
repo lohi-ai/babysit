@@ -291,6 +291,9 @@ func TestSpawnLeavesAnExplicitCommandAlone(t *testing.T) {
 		strings.Contains(calls, "/bbs:foreman") {
 		t.Errorf("session flags or the skill prompt leaked into an explicit command:\n%s", calls)
 	}
+	if rec, err := foreman.Load("fm-a"); err != nil || !rec.ManualCommand {
+		t.Errorf("explicit command was not marked manual: %+v, %v", rec, err)
+	}
 }
 
 // setGlobalAgent writes ~/.babysit/config.yaml (redirected to a temp dir by

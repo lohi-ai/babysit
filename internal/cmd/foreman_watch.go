@@ -48,8 +48,10 @@ import (
 // the bound. A foreman that reported itself done leaves the loop entirely.
 //
 // Deliberately not a daemon: it is a foreground loop (or a single --once pass
-// for cron), holds no lock, and writes only its own state file. Nothing else in
-// babysit depends on it running.
+// for cron), holds no lock on foreman state, and writes only its own state
+// file. It still never needs a human starter — adopt and spawn launch a
+// detached copy on check-in, the flock keeps it single-instance, and the
+// empty-target exit is its check-out.
 
 // watchState is the per-foreman clock, on disk so `--once` from cron measures
 // the same idle window a long-running loop does. Losing it costs one idle
@@ -189,6 +191,21 @@ func watchOptsFrom(kv map[string]string) (watchOpts, error) {
 	return o, nil
 }
 
+// errWatchRunning marks a second watcher for the same scope finding the lock
+// held. The unscoped watcher covers every foreman; scoped watchers are isolated
+// so a manual watch of one foreman cannot block the global watcher.
+var errWatchRunning = errors.New("another bbs foreman watch is already running")
+
+// spawnWatcher is the check-in half of the fallback: adopt and spawn call it
+// so every foreman gets a watcher without a human scheduling one. It is
+// best-effort — a watcher that cannot start must not fail the adoption that
+// triggered it, and the flock keeps repeat check-ins from stacking watchers.
+func spawnWatcher() {
+	if err := startWatcher(); err != nil {
+		fmt.Fprintf(os.Stderr, "foreman watch: auto-start failed: %v\n", err)
+	}
+}
+
 func foremanWatch(args []string) error {
 	id, kv, err := foremanFlags(args)
 	if err != nil {
@@ -203,6 +220,18 @@ func foremanWatch(args []string) error {
 			return err
 		}
 	}
+	var release func()
+	if !o.once {
+		release, err = acquireWatchLock(id)
+		if err != nil {
+			if errors.Is(err, errWatchRunning) {
+				fmt.Println("watch: another watcher is already running")
+				return nil
+			}
+			return err
+		}
+		defer release()
+	}
 	client, err := orca.Preflight()
 	if err != nil {
 		return err
@@ -215,7 +244,8 @@ func foremanWatch(args []string) error {
 		if len(targets) == 0 {
 			// Nothing to watch is a terminal condition, not an error: the
 			// foreman finished and its terminal closed, which is the outcome
-			// the batch was aiming for.
+			// the batch was aiming for. This is also the check-out half of the
+			// fallback — an auto-started watcher stops itself here.
 			fmt.Println("watch: no foreman with an open Orca terminal — nothing to watch")
 			return nil
 		}
@@ -251,15 +281,18 @@ func watchTargets(client *orca.Client, id string) ([]foreman.Record, error) {
 	}
 	var open []foreman.Record
 	for _, r := range records {
-		// A foreman that reported itself done leaves the loop even while its
-		// terminal stays open — the batch closed, the pane is just a leftover.
-		if strings.EqualFold(r.Status, "done") {
+		// Explicit commands may be shells or other user processes, not Foreman
+		// agents; never type the Foreman prompt into those panes.
+		if r.ManualCommand || strings.EqualFold(r.Status, "done") {
 			continue
 		}
 		if r.WorkspaceTitle == "" {
 			continue
 		}
-		if _, err := client.Ref(r.WorkspaceTitle); err == nil {
+		if _, err := client.Ref(r.WorkspaceTitle); err == nil ||
+			!errors.Is(err, orca.ErrNoTerminal) {
+			// Keep transient Orca failures in the loop; watchTick reports
+			// them as UNREACHABLE and retries on the next interval.
 			open = append(open, r)
 		}
 	}

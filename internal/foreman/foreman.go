@@ -62,6 +62,10 @@ type Record struct {
 	// spawned; its first recovery mints a handle for the replacement session
 	// when the selected agent supports one.
 	Session string `yaml:"session,omitempty"`
+	// ManualCommand marks a terminal created with an explicit command rather
+	// than the Foreman agent command. Such panes must not receive Foreman
+	// status prompts from the watcher. It is false for legacy records.
+	ManualCommand bool `yaml:"manual_command,omitempty"`
 	// Run is the Orca orchestration Run this foreman's mailbox lives in, bound
 	// fresh per session by `run-create`. It is recorded because coordinator
 	// binding is per-TERMINAL, not per-record: a foreman that resumes in a new

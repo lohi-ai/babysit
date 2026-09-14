@@ -188,11 +188,16 @@ backup. An unset or empty key means 3600; a present value that is not a
 positive integer of seconds is invalid — stop and report it rather than
 guessing, and never let a bad value shrink the wait into a tight loop. For
 multi-day work, an external scheduler may run
-`bbs foreman ensure <id>` to recreate a missing terminal and `bbs foreman watch
-<id> --once` to refresh an idle one. Both paths re-enter with the skill and
-foreman id; a harness without an exact conversation handle cold-starts instead
-of resuming an ambiguous "last" chat. Machine sleep or shutdown pauses work;
-the next ensure/resume continues it from durable state.
+`bbs foreman ensure <id>` to recreate a missing terminal. The watcher needs
+no scheduler: `adopt` and `spawn` auto-start an unscoped detached
+`bbs foreman watch`; its global flock keeps one unscoped watcher, while a
+scoped watcher uses an id-specific flock and cannot block other foremen. The
+watcher exits once no foreman has an open Orca terminal;
+`bbs foreman watch <id> --once` remains the manual refresh for an idle one.
+Both paths re-enter with the skill and foreman id; a harness without an exact
+conversation handle cold-starts instead of resuming an ambiguous "last" chat.
+Machine sleep or shutdown pauses work; the next ensure/resume continues it from
+durable state.
 
 ## Live ticket and change-request intake
 

@@ -141,9 +141,14 @@ Two things it does not own:
   never recorded against an agent that cannot be told to use it.
 
   For multi-day runs, schedule `bbs foreman ensure <id>` to recreate a missing
-  Orca terminal and `bbs foreman watch <id> --once` to refresh an idle one.
-  Both prompts reload the Foreman skill and carry `--foreman-id <id>` so
-  compaction or a cold start cannot erase coordinator identity.
+  Orca terminal. The watcher needs no scheduling: `adopt` and `spawn` start a
+  detached `bbs foreman watch` automatically. The unscoped watcher takes one
+  global flock, while a scoped `watch <id>` takes an id-specific flock, so
+  repeat check-ins are no-ops without blocking other foremen. The watcher exits
+  on its own once no foreman has an open Orca terminal. `bbs foreman watch <id>
+  --once` remains available to refresh an idle one by hand. Both prompts reload
+  the Foreman skill and carry `--foreman-id <id>` so compaction or a cold start
+  cannot erase coordinator identity.
 
 **grok needs the directory trusted first.** grok keeps a per-folder trust record
 in `~/.grok/trusted_folders.toml`, and it is *separate* from `permission_mode` —
@@ -294,9 +299,13 @@ bbs foreman watch --once                # one pass, for cron
 | `--max-nudges <n>` | 3 | budget before it reports `STALLED` and stops |
 | `--once` | off | single pass then exit; prints a line per foreman |
 
-It is a foreground loop, not a daemon: it holds no lock, writes only its own
-clock under `~/.babysit/watch/`, and nothing in babysit depends on it running.
-Output is events only — a foreman that is working produces no output at all.
+It is a foreground loop, not a daemon — but you rarely start it yourself:
+`bbs foreman adopt` and `bbs foreman spawn` launch an unscoped detached copy
+on every check-in. Its global flock keeps exactly one unscoped watcher running;
+scoped watchers use separate per-foreman flocks and cannot block other foremen.
+It writes only its own clock and `watch.log` under `~/.babysit/watch/`, and
+exits when no foreman has an open Orca terminal. Output is events only — a
+foreman that is working produces no output at all.
 
 ```text
 NUDGED fm-acme after 12m (1/3) — sent "check status"
