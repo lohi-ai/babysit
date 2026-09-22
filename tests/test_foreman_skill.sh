@@ -81,7 +81,7 @@ has_all "project-qa-gate" \
 
 has_all "durable-resume-and-finish" \
   'pointers.orca_run' 'Terminal handles are routing metadata' \
-  'bbs ticket readiness --json' 'BBS_FINISH=review | land | pr'
+  'bbs ticket readiness --action <review|land|pr> --json' 'BBS_FINISH=review | land | pr'
 
 has_all "ensure-before-init-ordering" \
   'ensure --mode=worktree' '--from-input-file "$SEED_PATH"' \

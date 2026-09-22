@@ -1,6 +1,6 @@
 ---
 name: autopilot
-description: "Run a checkpointed babysit workflow from a short requirement or existing ticket. Use for multi-step work that should survive context loss: plan, implement, verify, and hand off."
+description: "Deliver one ticket end-to-end from a requirement or accepted plan to a releasable, locally committed change. Own implementation, review fixes, QA, and evidence across resumes; use foreman for multi-ticket projects."
 ---
 # autopilot
 A **goal proxy**: the skill owns init — durable ticket state, requirement,
@@ -16,6 +16,29 @@ landing, PRs), that is `foreman`'s job: foreman decomposes the project, creates
 the worktrees, starts one autopilot assistant per ticket, coordinates QA, and
 owns the finish policy. There is no parent/orchestrate exception inside
 autopilot.
+## Delivery contract
+For production work, own the ticket through release readiness: implementation,
+code review, fixes, regression checks, and QA are agent work, not a checklist
+to hand back to the human. Keep the existing plan checkpoint and explicit
+`--stop-after` boundaries; after execution starts, do not stop for routine
+review findings, cosmetic choices, or locally repairable test failures.
+Composed skills' Taste decisions are logged and summarized in the handoff,
+not separate approval requests. Genuine User Challenges still escalate.
+
+`DONE` means every acceptance criterion has current evidence, no material
+finding remains, and the committed change can proceed to the authorized
+release step without more implementation or verification. It does not mean
+published or deployed. `DONE_WITH_CONCERNS` is only for nonblocking residuals;
+a missing required check or unmet criterion is `BLOCKED`/`NEEDS_CONTEXT`, not
+releasable. Explicit prototype, recommendation-only, or audit-only workflows
+keep their learning/report outcome and must not claim release readiness.
+
+Record acceptance criteria and their check/evidence mapping in the existing
+plan and handoff. Derive checks from the requirement and repository release/CI
+commands, including relevant failure paths; add build, packaging, migration,
+compatibility, or rollout checks only where the change needs them. A named
+fallback must prove the same required behavior; a unit check cannot stand in
+for a required browser journey merely because the browser is unavailable.
 ## Harness and terminal portability
 - Follow [the preamble](../references/preamble.md) and
   [Auto-Decision Framework](../references/auto-decision-framework.md) —
@@ -70,6 +93,9 @@ autopilot.
    skill owns the shared-surface protocol. When seeding `requirement.md`
    from free text, list open decisions explicitly instead of papering over
    them ([references/finding-unknowns.md](../references/finding-unknowns.md)).
+   Before edits, record the starting HEAD, integration base, and pre-existing
+   working changes in the checkpoint/handoff. Preserve that baseline on resume
+   so the full ticket remains reviewable after its milestone commits.
    Stop here on `--stop-after=requirement`.
 3. A parent carrying `manifest.md` is a multi-ticket project: stop init and
    hand it to `foreman`; never dispatch or merge its children here. Otherwise
@@ -149,8 +175,9 @@ Redirect the design now if it's wrong — otherwise you're one paste from done.
 
 👉 Copy the block below and paste it into <the current agent> to build it:
 
-/goal <ticket> is done: work committed locally, qa verdict PASS/FIXED persisted
-via bbs ticket set-verdict, review-pr verdict persisted, handoff note written —
+/goal <ticket> is done: acceptance criteria verified, work committed locally,
+current review-pr and qa gates passed, no unresolved material findings,
+release readiness checked, evidence and handoff persisted —
 or a NEEDS_CONTEXT / BLOCKED status block printed verbatim.
 Work it: <SKILL_REF>autopilot <workflow> <ticket>
 ```
@@ -231,6 +258,11 @@ step is ever dispatched to a child, a second session, or an external process.
    error/empty/validation/responsive case, or the skill's named fallback.
    Lacking required browser/runtime access, return that limitation, not a
    fabricated PASS.
+   Record the ticket's starting/base revision before implementation and pass
+   the complete ticket diff as the review target, including uncommitted work.
+   On a trunk checkout use the recorded starting revision; on a feature branch
+   use its intended integration base. Do not let a pushed feature's upstream
+   or `HEAD~1` reduce a multi-commit review to an empty or last-commit diff.
 5. **Accept evidence, not completion text.** Record the session model,
    reviewed revision, report, fixes, and evidence paths in the
    checkpoint/handoff. A gate owns the checkout while it runs — no editing the
@@ -245,6 +277,40 @@ step is ever dispatched to a child, a second session, or an external process.
    Subsequent edits invalidate affected gates; run them again before finish.
    On cold resume recover any recorded gate attempt and artifacts; do not
    start a duplicate run while one is still in flight.
+### Repair until the final change passes
+Apply this loop to every production workflow before its final handoff:
+
+1. Triage every review/QA finding. Fix in-scope defects autonomously; use
+   `investigate` when the cause is unclear. Record evidence for refuted or
+   nonblocking findings. Required behavior is never deferred just to get a
+   green verdict; unrelated improvements stay outside the ticket.
+2. After fixes, commit only the ticket's changes and rerun affected checks.
+   Any code change invalidates both gates: QA fixes return to review, and
+   review fixes return to QA. Finish with review and QA covering the same
+   final tree, base, requirement, and plan. Identical-content commits alone
+   do not require repeating checks when evidence proves those inputs match.
+3. Persist failures, attempted fixes, and their results in the checkpoint or
+   handoff. Retry with a changed hypothesis; three failed attempts at the same
+   blocker end in `BLOCKED` with reproduction and exact missing capability or
+   decision. Never reset that count on resume, or count a live check/wait as a
+   failure. Keep completing independent in-scope work before escalating.
+4. Reconcile the acceptance/evidence mapping, commit remaining ticket work,
+   refresh the checkpoint, and read both verdict bodies. Run
+   `BABYSIT_TICKET="$TICKET" bbs ticket readiness --action review --json`.
+   Inspect `ok` and `data.ready`, not just exit 0; any false/error result is
+   unfinished. For v2 runs, Markdown verdicts alone do not satisfy readiness:
+   persist gate attempts and typed verification evidence through the installed
+   CLI's supported contract, never downgrade the checkpoint to bypass it.
+   Legacy readiness checks verdict status only, so also verify clean ticket
+   state, freshness, coverage, and unresolved findings from the actual reports.
+   If a sub-skill reports `DONE_WITH_CONCERNS` for blocked required coverage,
+   retain its report and persist a `BLOCKED` gate body naming the unmet check;
+   a permissive fallback status cannot make production work releasable.
+   Never rewrite old evidence to make it appear current.
+
+Leave one release handoff: acceptance results, final revision, review and QA
+evidence, nonblocking residuals, and the exact remaining release action. The
+human should not need to repeat review or QA to discover whether it is ready.
 ## Rules
 - Disk state must always be enough for a cold session to resume — but disk is
   the backup, not the brain; in a live session use everything already learned.
@@ -252,8 +318,9 @@ step is ever dispatched to a child, a second session, or an external process.
   wording, not on thinking. `review-pr` and `qa` are the strict gates — their
   persisted verdicts are what the push/PR hook enforces. `review-pr` only
   reports findings, so persisting its verdict is yours: the body needs a
-  first-column `STATUS: DONE` line (a `VERDICT: PASS` prose line is not a
-  status; `set-verdict` refuses a body without one).
+  first-column `STATUS:` line reflecting the result (`DONE`,
+  `DONE_WITH_CONCERNS`, `BLOCKED`, or `NEEDS_CONTEXT`). A `VERDICT: PASS`
+  prose line is not a status; `set-verdict` refuses a body without one.
 - Git scope is exactly: `git init` on an unborn repo, and committing the
   work on the current branch. Never push, land, compose the shared surface,
   or open a PR, and never cut a branch for itself — close-out is the human's
@@ -267,7 +334,7 @@ step is ever dispatched to a child, a second session, or an external process.
 - Never force-push, drop data, or send external messages.
 - Always run QA before final handoff and persist the verdict with
   `BABYSIT_TICKET="$TICKET" bbs ticket set-verdict --skill qa` (real PASS/FIXED, or
-  DONE_WITH_CONCERNS naming the blocker). "Implemented but not QA'd" is
+  BLOCKED/NEEDS_CONTEXT naming the blocker). "Implemented but not QA'd" is
   incomplete; happy-path-only QA is incomplete — include at least one
   validation/error/empty/responsive case.
 - Leave a clean handoff: work committed, no debug leftovers in the diff,
@@ -280,7 +347,7 @@ step is ever dispatched to a child, a second session, or an external process.
 ```text
 STATUS: DONE | DONE_WITH_CONCERNS | NEEDS_CONTEXT | BLOCKED
 VERDICT: PLANNED | BUILT | FIXED | HANDOFF
-SUMMARY: <branch, QA evidence, concerns>
-NEXT: human review, then /bbs:create-pr — or, under a foreman, whatever its
+SUMMARY: <acceptance results, final revision, review/QA evidence, release readiness>
+NEXT: /bbs:create-pr for the verified change — or, under a foreman, whatever its
 finish policy does with the ticket
 ```

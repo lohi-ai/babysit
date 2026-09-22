@@ -59,7 +59,11 @@ no ticket/requirement, stop with `NEEDS_CONTEXT`.
    and run the strongest fallback (`browse` for UI, else a narrow local
    check). Commit any QA fixes, then persist the verdict with
    `bbs ticket set-verdict --skill qa`.
-6. Commit everything. Autopilot stops here: never push, land, or open a PR —
+6. Apply autopilot's **Repair until the final change passes** loop: a QA fix
+   returns to review, and both gates must cover the final committed tree.
+   Reconcile every acceptance criterion with executed evidence and require
+   `bbs ticket readiness --action review --json` to report ready. Commit only
+   this ticket's work. Autopilot stops here: never push, land, or open a PR —
    close-out is the human's `create-pr`, or the dispatching foreman's finish
    policy.
 7. Write a handoff: mode, branch, changed files, deviations from the plan
@@ -116,5 +120,5 @@ review and QA each repo's change against *its own* base, once per repo touched.
 STATUS: DONE | DONE_WITH_CONCERNS | NEEDS_CONTEXT | BLOCKED
 VERDICT: BUILT
 SUMMARY: <mode, branch, files, QA evidence>
-NEXT: human review, then /bbs:create-pr
+NEXT: /bbs:create-pr for the verified change, or the parent foreman's finish policy
 ```

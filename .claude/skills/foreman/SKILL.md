@@ -18,6 +18,13 @@ read them by path, not as `skill://`. Taste is decided and logged.
 Escalate only User Challenges, the non-delegable money/auth/irreversible-data
 floor, an explicit human hold, or an action the repo did not authorize.
 
+The delivered outcome is the accepted feature/product, not a count of closed
+tickets. Foreman owns scope coverage, review/QA repair dispatches, dependency
+updates, and release evidence; the human should not have to discover missing
+pieces or coordinate retries. Composed skills' Taste decisions are logged,
+not returned as routine approval requests. Keep human involvement for the
+escalations above and the repo's explicit finish boundary.
+
 ## Ownership boundary
 
 | Owner | Responsibilities |
@@ -174,8 +181,10 @@ a full project reconciliation, never a liveness-only reply. One tick:
    proves terminal and prints each as `RELEASED_LEASE`. A lease has
    no time-based expiry, so anything still listed is held.
 3. Cross-check each child against disk: checkpoint freshness, current
-   `review-pr`/`qa` verdicts, `bbs ticket readiness --json`, and the finish
-   policy. Never infer completion from worker prose or a `worker_done`
+   `review-pr`/`qa` verdicts,
+   `bbs ticket readiness --action <review|land|pr> --json`, and the finish
+   policy. Reconcile finish receipts before worktree-bound reads for cleaned-up
+   children. Never infer completion from worker prose or a `worker_done`
    message alone.
 4. Report the status of every project Task and supervised worker plus global
    resource use — the full TICKETS/INTEGRATION_QA/RESOURCES snapshot, not only
@@ -274,8 +283,16 @@ the coordinator, but it is not accepted scope until represented on disk.
    verdict set, and handoff. Any sub-ticket needing its own worktree is linked
    on both sides to the parent and added to the DAG like any other child, so
    foreman stays the only owner of topology.
-   Keep genuine ordering as `blocked_by`/`blocks`; avoid artificial chains
-   deeper than 3–4 tasks.
+   Keep genuine ordering as `blocked_by`/`blocks`; never remove a real
+   dependency to widen the ready wave or shorten the graph.
+   In the parent plan, map every acceptance criterion to its owning child
+   and verification evidence, including cross-ticket journeys. Record shared
+   interfaces (API/data shape, compatibility, migration order) before their
+   consumers start. Shared-file edits need explicit ownership or ordering;
+   separate worktrees alone do not make conflicting changes independent.
+   Missing required coverage becomes a child or an in-scope repair assignment,
+   never an unexplained omission. Escalate only if closing it changes accepted
+   product scope or requires a non-delegable decision.
 2. For each accepted seed, run `bbs ticket ensure --mode=worktree
    --from-input-file "$SEED_PATH" --reason foreman-decompose` from the
    canonical repo/base. `ensure` owns the ticket id, branch naming, and
@@ -298,8 +315,14 @@ the coordinator, but it is not accepted scope until represented on disk.
    recovery case, not permission to replace it.
 5. A dependent child starts only after its prerequisites passed per-ticket
    gates. Bring prerequisite branch heads into the dependent worktree with a
-   normal recorded merge before dispatch. On conflict, leave the conflict to a
+   normal recorded merge before dispatch. Persist the exact prerequisite SHAs
+   in its Task assignment/handoff. On conflict, leave the conflict to a
    supervised worker on that ticket; foreman never edits the resolution.
+   If a prerequisite is repaired later, invalidate affected dependents and
+   parent integration evidence. At a settled worker boundary, merge the new
+   prerequisite revision into each affected dependent and dispatch repair /
+   re-verification in dependency order. Never merge into a live worker's tree
+   or accept its old gates as proof for a dependency revision it never tested.
 
 Resolve the worker bound on every fresh invocation or resume:
 
@@ -387,8 +410,8 @@ Emit it in the reply at the three moments the graph is the answer:
 
 1. **Topology built** — once decomposition has created the children and linked
    both sides of every relation, the DAG goes in the same reply as the dispatch
-   plan. That is the first moment the shape exists, and the human reviews it
-   before a worker starts on it.
+   plan. It is an audit surface, not a new approval wait; proceed with admitted
+   work unless an explicit hold or User Challenge applies.
 2. **Topology changed** — a new child ticket, an accepted change request, or any
    `blocks`/`blocked_by` edit. The graph the coordinator acts on and the graph
    the human last saw must not drift.
@@ -516,9 +539,16 @@ the decision framework; User Challenges escalate through the same channel.
 
 Accept evidence, never completion prose. For every Build Task, read current
 `review-pr` and `qa` verdicts, `qa-evidence`, git HEAD, checkpoint freshness,
-and `bbs ticket readiness --json` for the intended action. A stale/missing
-verdict or `ready:false` is unfinished even when Orca accepted `worker_done`.
+and `bbs ticket readiness --action <review|land|pr> --json` for the intended
+action. Read `ok` and `data.ready`, not just exit 0. A stale/missing verdict
+or `ready:false` is unfinished even when Orca accepted `worker_done`.
 Edits after a gate invalidate it and require a new worker pass.
+Read the verdict bodies: `DONE_WITH_CONCERNS` is acceptable only for
+nonblocking residuals, never missing acceptance coverage or a required runtime
+check. Turn a repairable failed gate into a bounded follow-up Dispatch with
+the reproduction, evidence paths, owning scope, and required rechecks; do not
+ask the human to review the code or perform QA. Carry the same blocker's retry
+count across replacement Dispatches and resumes.
 
 ## QA ownership
 
@@ -539,6 +569,11 @@ Workers execute per-ticket QA; foreman owns when and where it runs.
   Integration QA Task holds its land until that gate passes — `surface
   compose` resets local base to `origin/<base>` and would discard an early
   merge. Children outside the coverage set land eagerly.
+- Before accepting integration QA, reconcile the parent acceptance map against
+  executed checks on the composed surface. Record the exact child branch SHAs,
+  base revision, and parent requirement/plan used. All required product journeys
+  must have passing evidence; per-ticket PASS counts alone cannot prove this.
+  Any covered revision or acceptance change invalidates the integration result.
 - Integration QA is read-only on the composed primary. It persists parent QA
   evidence but does not fix code there. A finding becomes a follow-up Dispatch
   to the owning child worktree — under `pr`, where the child may already be
@@ -646,10 +681,22 @@ Failure routing — never blind-retry an unchanged state:
 - a `create-pr` failure → retry once at the next tick, then mark the child
   blocked with evidence.
 
-On resume, recognize an eager-finished child before evaluating
-worktree-bound readiness: a persisted `pointers.pr`, or a branch already
-merged into base (`git merge-base --is-ancestor`), means the child is done —
-clean up leftovers; never BLOCK on a missing worktree for a finished child.
+On resume, recognize a finish receipt before evaluating worktree-bound
+readiness. Persist each successful handler's action, verified branch/head and
+dependency SHAs, gate evidence paths, and PR URL or landed revision in the
+child handoff before removing its worktree. A `pointers.pr` link or
+`git merge-base --is-ancestor` result is a recovery lead, not proof of current
+acceptance. Verify the receipt still matches current scope and revisions; for
+`pr`, read the PR's state and head (an open or merged PR's head must match the
+verified revision; later unverified commits and closed-unmerged PRs are not a
+successful finish). For `land`, verify the
+recorded head remains in base. Reuse valid evidence without recreating a
+worktree just to run readiness; missing/stale proof requires reconstruction
+from the recorded branch and re-verification. For a changed PR head, first
+fetch and inspect that actual head; do not re-verify an obsolete local branch
+and call the remote change covered. Preserve any divergent local work and
+dispatch reconciliation without force-pushing. Recover a lost receipt from
+actual handler state and existing gate evidence, never by assuming success.
 
 ## Finish and cleanup
 
@@ -657,7 +704,8 @@ The eager pass finishes most children; this sequence is the fallback for
 what it could not — integration-QA-held lands, failed lands awaiting repair,
 and the terminal heartbeat — and it still owns the integration gate.
 
-Finish only after every required child has current `review-pr` + `qa` DONE,
+Finish only after every parent acceptance criterion has passing evidence,
+every required child has current passing `review-pr` + `qa` evidence,
 the parent integration gate passed or is justified `N/A`, and readiness says
 the exact action (`land`, `pr`, or `review`) is allowed. Apply the repo's
 single handler in dependency order:
@@ -718,10 +766,10 @@ Cold resume must be sufficient with no conversation memory:
 3. Bind the recorded Orca Run and list its Tasks. For each Task, inspect the
    current Dispatch and supervised worker state using the live guide.
 4. Cross-check each Task against the child worktree and disk gate it claims to
-   own. Recognize an eager-finished child first — a persisted `pointers.pr`
-   or a branch already merged into base means done: clean up leftovers and
-   never BLOCK on its missing worktree. Never synthesize `worker_done` or a
-   PASS to repair disagreement.
+   own. Reconcile finish receipts using **Eager per-ticket finish** before
+   worktree-bound reads; a valid finished child need not retain its worktree.
+   Reconcile prerequisite revisions and the parent acceptance map too. Never
+   synthesize `worker_done` or a PASS to repair disagreement.
 5. Recover a lost mutation by request receipt; keep waiting for live workers;
    retry only proven failed/stopped attempts; release every settled worker not
    immediately reused.
@@ -744,6 +792,6 @@ PROJECT: <parent>  RUN: <orca-run>  PROFILE: <pet|startup|enterprise>  FINISH: <
 TICKETS: <ticket branch QA review readiness result; one row each>
 RESOURCES: <global used/budget, host pressure, queued heavy Tasks>
 INTEGRATION_QA: <PASS evidence | N/A reason | BLOCKED evidence>
-SUMMARY: <project outcome and remaining concern>
+SUMMARY: <parent acceptance coverage, release readiness, remaining concern>
 NEXT: <only the action left by finish policy>
 ```
