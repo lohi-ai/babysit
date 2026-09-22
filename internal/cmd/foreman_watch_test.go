@@ -355,11 +355,14 @@ func TestWatchLaggingStatusEchoDoesNotRefund(t *testing.T) {
 	}
 }
 
-// A foreman that reported itself done is out of the watch set even while Orca
-// still has its terminal — the batch closed, the pane is a leftover.
-func TestWatchTargetsSkipDoneForemen(t *testing.T) {
-	client, r, _, _ := watchFixture(t)
+// A completed Foreman remains selected through a short delivery grace, then
+// the external watcher closes its exact terminal tab. This lets the final
+// report render without leaving the coordinator harness alive indefinitely.
+func TestWatchClosesDoneForemanAfterDeliveryGrace(t *testing.T) {
+	client, r, _, log := watchFixture(t)
+	completedAt := time.Now().UTC().Truncate(time.Second)
 	r.Status = "done"
+	r.Heartbeat = completedAt.Format(time.RFC3339)
 	if err := foreman.Save(r); err != nil {
 		t.Fatal(err)
 	}
@@ -367,20 +370,40 @@ func TestWatchTargetsSkipDoneForemen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(targets) != 0 {
-		t.Fatalf("done foreman stayed in the watch set: %+v", targets)
+	if len(targets) != 1 || targets[0].ID != r.ID {
+		t.Fatalf("done foreman left the cleanup set too early: %+v", targets)
 	}
-	// Only the canonical status is terminal; anything else stays watchable.
-	r.Status = "wrapping up"
+	if line := watchTick(client, r, testWatchOpts(), completedAt.Add(foremanDoneCloseGrace-time.Second)); line != "" {
+		t.Fatalf("delivery grace should be quiet, got %q", line)
+	}
+	if calls := readCalls(t, log); strings.Contains(calls, "terminal close") {
+		t.Fatalf("watcher closed the terminal during delivery grace:\n%s", calls)
+	}
+	line := watchTick(client, r, testWatchOpts(), completedAt.Add(foremanDoneCloseGrace))
+	if !strings.HasPrefix(line, "CLOSED") {
+		t.Fatalf("expected completed terminal close, got %q", line)
+	}
+	if calls := readCalls(t, log); !strings.Contains(calls, "terminal close") {
+		t.Fatalf("watcher did not close the completed Foreman terminal:\n%s", calls)
+	}
+}
+
+// A done foreman whose heartbeat cannot be parsed still gets closed: the
+// grace cannot be proven, but leaving the terminal up re-selects the record
+// on every tick and wedges the watcher in CLOSE-BLOCKED forever.
+func TestWatchClosesDoneForemanWithBadHeartbeat(t *testing.T) {
+	client, r, _, log := watchFixture(t)
+	r.Status = "done"
+	r.Heartbeat = "not-a-timestamp"
 	if err := foreman.Save(r); err != nil {
 		t.Fatal(err)
 	}
-	targets, err = watchTargets(client, "")
-	if err != nil {
-		t.Fatal(err)
+	line := watchTick(client, r, testWatchOpts(), time.Now())
+	if !strings.HasPrefix(line, "CLOSED") {
+		t.Fatalf("bad heartbeat should still close, got %q", line)
 	}
-	if len(targets) != 1 || targets[0].ID != "fm-test" {
-		t.Fatalf("non-done status dropped from the watch set: %+v", targets)
+	if calls := readCalls(t, log); !strings.Contains(calls, "terminal close") {
+		t.Fatalf("watcher did not close the completed Foreman terminal:\n%s", calls)
 	}
 }
 

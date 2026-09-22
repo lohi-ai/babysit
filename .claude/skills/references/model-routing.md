@@ -1,16 +1,16 @@
 # Model routing
 
-The pack's canonical harness → model list. `foreman` routes the CLI session it
-dispatches each child ticket's worker on. Every model ID, effort, and price the
-pack reasons about is written down here — a second copy inside a SKILL.md is a
-second thing to drift.
+The pack's canonical harness → model list. `foreman` routes each supervised
+Dispatch it launches. Every model ID, effort, and price the pack reasons about
+is written down here — a second copy inside a SKILL.md is a second thing to
+drift.
 
-`autopilot` deliberately does not route models: plan, implement, and both gates
-run in the session it was launched in, on that session's model (see
-[autopilot § Planning runs in this session](../autopilot/SKILL.md)). Tiering is
-therefore a *launch* decision for a single ticket — start the session on the
-model the work deserves — and a `foreman` decision for a batch, which is the
-one place this table is read.
+`autopilot` deliberately does not route models: every step in one invocation
+runs in the session it was launched in (see
+[autopilot § Planning runs in this session](../autopilot/SKILL.md)). Foreman
+therefore launches the Plan and Build phases as separate supervised sessions
+when their routes differ. It never asks one autopilot session to change models
+mid-run.
 
 ## Tiers
 
@@ -22,6 +22,34 @@ ambiguous evidence stays `normal`; never classify up on a guess.
 | `simple` | an obvious local docs/config edit, or a tiny isolated change with no new contract and no new state |
 | `normal` *(default)* | ordinary implementation work — everything no other row names |
 | `critical` / `hard` | security, auth, money, irreversible or live-data migration, distributed concurrency, a cross-system architecture decision |
+
+## Phase routing
+
+Classify the ticket once, then route each phase. Hardness belongs to the
+reasoning step, not permanently to every command the ticket will run:
+
+| Ticket tier | Plan and design feedback | Build, review, and per-ticket QA |
+|---|---|---|
+| `simple` | `simple` rung | `simple` rung |
+| `normal` | `normal` rung | `normal` rung |
+| `critical` / `hard` | `critical` / `hard` rung | `normal` rung |
+
+Integration QA classifies the composed surface independently; a hard
+cross-system or non-delegable gate uses the hard rung. A hard ticket always
+releases its settled planner and starts a fresh normal Build worker, even when
+the harness maps both phases to the same model ID: phase ownership and cost
+accounting must remain explicit. Simple and normal tickets may reuse a worker
+only when the exact agent, model/role, and effort match the next phase.
+
+This keeps architecture, security boundaries, and irreversible-data design on
+the strongest normally routed planner while ordinary implementation returns to
+the workhorse. For example, a hard ticket routes Plan to Codex
+`gpt-5.6-sol` at `high`, then routes Build to the normal row: Codex
+`gpt-5.6-sol` at `high`. An `omp` worker keeps its bound role and a `grok`
+worker its `grok-4.6` default across both phases — Orca forwards launch
+preferences only for Claude, Codex, and Cursor — so their phase routes are
+recorded, not honored. The top escalation rung still
+requires the evidence in **Escalating to the top rung**.
 
 ## Ladders
 
@@ -98,12 +126,12 @@ $12.00), so a long-context worker pays a different rate on the same rung.
 | Grok | `grok-4.6` | `grok-4.6` | `grok-4.6` |
 
 The routine rungs — `gpt-5.6-sol`, `opus`, `@default` — carry almost every
-ticket, hard ones included. Codex and Claude repeat the routine rung in the
-`critical` column on purpose: there `critical` buys escalation *eligibility*,
-not a bigger model. OMP's `critical` takes `@slow`, the strongest role the
-operator bound, which on this machine is the same model as Codex's routine rung
-— no cost spike. Grok has a single routed rung, so its row is flat by fact
-rather than by choice.
+implementation, including hard tickets after planning. Codex and Claude repeat
+the routine rung in the `critical` column on purpose: for their Plan phase,
+`critical` buys escalation *eligibility*, not a bigger default model. OMP's
+critical Plan takes `@slow`, the strongest role the operator bound, which on
+this machine is the same model as Codex's routine rung — no cost spike. Grok
+has a single routed rung, so its row is flat by fact rather than by choice.
 
 ## Escalating to the top rung
 
@@ -134,7 +162,7 @@ ordinary implementation drops back to the workhorse on a fresh worker.
   down the ladder, never a reason to climb it: the top rungs need the
   escalation trigger above, and a `simple` ticket that turns out to need more
   moves up one rung, not to the top.
-- Tier → model is a Taste decision: log the tier, harness, model, effort, and
-  the evidence that classified it.
+- Phase route → model is a Taste decision: log the ticket tier, phase,
+  harness, model, effort, and the evidence that classified it.
 - What the harness advertises beats this file. When a live list disagrees with
   a row here, use the advertised value and fix the row.

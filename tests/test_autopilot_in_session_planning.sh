@@ -55,14 +55,20 @@ for f in "$WORKFLOWS"/*.md; do
   forbid 'automatic QA path' "$f"
 done
 
-# --- model routing belongs to foreman, which still launches workers ---------
-require '`foreman` routes the CLI session' "$REF"
+# --- model routing belongs to foreman, which launches phase workers ----------
+require '`foreman` routes each supervised' "$REF"
 require '`autopilot` deliberately does not route models' "$REF"
+require 'launches the Plan and Build phases as separate supervised sessions' "$REF"
 forbid '`autopilot` routes its planner' "$REF"
 require '| Codex | #3 `gpt-5.6-terra`, `high` | #2 `gpt-5.6-sol`, `high` | #2 `gpt-5.6-sol`, `high` |' "$REF"
 require '| Claude Code | #2 `opus`, `high` | #2 `opus`, `high` | #2 `opus`, `high` |' "$REF"
 require '| OMP | #3 `@smol`, `high` | #2 `@default`, `high` | #1 `@slow`, `high` |' "$REF"
 require '| Grok | `grok-4.6` | `grok-4.6` | `grok-4.6` |' "$REF"
+require '## Phase routing' "$REF"
+require 'A hard ticket always' "$REF"
+require 'starts a fresh normal Build worker' "$REF"
+require 'keeps its bound role' "$REF"
+require 'recorded, not honored' "$REF"
 require '## Escalating to the top rung' "$REF"
 require 'escalation, never a tier default' "$REF"
 require 'came back short' "$REF"

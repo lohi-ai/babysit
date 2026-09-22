@@ -480,6 +480,13 @@ func foremanEnsure(args []string) error {
 	if err != nil {
 		return err
 	}
+	if strings.EqualFold(rec.Status, "done") {
+		// A finished foreman is never recreated: the watcher closed its
+		// terminal on purpose, and respawning would resurrect a completed
+		// batch as a fresh "idle" session.
+		fmt.Printf("done %s — not recreating %s\n", id, rec.WorkspaceTitle)
+		return nil
+	}
 	if _, err := client.Ref(rec.WorkspaceTitle); err == nil {
 		// Check-in again on every ensure, including an already-open terminal:
 		// the watcher may have exited while Orca kept the terminal alive.
@@ -774,6 +781,7 @@ func retireForeman(id string, keepWorkspace bool) (string, error) {
 			if rmErr := foreman.Remove(id); rmErr != nil {
 				return "", rmErr
 			}
+			watchClear(id)
 			return fmt.Sprintf("retired %s; workspace %q left open (%v)", id, r.WorkspaceTitle, err), nil
 		}
 		if err := client.Close(r.WorkspaceTitle); err != nil {
@@ -783,6 +791,7 @@ func retireForeman(id string, keepWorkspace bool) (string, error) {
 	if err := foreman.Remove(id); err != nil {
 		return "", err
 	}
+	watchClear(id)
 	return fmt.Sprintf("retired %s", id), nil
 }
 

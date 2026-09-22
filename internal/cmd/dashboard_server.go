@@ -99,8 +99,8 @@ func (s *dashServer) handleReadiness(w http.ResponseWriter, r *http.Request) {
 	if action == "" {
 		action = "pr"
 	}
-	if action != "push" && action != "pr" && action != "land" {
-		writeErr(w, http.StatusBadRequest, "action must be push, pr, or land")
+	if action != "push" && action != "pr" && action != "land" && action != "review" {
+		writeErr(w, http.StatusBadRequest, "action must be push, pr, land, or review")
 		return
 	}
 	enforced, ready, reasons, _, err := ticketV2Readiness(s.currentDir, st.Env, st.Env.Ticket, action)

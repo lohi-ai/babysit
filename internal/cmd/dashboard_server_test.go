@@ -106,7 +106,7 @@ func TestReadinessRejectsAnUnknownAction(t *testing.T) {
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("want 400, got %d: %s", w.Code, w.Body)
 	}
-	if !strings.Contains(w.Body.String(), "action must be push, pr, or land") {
+	if !strings.Contains(w.Body.String(), "action must be push, pr, land, or review") {
 		t.Errorf("missing readiness action guidance: %s", w.Body)
 	}
 }

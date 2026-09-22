@@ -24,6 +24,11 @@ has_all "autonomous-project-scope" \
   'Autonomous Orca orchestrator' 'multiple tickets or dependent features' \
   'Project decomposition and DAG'
 
+has_all "repository-autonomy-profiles" \
+  '## Repository profile and autonomy' 'BBS_PROFILE=pet | startup | enterprise' \
+  'maximum' 'safe ready wave' 'scales verification breadth' \
+  'ticket evidence controls model routing'
+
 has_all "live-orchestration-contract" \
   '~/.claude/skills/orchestration/SKILL.md' 'skills get orchestration' \
   'worker-start' 'check --wait' 'worker-release' 'request recovery'
@@ -33,9 +38,10 @@ has_all "foreman-owns-topology" \
   'git worktree remove' 'dependency-order finish'
 
 has_all "finish-cleans-worker-workspace" \
-  'Dispatch-owned agent terminal' 'verified-clean non-primary worktree' \
-  'git worktree remove' 'keep its branch' 'Under `review`' \
-  'keep the worktree'
+  'Dispatch-owned agent terminal' 'verified-clean non-primary Git' \
+  'terminal close --worktree path:<worktreePath> --all' \
+  'mandatory even under `review`' 'Git worktree for' \
+  'human inspection' 'keep the branch'
 
 has_all "bounded-worker-pool" \
   'bbs config get parallel_max_workers' 'MAX_WORKERS=8' \
@@ -124,7 +130,7 @@ has_all "goal-compaction-and-days" \
 
 has_all "active-status-reconcile" \
   '## Status reconciliation' 'check --wait' \
-  'never a liveness-only reply' 'Dispatch only newly ready work' \
+  'never a liveness-only reply' 'maximum admitted ready wave' \
   'active for the next bounded check'
 has_all "eager-per-ticket-finish" \
   '## Eager per-ticket finish' 'done tickets never wait' \
@@ -142,6 +148,7 @@ has_all "status-wake-full-snapshot" \
 has_all "terminal-done-heartbeat" \
   'bbs foreman heartbeat "$FOREMAN_ID" --status done' \
   'only completion signal' 'record never completes' \
+  '`bbs foreman watch` closes the exact adopted Foreman terminal tab' \
   'paused, or cancelled project never writes `done`'
 
 if ! grep -q 'bbs foreman mailbox wait' "$F" \
@@ -164,16 +171,19 @@ has_all "shared-reconciliation-interval" \
   'check --wait' 'missed-event/restart/stale-state' \
   'never let a bad value shrink the wait'
 
-has_all "worker-model-routing" \
+has_all "phase-specific-worker-model-routing" \
   '## Worker model and effort routing' '../references/model-routing.md' \
-  'canonical harness' 'invent a model ID' 'Classify it once' \
+  'canonical harness' 'never invent a model ID' \
+  'Classify the ticket once' 'Plan and design-feedback Dispatches' \
+  'Build, review, and per-ticket QA' \
   '--model <model> --effort <effort>' 'launch.effective' 'grok-4.6' \
+  'set-pointer planner_model' 'set-pointer planner_effort' \
   'set-pointer worker_model' 'set-pointer worker_effort' \
-  'starts a fresh worker rather than `--terminal`' 'Taste decision'
+  'starts a fresh normal Build worker' 'Taste'
 
 has_all "worker-model-cost-discipline" \
-  'routine rung' 'top rung' 'came back short' \
-  'log the cost' 'stay on the workhorse'
+  'routine rung' 'top rung' 'came back' 'log the cost' \
+  'Ordinary Build still returns'
 
 REF="$ROOT/.claude/skills/references/model-routing.md"
 if grep -q 'model-routing.md' "$F" \

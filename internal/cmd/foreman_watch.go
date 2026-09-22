@@ -45,13 +45,16 @@ import (
 // interval the Foreman skill bounds its check --wait with — so the two
 // cannot drift. The two clocks never share state — a status prompt spends no
 // nudge budget and buys no idle time, so it cannot let a dead terminal evade
-// the bound. A foreman that reported itself done leaves the loop entirely.
+// the bound. A foreman that reports itself done remains in the loop only for
+// the short delivery grace, then the watcher closes that exact terminal tab.
 //
 // Deliberately not a daemon: it is a foreground loop (or a single --once pass
 // for cron), holds no lock on foreman state, and writes only its own state
 // file. It still never needs a human starter — adopt and spawn launch a
 // detached copy on check-in, the flock keeps it single-instance, and the
 // empty-target exit is its check-out.
+
+const foremanDoneCloseGrace = 30 * time.Second
 
 // watchState is the per-foreman clock, on disk so `--once` from cron measures
 // the same idle window a long-running loop does. Losing it costs one idle
@@ -90,6 +93,13 @@ type watchOpts struct {
 }
 
 func watchDir() string { return filepath.Join(identity.BabysitHome(), "watch") }
+
+// watchClear drops a foreman's watch state. Called when the foreman leaves the
+// watch set for good — terminal closed after `done`, or record retired — so a
+// later foreman reusing the id never inherits a stale clock.
+func watchClear(id string) {
+	_ = os.Remove(filepath.Join(watchDir(), id+".json"))
+}
 
 func watchLoad(id string) watchState {
 	var s watchState
@@ -262,7 +272,8 @@ func foremanWatch(args []string) error {
 }
 
 // watchTargets is the set to poll: one named foreman, or every registered one
-// whose Orca terminal is still open.
+// whose Orca terminal is still open. A done foreman stays selected until
+// watchTick closes its exact terminal after the delivery grace.
 //
 // "Open terminal", not Live() — a foreman's heartbeat is written by the
 // foreman, so a session wedged long enough to need a nudge is exactly the one
@@ -279,21 +290,31 @@ func watchTargets(client *orca.Client, id string) ([]foreman.Record, error) {
 	} else {
 		records = foreman.List()
 	}
+	// One terminal list for the whole set: a Ref per record spawns an
+	// `orca terminal list` subprocess for every historical done foreman on
+	// every tick. A failed list keeps every record — transient Orca errors
+	// must not drop targets; watchTick reports them as UNREACHABLE and
+	// retries on the next interval.
+	terms, err := client.Terminals()
 	var open []foreman.Record
 	for _, r := range records {
 		// Explicit commands may be shells or other user processes, not Foreman
 		// agents; never type the Foreman prompt into those panes.
-		if r.ManualCommand || strings.EqualFold(r.Status, "done") {
+		if r.ManualCommand {
 			continue
 		}
 		if r.WorkspaceTitle == "" {
 			continue
 		}
-		if _, err := client.Ref(r.WorkspaceTitle); err == nil ||
-			!errors.Is(err, orca.ErrNoTerminal) {
-			// Keep transient Orca failures in the loop; watchTick reports
-			// them as UNREACHABLE and retries on the next interval.
+		if err != nil {
 			open = append(open, r)
+			continue
+		}
+		for _, t := range terms {
+			if t.Title == r.WorkspaceTitle {
+				open = append(open, r)
+				break
+			}
 		}
 	}
 	return open, nil
@@ -303,6 +324,22 @@ func watchTargets(client *orca.Client, id string) ([]foreman.Record, error) {
 // "nothing a human needs to know" — a moving foreman is the normal case and
 // must not produce output every interval, or the signal drowns.
 func watchTick(client *orca.Client, r foreman.Record, o watchOpts, now time.Time) string {
+	if strings.EqualFold(r.Status, "done") {
+		// An unparseable heartbeat cannot prove the grace is still running,
+		// so it must not wedge the close: a done foreman's terminal is meant
+		// to be closed, and skipping it here would re-select the record on
+		// every tick forever.
+		completedAt, _ := time.Parse(time.RFC3339, r.Heartbeat)
+		if now.Before(completedAt.Add(foremanDoneCloseGrace)) {
+			return ""
+		}
+		if err := client.Close(r.WorkspaceTitle); err != nil {
+			return fmt.Sprintf("CLOSE-BLOCKED %s — %v", r.ID, err)
+		}
+		watchClear(r.ID)
+		return fmt.Sprintf("CLOSED %s — completed Foreman terminal %q", r.ID, r.WorkspaceTitle)
+	}
+
 	pane, err := client.CapturePane(r.WorkspaceTitle, o.lines)
 	if err != nil {
 		if errors.Is(err, orca.ErrNoTerminal) {

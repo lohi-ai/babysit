@@ -35,10 +35,12 @@ worker writes the action explicitly:
 | `startup` | `finish: pr` | Push each verified ticket branch and create a PR targeting `base_branch`. |
 | `enterprise` | `finish: pr` | Same remote PR closeout, with strict QA and high-effort review gates. |
 
-After either action succeeds, Foreman archives the worker output, releases the
-Orca worker (the terminal-close operation), and removes only that worker's
-verified-clean non-primary worktree. Failed, blocked, held, or default
-`finish: review` work stays intact for recovery. Branches are retained.
+After any successful action or review handoff, Foreman archives worker output,
+releases the supervised Dispatch, and bulk-closes every Orca terminal and
+harness in that ticket worktree. `review` keeps the clean Git worktree for the
+human; successful `land` or `pr` additionally removes the verified-clean
+non-primary worktree. Failed, blocked, or held work keeps its Git checkout for
+recovery, but settled terminals are released and closed. Branches are retained.
 
 ## Who owns git
 - **Autopilot** works on the checkout it was started in. It commits its own

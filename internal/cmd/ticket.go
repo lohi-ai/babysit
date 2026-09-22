@@ -182,7 +182,7 @@ Subcommands:
   evidence-status --kind K       print {none|valid|malformed}
   qa-evidence                    audit qa verdict body: {none|ok|contradiction:<d>|thin:<d>|unexplained}
                                  thin:<d> covers no-evidence, no-e2e, missing-artifact:<p>, invalid-artifact-path:<p>
-  readiness --json --action push|land|pr
+  readiness --json --action push|land|pr|review
                                  read-only typed gate freshness for the exact action
   append-history --event E [--actor A] [--extra-json JSON]
 

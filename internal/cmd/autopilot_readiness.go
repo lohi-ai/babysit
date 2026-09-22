@@ -41,8 +41,8 @@ func evidenceSchemaVersion(body string) int {
 
 func runReadiness(args []string) {
 	action := argValue(args, "--action")
-	if action != "push" && action != "land" && action != "pr" {
-		failV2("INVALID_ACTION", "readiness needs --action push|land|pr", false, nil, 2)
+	if action != "push" && action != "land" && action != "pr" && action != "review" {
+		failV2("INVALID_ACTION", "readiness needs --action push|land|pr|review", false, nil, 2)
 	}
 	env := resolveEnv()
 	if env.Ticket == "" {

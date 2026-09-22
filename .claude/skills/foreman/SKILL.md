@@ -129,6 +129,33 @@ from the parent, children, and DAG (rebuild it from ticket + Orca state on
 cold resume), and keep it mirrored at every tick; disk and Orca state remain
 authoritative.
 
+## Repository profile and autonomy
+
+Resolve policy from the repository on every fresh invocation or cold resume;
+never infer it from branch names:
+
+```bash
+eval "$(bbs autopilot git-flow)"
+# BBS_PROFILE=pet | startup | enterprise
+```
+
+[Git flow](../references/git-flow.md) is canonical. The three profiles change
+the cost-of-mistake gates, not how many teammates Foreman is allowed to manage:
+
+| Profile | Derived review / QA | Default finish |
+|---|---|---|
+| `pet` | low-effort review, smoke QA | `review`; explicit `finish: land` may merge locally |
+| `startup` | medium review, standard QA | `review`; explicit `finish: pr` may open PRs |
+| `enterprise` | high-effort review, strict QA | `review`; explicit `finish: pr` may open PRs |
+
+All three profiles use the same autonomous decision framework and the maximum
+safe ready wave: dispatch every admitted ready Task up to `MAX_WORKERS` and the
+machine-global resource budget. Never serialize independent work merely because
+the repo is `pet`, and never buy a stronger model merely because it is
+`enterprise`. A profile scales verification breadth and the authorized finish
+venue; ticket evidence controls model routing. Taste remains self-resolved
+unless an explicit hold or bounded grant says otherwise.
+
 ## Status reconciliation
 
 A "check status" nudge, a bounded `check --wait` timeout, a `watch --once`
@@ -154,13 +181,14 @@ a full project reconciliation, never a liveness-only reply. One tick:
    resource use — the full TICKETS/INTEGRATION_QA/RESOURCES snapshot, not only
    state changes — with the project DAG (`bbs ticket dag "$PARENT" --mermaid`,
    **The project DAG**) so the shape rides with the status it explains.
-5. Dispatch only newly ready work that passes resource admission, retry only
-   proven failed/stopped Dispatches, and release settled workers and their
-   resource leases when not immediately reused. Remain active for the next bounded check;
-   a tick with work remaining is not a terminal outcome.
+5. Dispatch the maximum admitted ready wave, retry only proven failed/stopped
+   Dispatches, and release settled workers and their resource leases when not
+   immediately reused. Remain active for the next bounded check; a tick with
+   work remaining is not a terminal outcome.
 6. Run the eager per-ticket finish pass in dependency order — **Eager
-   per-ticket finish**: land or PR every eligible child, then release its
-   worker, lease, and worktree. Done tickets never wait for the project.
+   per-ticket finish**: apply `review`, `land`, or `pr` to every eligible child,
+   then release its worker and lease and close its Orca worktree surfaces. Done
+   tickets never wait for the project.
 7. When every required ticket and integration gate passes, run the Finish
    and cleanup sequence for whatever the eager pass left — the integration
    gate, held or failed lands — report the user-facing terminal result, and
@@ -378,31 +406,37 @@ the terminal snapshot until the project finishes.
 
 The pack's canonical harness → model list is
 [model routing](../references/model-routing.md): the tier definitions, each
-harness's ladder with capacity and list prices, and the tier → model rows.
-Read it before dispatch and apply the same three tiers to the CLI session a
-child ticket runs in. It is the one place those IDs are written down, so never
-invent a model ID and never read an agent type name as a model name.
+harness's ladder with capacity and list prices, the phase-routing table, and
+the tier → model rows. Read it before dispatch. It is the one place those IDs
+are written down, so never invent a model ID and never read an agent type name
+as a model name.
 
-The tier belongs to the ticket, not to the Dispatch. Classify it once, from the
-requirement, plan, and acceptance commands, using that table's definitions. A
-child's Plan, Build, and QA Dispatches all use its one tier; an Integration QA
-Task classifies the composed surface instead, at `critical` when the parent
-criteria cross money, auth, or irreversible data.
+Classify the ticket once as `simple`, `normal`, or `critical` / `hard` from its
+requirement, plan, and acceptance commands. Then route by phase:
 
-Almost every child runs on the routine rung — `gpt-5.6-sol`, `opus`,
+- Plan and design-feedback Dispatches use the ticket tier. Hard planning takes
+  the strongest normally routed planner: Codex `gpt-5.6-sol` at `high`, Claude
+  `opus` at `high`, or OMP `@slow` under the current canonical table.
+- Build, review, and per-ticket QA use `simple` for a simple ticket and
+  `normal` otherwise. Hardness does not make ordinary implementation occupy
+  the planning rung: a hard ticket drops to the normal row for Build.
+- Integration QA classifies the composed parent surface independently and may
+  use the hard route for cross-system or non-delegable reasoning.
+
+Almost every implementation runs on the routine rung — `gpt-5.6-sol`, `opus`,
 `@default`. The top rung (`gpt-6-astra`, Fable 5.1) costs 2–2.5x the workhorse
-per token and a foreman multiplies that across a whole batch, so a `critical`
-classification alone never buys it. Escalate, and only under the shared table's
-trigger: floor work whose workhorse attempt already came back short. Name the
-trigger beside the model, log the cost, and keep the escalation to the
-Dispatches that need it — when in doubt, stay on the workhorse and let the
-ticket's own evidence promote it.
+per token and a foreman multiplies that across a batch, so a `critical`
+classification alone never buys it. Escalate only under the shared table's
+trigger: floor or cross-system work whose workhorse attempt already came back
+short. Name the trigger beside the model, log the cost, and keep escalation to
+the Plan or gate Dispatch that needs it. Ordinary Build still returns to the
+normal route.
 
 Take the row for the harness this worker actually runs on — the CLI
 `worker_agent` selects for this run, which `bbs foreman worker-command
 --prompt <text>` resolves and preflights (its printed command leads with that
 agent). A model ID from another harness's ladder is not a valid start for this
-one. Pass both values on the fresh-worker start:
+one. Pass both values on a fresh-worker start:
 
 ```bash
 orca orchestration worker-start --task "$ORCA_TASK_ID" --worktree current \
@@ -411,49 +445,53 @@ orca orchestration worker-start --task "$ORCA_TASK_ID" --worktree current \
 
 `--effort` requires `--model`, neither combines with `--terminal`, and both
 apply only where that agent and model take them. Read the receipt:
-`launch.effective` is the model the worker actually got, and a receipt
-that does not echo the request means the start ran without it — record that
-limitation, never assume the tier was honored. An explicit model or effort the
-user named for the project wins over the tier.
+`launch.effective` is the model the worker actually got, and a receipt that
+does not echo the request means the start ran without it — record that
+limitation, never assume the route was honored. An explicit phase-specific
+model or effort the user named wins over the table.
 
 Two cases start without a model flag, each recorded with the Dispatch's
 handoff: the harness or its connected worker server does not accept launch
-preferences — Orca forwards `--model`/`--effort` for a fresh Claude, Codex, or
-Cursor terminal — or the harness has no ladder in the shared table. An `omp`
-worker keeps its role binding and a `grok` worker its `grok-4.6` default;
-persist that resolved value in the pointers rather than leaving them empty. The
-worker's own autopilot then plans, implements, and gates on that session model,
-so such a ticket is not unstaffed; only its resolved session model is unset.
+preferences, or the harness has no ladder in the shared table. An `omp` worker
+keeps its role binding and a `grok` worker its `grok-4.6` default; persist
+that resolved value rather than leaving it empty. Phase routing still applies
+to them as recorded intent — a hard `omp` ticket releases its planner and
+starts a fresh Build worker like any other — but both phases run on the bound
+role, so `planner_model` and `worker_model` persist the same resolved value.
 
-Persist the resolved pair on the child, so resume, retry, and worker reuse
-cannot silently change it:
+Persist Plan and Build routes separately so resume and retry cannot silently
+collapse them:
 
 ```bash
-BABYSIT_TICKET="$TICKET" bbs ticket set-pointer worker_model "<model>"
+BABYSIT_TICKET="$TICKET" bbs ticket set-pointer planner_model "<model-or-role>"
+BABYSIT_TICKET="$TICKET" bbs ticket set-pointer planner_effort "<effort-or-unsupported>"
+BABYSIT_TICKET="$TICKET" bbs ticket set-pointer worker_model "<model-or-role>"
 BABYSIT_TICKET="$TICKET" bbs ticket set-pointer worker_effort "<effort-or-unsupported>"
 ```
 
-A reused settled worker keeps the model it was started with, so a Dispatch that
-now needs a stronger tier starts a fresh worker rather than `--terminal`.
-Re-classify, and overwrite both pointers, only when accepted scope changes —
-a `change-request` that widens the ticket. Tier → model is a Taste decision:
-log the tier, harness, model, effort, and the evidence that classified it
-through the Auto-Decision Framework.
+A hard ticket always archives and releases its settled planner, releases the
+Plan resource lease, then starts a fresh normal Build worker rather than
+`--terminal` reuse — even when Codex maps both phases to `gpt-5.6-sol`. Simple
+and normal tickets may reuse a settled worker only when the exact agent,
+model/role, effort, and resource profile match. Re-classify and overwrite these
+pointers only when accepted scope changes. Phase route → model is a Taste
+decision: log the ticket tier, phase, harness, model, effort, and classifying
+evidence through the Auto-Decision Framework.
 
-This routes the workers. Foreman's own session model is whatever
-`foreman_agent` launched on, it cannot be changed mid-run, and a multi-day
-coordinator should stay on a routine rung: the top rung charges that rate on
-every reconcile tick.
+This routes workers. Foreman's own session model is whatever `foreman_agent`
+launched on; it cannot be changed mid-run, and a multi-day coordinator should
+stay on a routine rung rather than charging top-rung rates for reconciliation.
 
 ## Two-phase ticket dispatch
 
 Every child has two supervised Tasks so design review is agent-independent:
 
-1. **Plan Task** — start a fresh worker in the child's exact worktree. Its spec
-   names the ticket and requires the installed babysit `autopilot` skill with
-   `builder <ticket> --stop-after=plan`. Do not hand-write a harness-specific
-   `/bbs:` or `$bbs:` prefix. The worker must persist its plan verdict and send
-   Orca `worker_done` from the injected lifecycle.
+1. **Plan Task** — start a fresh worker in the child's exact worktree on the
+   Plan route. Its spec names the ticket and requires the installed babysit
+   `autopilot` skill with `builder <ticket> --stop-after=plan`. Do not
+   hand-write a harness-specific `/bbs:` or `$bbs:` prefix. The worker must
+   persist its plan verdict and send Orca `worker_done` from the injected
+   lifecycle.
 2. **Design gate** — after `worker_done`, read the requirement, plan, design,
    and prototype from ticket paths and verify coverage, host consistency,
    reuse, prototype inspection, and scope. Publish the babysit plan approval,
@@ -461,12 +499,14 @@ Every child has two supervised Tasks so design review is agent-independent:
    approval is the safety authority. Mirror its result to an Orca decision gate
    for the Build Task so the DAG cannot run ahead; never resolve the Orca gate
    independently.
-3. **Build Task** — after approval, immediately reuse the settled plan worker
-   with a fresh Dispatch when the live guide allows it; otherwise release it
-   and start a worker in the same child worktree. Its spec requires
-   `autopilot builder <ticket>` and forbids topology and close-out. Autopilot
-   implements, commits, runs `review-pr` then `qa`, persists both verdicts, and
-   reports `worker_done`.
+3. **Build Task** — after approval, hard tickets archive and `worker-release`
+   the planner, release its resource lease, reserve the Build profile, and
+   start a fresh normal worker in the same worktree. Simple and normal tickets
+   may reuse the settled planner only when every route and resource field
+   matches. Its spec requires `autopilot builder <ticket>` and forbids topology
+   and close-out. Autopilot consumes the accepted disk plan, implements,
+   commits, runs `review-pr` then `qa`, persists both verdicts, and reports
+   `worker_done`.
 
 An incomplete design rubric gets at most two feedback Dispatches, each naming
 the missing evidence. Then mark the ticket `BLOCKED`. The non-delegable floor,
@@ -523,9 +563,10 @@ done tickets never wait for the project. Merged code reaches base early and
 the ticket's worker, lease, and worktree free up for the next wave. A child
 is eligible when all of these hold:
 
-- current `review-pr` + `qa` verdicts are DONE or DONE_WITH_CONCERNS and
-  `bbs ticket readiness --action <land|pr> --json` allows the intended
-  action;
+- current `review-pr` + `qa` verdicts are DONE or DONE_WITH_CONCERNS;
+- `bbs ticket readiness --action <land|pr|review> --json` allows that exact
+  action — under `review` it still guards a dirty tree, an active attempt,
+  and stale evidence, even though Foreman performs no merge or remote write;
 - every prerequisite child has itself finished (landed, PRed, or — under
   `review` — gates passed); dependency order is preserved, never reordered;
 - under `land`, the child is not covered by a pending Integration QA Task —
@@ -542,35 +583,50 @@ code — in dependency order, one child at a time:
 - `pr` — invoke the real `create-pr` skill for that child as soon as its
   gates pass; a PR does not mutate base, so integration coverage does not
   hold it. Persist the result as `pointers.pr` on the child.
-- `review` — no merge is authorized; the eager pass only releases the
-  settled worker and its resource lease. Branches and worktrees stay for
-  the human.
+- `review` — no merge is authorized. Run Orca worktree close-out and keep the
+  clean branch and Git worktree for human inspection.
 
-After a successful `land` or `pr`: archive the settled worker's output,
-`worker-release` it, release the resource lease, run the Orca worktree
-close-out, and remove the verified-clean non-primary worktree with
-ordinary `git worktree remove` — keep the branch. On any failure or
-hold, keep the worktree recoverable.
+After a successful `review`, `land`, or `pr`: archive the settled worker's
+output, `worker-release` it, release the resource lease, and run Orca worktree
+close-out. After `land` or `pr`, also remove the verified-clean non-primary Git
+worktree with ordinary `git worktree remove`; keep the branch. On any failure
+or hold, close settled terminals but keep the Git worktree recoverable.
 
 **Orca worktree close-out** — `worker-release` closes only the one agent
-terminal its Dispatch owns. Before `git worktree remove`, close every
-other Orca surface opened in that worktree so no agent keeps running
-against a deleted checkout:
+terminal its Dispatch owns. Before any bulk close, prove nothing supervised is
+still live in that worktree: every Dispatch recorded on the ticket is settled,
+and `orca orchestration worker-list --run <run_id> --terminal-state active
+--include-remote --json` shows no worker placed at that path — a `reclaimable`
+row there gets its own `worker-release` first. Then close every other terminal
+and harness process owned by that exact ticket worktree:
 
 ```bash
-orca terminal stop --worktree path:<worktreePath> --json   # every remaining terminal
+orca terminal close --worktree path:<worktreePath> --all --json
 orca tab list --worktree path:<worktreePath> --json        # then per row:
 orca tab close --page <browserPageId> --json
 orca emulator list --worktree path:<worktreePath> --json   # then per row:
 orca emulator kill --emulator <id> --json
-git worktree remove <worktreePath>                          # last; keeps the branch
+orca terminal list --worktree path:<worktreePath> --json   # verify: zero rows
+orca worktree set --worktree path:<worktreePath> \
+  --workspace-status <in-review|completed> --json          # in-review under
+                                                          #   review/pr, completed under land
+orca automations list --json                               # land/pr only: rows whose
+                                                          #   runContext.path matches
+orca automations edit <id> --disabled --json               #   disable, keep history
+git worktree remove <worktreePath>                          # land/pr only; last
 ```
 
-`selector_not_found` on a `path:` selector means Orca tracks nothing
-there — the clean case, not an error. A surface that refuses to close
-keeps the worktree recoverable like any other hold. Never substitute
-`orca worktree rm`: it also tries to delete the checked-out local
-branch, which the ticket keeps.
+The bulk terminal close is mandatory even under `review`: it stops setup
+shells, agent harnesses, and configured terminal tabs instead of leaving zombie
+processes beside a dormant checkout. Never run it while a Dispatch is active or
+unverifiable. `selector_not_found` on a `path:` selector means Orca tracks
+nothing there — the clean case, not an error. A surface that refuses to close
+keeps the Git worktree recoverable like any other hold. Never substitute
+`orca worktree rm`: it also tries to delete the checked-out local branch, which
+the ticket keeps — so after `git worktree remove` the Orca worktree record
+stays behind pointing at a deleted path. That stale card is expected; it is
+not a reason to run `worktree rm`, which would delete the branch outright once
+the checkout is gone.
 
 Failure routing — never blind-retry an unchanged state:
 
@@ -603,15 +659,16 @@ and the terminal heartbeat — and it still owns the integration gate.
 
 Finish only after every required child has current `review-pr` + `qa` DONE,
 the parent integration gate passed or is justified `N/A`, and readiness says
-the exact action is allowed. Apply the repo's single handler in dependency
-order:
+the exact action (`land`, `pr`, or `review`) is allowed. Apply the repo's
+single handler in dependency order:
 
 ```bash
 eval "$(bbs autopilot git-flow)"   # BBS_FINISH=review | land | pr
 ```
 
-- `review` — leave clean committed branches/worktrees for the human; optionally
-  compose them with `bbs ticket serve` when asked.
+- `review` — keep the clean committed branch and Git worktree for the human;
+  optionally compose it with `bbs ticket serve` when asked. The checkout stays,
+  but its Orca terminals and harnesses do not.
 - `land` — if integration QA (or any `surface compose`/`serve`) left a
   scratch composition on the primary, run `bbs ticket surface revert` first.
   `land`
@@ -623,14 +680,14 @@ eval "$(bbs autopilot git-flow)"   # BBS_FINISH=review | land | pr
 
 Archive every settled worker's readable output through Orca, then call
 `worker-release` unless immediately reusing it; that closes only the
-Dispatch-owned agent terminal. Only after a successful `land` or `pr` —
-`land` evaluates readiness inside the recorded worktree and BLOCKs on
-chdir if it is gone — run the Orca worktree close-out from **Eager
-per-ticket finish**, then remove the verified-clean non-primary
-worktree with ordinary `git worktree remove`, and keep its branch.
-Under `review`, or on any failure/hold, keep the worktree recoverable.
-Never use `--force`, broad worktree removal, or terminal-close commands
-in place of Orca `worker-release`.
+Dispatch-owned agent terminal. After every successful `review`, `land`, or
+`pr`, run the Orca worktree close-out from **Eager per-ticket finish**. Only
+after `land` or `pr` remove the verified-clean non-primary Git worktree with
+ordinary `git worktree remove`, keeping its branch. A failure or hold keeps the
+Git worktree but never justifies a settled orphan terminal; archive, release,
+and bulk-close it once Orca proves no Dispatch remains active. Never use
+`--force`, broad Git worktree removal, or terminal-close commands in place of
+Orca `worker-release`.
 
 The terminal write is the `done` heartbeat, and it is last:
 
@@ -639,12 +696,14 @@ bbs foreman heartbeat "$FOREMAN_ID" --status done
 ```
 
 `Record.Status == done` is the only completion signal the external watcher
-consumes — it drops the foreman from the watch set on that value alone.
-Write it only after every durable gate, the finish handler, worker release,
-and eligible worktree cleanup have all succeeded; the record never completes
-from prose, a `worker_done` message, or a printed status block. A blocked,
-paused, or cancelled project never writes `done` — it reports `BLOCKED` and
-keeps its ordinary heartbeat.
+consumes. Write it only after every durable gate, finish handler, worker
+release, and eligible worktree cleanup succeeded; the record never completes
+from prose, a `worker_done` message, or a printed status block. The user-facing
+terminal report comes first. After a short delivery grace, the external
+`bbs foreman watch` closes the exact adopted Foreman terminal tab, which stops
+the coordinator harness without closing unrelated terminals in its shared
+Orca worktree. A blocked, paused, or cancelled project never writes `done` — it
+reports `BLOCKED` and keeps its ordinary heartbeat.
 
 ## Resume reconciliation
 
@@ -681,7 +740,7 @@ foreman is wedged.
 ```text
 STATUS: DONE | DONE_WITH_CONCERNS | NEEDS_CONTEXT | BLOCKED | IN_PROGRESS
 VERDICT: ORCHESTRATED(<completed>/<total>)
-PROJECT: <parent>  RUN: <orca-run>  FINISH: <review|land|pr>
+PROJECT: <parent>  RUN: <orca-run>  PROFILE: <pet|startup|enterprise>  FINISH: <review|land|pr>
 TICKETS: <ticket branch QA review readiness result; one row each>
 RESOURCES: <global used/budget, host pressure, queued heavy Tasks>
 INTEGRATION_QA: <PASS evidence | N/A reason | BLOCKED evidence>

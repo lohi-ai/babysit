@@ -320,7 +320,7 @@ func (c *Client) Rename(handle, title string) error {
 }
 
 func (c *Client) lookup(title string) (Terminal, error) {
-	terms, err := c.list()
+	terms, err := c.Terminals()
 	if err != nil {
 		return Terminal{}, err
 	}
@@ -332,7 +332,10 @@ func (c *Client) lookup(title string) (Terminal, error) {
 	return Terminal{}, fmt.Errorf("%w: %q", ErrNoTerminal, title)
 }
 
-func (c *Client) list() ([]Terminal, error) {
+// Terminals lists every live Orca terminal. One call answers "which of these
+// titles are still open" for a whole set — cheaper than a Ref per title,
+// which re-runs this list each time.
+func (c *Client) Terminals() ([]Terminal, error) {
 	raw, err := c.run("terminal", "list")
 	if err != nil {
 		return nil, err
