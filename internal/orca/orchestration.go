@@ -25,9 +25,9 @@ import (
 //     approval mechanisms means two places for the floor to be wrong.
 //   - task DAGs / --deps — foreman batches are independent tickets by
 //     construction.
-//   - the worker lifecycle (worker-stop / -release / -abandon) — foreman
-//     archives and closes tabs on its own terms, and on the non-injecting
-//     dispatch path these are no-ops anyway.
+//   - normal worker cleanup (worker-release / -abandon) — handled by the
+//     foreman skill. Resource recovery separately uses worker-stop only for
+//     an agent the fleet proves exited, then verifies settlement.
 //
 // Dispatch is always non-injecting. `--inject` would hand Orca's lifecycle the
 // job of delivering the prompt, which is exactly the half babysit keeps: a
@@ -317,17 +317,22 @@ func (c *Client) DispatchStatusFor(taskID string) (string, error) {
 	return d.Status, nil
 }
 
-// dispatchShow is the shared read behind DispatchFor and DispatchStatusFor.
+// DispatchState identifies one attempt independently of its worker terminal.
 // dispatch_contexts.status is 'pending', 'dispatched', 'completed', 'failed',
 // or 'circuit_broken'; the last three are terminal.
-func (c *Client) dispatchShow(taskID string) (struct {
+type DispatchState struct {
 	ID     string `json:"id"`
 	Status string `json:"status"`
-}, error) {
-	var dispatch struct {
-		ID     string `json:"id"`
-		Status string `json:"status"`
-	}
+	RunID  string `json:"run_id"`
+}
+
+// DispatchStateFor reads the exact current attempt, including its Run.
+func (c *Client) DispatchStateFor(taskID string) (DispatchState, error) {
+	return c.dispatchShow(taskID)
+}
+
+func (c *Client) dispatchShow(taskID string) (DispatchState, error) {
+	var dispatch DispatchState
 	if !c.Orchestration() {
 		return dispatch, ErrNoOrchestration
 	}
@@ -339,16 +344,21 @@ func (c *Client) dispatchShow(taskID string) (struct {
 		return dispatch, err
 	}
 	var wrap struct {
-		Dispatch *struct {
-			ID     string `json:"id"`
-			Status string `json:"status"`
-		} `json:"dispatch"`
+		Dispatch json.RawMessage `json:"dispatch"`
 	}
 	if err := json.Unmarshal(raw, &wrap); err != nil {
 		return dispatch, fmt.Errorf("orca dispatch-show: %w", err)
 	}
-	if wrap.Dispatch != nil {
-		dispatch = *wrap.Dispatch
+	if len(wrap.Dispatch) == 0 {
+		return dispatch, errors.New("orca dispatch-show: missing dispatch field")
+	}
+	if string(wrap.Dispatch) != "null" {
+		if err := json.Unmarshal(wrap.Dispatch, &dispatch); err != nil {
+			return dispatch, err
+		}
+		if dispatch.ID == "" || dispatch.Status == "" {
+			return dispatch, errors.New("orca dispatch-show: incomplete dispatch")
+		}
 	}
 	return dispatch, nil
 }

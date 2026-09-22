@@ -177,9 +177,12 @@ a full project reconciliation, never a liveness-only reply. One tick:
    commits in place.
 2. Bind the recorded Orca Run and read the live state of every project Task,
    its current Dispatch, and its supervised worker. Run
-   `bbs foreman resource status` — it releases every lease whose Dispatch Orca
-   proves terminal and prints each as `RELEASED_LEASE`. A lease has
-   no time-based expiry, so anything still listed is held.
+   `bbs foreman resource status` — it reconciles all foremen, releases terminal
+   Dispatch leases, and stops proven exited agents before reclaiming their
+   slots. It also reclaims reservations with no new Dispatch after ten minutes
+   when their owner heartbeat is stale or missing. Each release is printed as
+   `RELEASED_LEASE`; anything still listed remains held. Live workers have
+   no time-based expiry, even if their foreman disappeared.
 3. Cross-check each child against disk: checkpoint freshness, current
    `review-pr`/`qa` verdicts,
    `bbs ticket readiness --action <review|land|pr> --json`, and the finish
@@ -364,17 +367,29 @@ leave that Task pending and dispatch other admitted work: resource backpressure
 is not a failed attempt. `reserved` means immediately persist the lease id as
 `pointers.resource_lease` on that ticket, then call `worker-start`. If worker
 creation fails, release the lease before retrying. Keep one writer per child worktree;
-never exceed `MAX_WORKERS` even when global capacity remains.
+never exceed `MAX_WORKERS` even when global capacity remains. The broker also
+checks `parallel_max_workers` atomically, counting current reservations rather
+than historical worker rows.
 A reservation is keyed by Foreman + Orca Task and is idempotent across resume.
-It deliberately never expires on a clock: a sleeping laptop can resume a live
-worker hours later. Release it with
-`bbs foreman resource release "$RESOURCE_LEASE"` only after Orca proves the
-Dispatch terminal, then clear `pointers.resource_lease`. When reusing a settled
-worker for a new Dispatch, release the old Task's lease and reserve the new
-Task's profile first. `bbs foreman resource status` already reconciles durable
-leases against live Dispatches on every wake; a lease that survives it is
-unproven and stays held, blocking capacity rather than risking duplicate heavy
-work.
+After an interruption or a delayed launch, heartbeat the foreman and repeat
+`reserve` immediately before `worker-start`; persist the returned lease id again.
+Each replacement reservation has a new id, so an old cleanup cannot release it.
+A launch reservation with no new Dispatch is reclaimed after ten minutes if its
+owner is stale or missing. A live Dispatch never expires merely because the
+foreman stopped heartbeating or the laptop slept.
+
+Both `reserve` and `status`, plus the detached watcher, reconcile all foremen's
+leases. An exited agent whose Dispatch is still active is stopped by exact
+Dispatch id, then its terminal state is verified before its lease is released.
+A live agent or unverifiable remote host retains capacity; `RESOURCE_HELD`
+explains unresolved recovery. Follow Orca's recovery evidence for these workers,
+not repeated blind waits or a manual release based only on age. Count only
+current held reservations toward the worker ceiling, and retry stopped Tasks
+through their failed Dispatch, preserving worktrees and checkpoints.
+Release a settled reservation with
+`bbs foreman resource release "$RESOURCE_LEASE"`, then clear
+`pointers.resource_lease`. When reusing a settled worker for a new Dispatch,
+release the old Task's lease and reserve the new Task's profile first.
 
 Every worker Task spec must establish the execution envelope before naming its
 ticket work: this is a supervised Orca Dispatch, its effective

@@ -13,6 +13,7 @@
 package orca
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -20,6 +21,7 @@ import (
 	"os/exec"
 	"runtime"
 	"strings"
+	"time"
 )
 
 var (
@@ -37,6 +39,7 @@ type Client struct {
 	// per call: it changes only when the app restarts, and the surface it gates
 	// (see orchestration.go) is on the hot path of a foreman's monitor loop.
 	caps []string
+	ctx  context.Context
 }
 
 // Preflight returns a usable Client or the reason there isn't one.
@@ -46,11 +49,17 @@ type Client struct {
 // "orca unavailable" is what makes "installed but the app is closed"
 // unfixable from the message.
 func Preflight() (*Client, error) {
+	return PreflightContext(context.Background())
+}
+
+// PreflightContext bounds resource reconciliation without shortening mailbox
+// waits elsewhere. The same deadline covers all commands on this client.
+func PreflightContext(ctx context.Context) (*Client, error) {
 	bin, err := lookPath()
 	if err != nil {
 		return nil, fmt.Errorf("%w — install it from https://www.onorca.dev and make sure the app is running", ErrNotInstalled)
 	}
-	c := &Client{bin: bin}
+	c := &Client{bin: bin, ctx: ctx}
 	if err := c.ready(); err == nil {
 		return c, nil
 	}
@@ -380,10 +389,25 @@ type envelope struct {
 
 func (c *Client) run(args ...string) (json.RawMessage, error) {
 	full := append(append([]string{}, args...), "--json")
-	cmd := exec.Command(c.bin, full...)
+	ctx := c.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	// A slow worker probe must not consume the entire reconciliation budget
+	// and starve later leases. Ordinary mailbox clients have no deadline.
+	if _, bounded := ctx.Deadline(); bounded {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, 2*time.Second)
+		defer cancel()
+	}
+	cmd := exec.CommandContext(ctx, c.bin, full...)
+	cmd.WaitDelay = time.Second
 	var stderr strings.Builder
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
 	msg := strings.TrimSpace(stderr.String())
 	if len(out) > 0 {
 		var env envelope

@@ -1,6 +1,7 @@
 package foreman
 
 import (
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -155,5 +156,111 @@ func TestReservationRetryAndReleaseAreIdempotent(t *testing.T) {
 	released, err = broker.Release(first.Lease.ID)
 	if err != nil || released {
 		t.Fatalf("second release=%v err=%v, want idempotent no-op", released, err)
+	}
+}
+
+func TestResourceWorkerLimitIsAtomicAndPerForeman(t *testing.T) {
+	broker := testResourceBroker(t, healthyHost(32, 64))
+	var wg sync.WaitGroup
+	results := make(chan ResourceStatus, 8)
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			got, err := broker.Reserve(ResourceRequest{ForemanID: "fm-a", Ticket: "bs-a", Task: fmt.Sprint(i), Profile: "plan", MaxWorkers: 2}, 0)
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			results <- got
+		}(i)
+	}
+	wg.Wait()
+	close(results)
+	admitted := 0
+	for got := range results {
+		if got.Admission == "reserved" {
+			admitted++
+		}
+	}
+	if admitted != 2 {
+		t.Fatalf("admitted %d workers, want 2", admitted)
+	}
+	other, err := broker.Reserve(ResourceRequest{ForemanID: "fm-b", Ticket: "bs-b", Task: "other", Profile: "plan", MaxWorkers: 2}, 0)
+	if err != nil || other.Admission != "reserved" {
+		t.Fatalf("other foreman blocked: %+v %v", other, err)
+	}
+}
+
+func TestDelayedReleaseCannotRemoveReplacement(t *testing.T) {
+	broker := testResourceBroker(t, healthyHost(8, 16))
+	req := ResourceRequest{ForemanID: "fm-a", Ticket: "bs-a", Task: "retry", Profile: "plan"}
+	first, err := broker.Reserve(req, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := broker.Release(first.Lease.ID); err != nil {
+		t.Fatal(err)
+	}
+	second, err := broker.Reserve(req, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Lease.ID == second.Lease.ID {
+		t.Fatal("replacement reused the old lease generation")
+	}
+	if released, err := broker.Release(first.Lease.ID); err != nil || released {
+		t.Fatalf("old release = %v, %v", released, err)
+	}
+	status, err := broker.Status(0)
+	if err != nil || len(status.Leases) != 1 || status.Leases[0].ID != second.Lease.ID {
+		t.Fatalf("replacement lost: %+v %v", status, err)
+	}
+}
+
+func TestRecoveryCannotReleaseRenewedLaunch(t *testing.T) {
+	b := testResourceBroker(t, healthyHost(8, 16))
+	req := ResourceRequest{ForemanID: "fm-a", Ticket: "bs-a", Task: "launch", Profile: "plan"}
+	first, err := b.Reserve(req, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	retry, err := b.Reserve(req, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if released, err := b.ReleaseObserved(*first.Lease); err != nil || released {
+		t.Fatalf("stale recovery removed renewed launch: %v %v", released, err)
+	}
+	if released, err := b.ReleaseObserved(*retry.Lease); err != nil || !released {
+		t.Fatalf("current observation cannot release: %v %v", released, err)
+	}
+}
+
+func TestReconciliationCursorSurvivesRestartAndRemoval(t *testing.T) {
+	b := testResourceBroker(t, healthyHost(8, 16))
+	for _, task := range []string{"one", "two", "three"} {
+		if _, err := b.Reserve(ResourceRequest{ForemanID: "fm-a", Ticket: "bs-a", Task: task, Profile: "plan"}, 0); err != nil {
+			t.Fatal(err)
+		}
+	}
+	initial, err := b.Status(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := initial.Leases[0].ID
+	next := initial.Leases[1].ID
+	if err := b.AdvanceReconciliation(first); err != nil {
+		t.Fatal(err)
+	}
+	restarted := &ResourceBroker{Dir: b.Dir, Probe: b.Probe}
+	for i := 0; i < 2; i++ {
+		got, err := restarted.Status(0)
+		if err != nil || got.Leases[0].ID != next {
+			t.Fatalf("cursor did not advance: %+v %v", got, err)
+		}
+		if _, err := b.Release(first); err != nil {
+			t.Fatal(err)
+		}
 	}
 }

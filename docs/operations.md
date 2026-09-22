@@ -39,10 +39,28 @@ preempted.
 
 Reservations are global across repositories and Foremen sharing the same
 `BABYSIT_HOME`. They are keyed by Foreman and Orca Task, making a retry
-idempotent. They do not expire by time: `bbs foreman resource status`
-reconciles them against Orca on every call and releases a lease only when the
-Dispatch is proven terminal (`RELEASED_LEASE` lines); anything still listed is
-held, and a dead Foreman's leases wait for a manual `release`.
+idempotent. The broker enforces the per-Foreman worker ceiling atomically as
+well as the global weighted budget. Both `reserve` and `status`, and the detached
+watcher, recover leases across all owners without waiting for a dead Foreman:
+
+- Terminal Dispatches release capacity immediately.
+- Agents proven exited by Orca's fleet view are stopped by exact Dispatch id;
+  capacity is reclaimed only after settlement is confirmed.
+- Reservations with no new Dispatch are reclaimed after ten minutes if the
+  owner's heartbeat is stale or its record is missing. Resume must heartbeat
+  and repeat `reserve` immediately before launching, saving the returned id.
+- Live workers survive owner interruption and laptop sleep. Unverifiable
+  workers remain held, with `RESOURCE_HELD` diagnostics; contact loss alone
+  cannot safely authorize another worker in their slot.
+
+Recovery prints `RELEASED_LEASE` for each reclaimed slot. Reconciliation has a
+15-second overall deadline and two-second per-command deadlines; Orca probes
+never hold the admission lock. A persisted probe cursor rotates past slow
+workers so they cannot starve later leases on every tick. The OS releases
+that lock on process exit,
+including SIGKILL. Replacement leases have new ids, protecting them from late
+cleanup of the previous attempt. Old mkdir lock directories are ignored by the
+new broker; do not run old and new broker binaries concurrently during upgrade.
 
 ```bash
 bbs foreman resource status

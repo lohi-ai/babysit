@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -247,6 +248,17 @@ func foremanWatch(args []string) error {
 		return err
 	}
 	for {
+		// Recover global capacity before selecting targets: a vanished owner
+		// must not be required to run its own cleanup.
+		broker := newResourceBroker()
+		if status, err := broker.Status(0); err == nil && len(status.Leases) > 0 {
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			c, _ := orca.PreflightContext(ctx)
+			for _, id := range reconcileResourceLeases(ctx, broker, status.Leases, c, time.Now()) {
+				fmt.Println("RELEASED_LEASE=" + id)
+			}
+			cancel()
+		}
 		targets, err := watchTargets(client, id)
 		if err != nil {
 			return err

@@ -2,7 +2,7 @@ package foreman
 
 import (
 	"bufio"
-	"crypto/sha256"
+	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -57,22 +57,26 @@ type HostResources struct {
 // ResourceRequest identifies one pending Orca Task. ForemanID + Task is the
 // idempotency key, so a crash after reservation can safely retry the command.
 type ResourceRequest struct {
-	ForemanID string
-	Ticket    string
-	Task      string
-	Profile   string
+	ForemanID        string
+	Ticket           string
+	Task             string
+	Profile          string
+	MaxWorkers       int
+	PreviousDispatch string
 }
 
 // ResourceLease is durable machine-global capacity held by a worker.
 type ResourceLease struct {
-	ID         string   `json:"id"`
-	ForemanID  string   `json:"foreman_id"`
-	Ticket     string   `json:"ticket"`
-	Task       string   `json:"task"`
-	Profile    string   `json:"profile"`
-	Units      int      `json:"units"`
-	Exclusive  []string `json:"exclusive,omitempty"`
-	AcquiredAt string   `json:"acquired_at"`
+	ID               string   `json:"id"`
+	ForemanID        string   `json:"foreman_id"`
+	Ticket           string   `json:"ticket"`
+	Task             string   `json:"task"`
+	Profile          string   `json:"profile"`
+	Units            int      `json:"units"`
+	Exclusive        []string `json:"exclusive,omitempty"`
+	AcquiredAt       string   `json:"acquired_at"`
+	PreviousDispatch string   `json:"previous_dispatch,omitempty"`
+	RenewedAt        string   `json:"renewed_at,omitempty"`
 }
 
 // ResourceStatus is the complete admission snapshot returned by reserve and
@@ -88,8 +92,9 @@ type ResourceStatus struct {
 }
 
 type resourceState struct {
-	Version int             `json:"version"`
-	Leases  []ResourceLease `json:"leases"`
+	Version        int             `json:"version"`
+	Leases         []ResourceLease `json:"leases"`
+	ReconcileAfter string          `json:"reconcile_after,omitempty"`
 }
 
 // ResourceBroker serializes reservations from every foreman through one state
@@ -146,9 +151,27 @@ func (b *ResourceBroker) Reserve(req ResourceRequest, capUnits int) (ResourceSta
 				if lease.Ticket != req.Ticket || lease.Profile != req.Profile {
 					return fmt.Errorf("resource task %s/%s already reserved for ticket %s with profile %s", req.ForemanID, req.Task, lease.Ticket, lease.Profile)
 				}
+				lease.RenewedAt = b.now().UTC().Format(time.RFC3339Nano)
+				if err := b.save(state); err != nil {
+					return err
+				}
+				result.Leases = append([]ResourceLease(nil), state.Leases...)
 				copy := *lease
 				result.Admission = "reserved"
 				result.Lease = &copy
+				return nil
+			}
+		}
+		if req.MaxWorkers > 0 {
+			count := 0
+			for _, lease := range state.Leases {
+				if lease.ForemanID == req.ForemanID {
+					count++
+				}
+			}
+			if count >= req.MaxWorkers {
+				result.Admission = "queued"
+				result.Reason = fmt.Sprintf("foreman worker limit reached: %d of %d", count, req.MaxWorkers)
 				return nil
 			}
 		}
@@ -169,15 +192,20 @@ func (b *ResourceBroker) Reserve(req ResourceRequest, capUnits int) (ResourceSta
 			return nil
 		}
 
+		id, err := resourceLeaseID()
+		if err != nil {
+			return err
+		}
 		lease := ResourceLease{
-			ID:         resourceLeaseID(req.ForemanID, req.Task),
-			ForemanID:  req.ForemanID,
-			Ticket:     req.Ticket,
-			Task:       req.Task,
-			Profile:    profile.Name,
-			Units:      profile.Units,
-			Exclusive:  append([]string(nil), profile.Exclusive...),
-			AcquiredAt: b.now().UTC().Format(time.RFC3339),
+			ID:               id,
+			ForemanID:        req.ForemanID,
+			Ticket:           req.Ticket,
+			Task:             req.Task,
+			Profile:          profile.Name,
+			Units:            profile.Units,
+			Exclusive:        append([]string(nil), profile.Exclusive...),
+			AcquiredAt:       b.now().UTC().Format(time.RFC3339),
+			PreviousDispatch: req.PreviousDispatch,
 		}
 		state.Leases = append(state.Leases, lease)
 		sort.Slice(state.Leases, func(i, j int) bool { return state.Leases[i].ID < state.Leases[j].ID })
@@ -193,10 +221,19 @@ func (b *ResourceBroker) Reserve(req ResourceRequest, capUnits int) (ResourceSta
 	return result, err
 }
 
-// Release is idempotent. Leases are never expired by time: a sleeping machine
-// can resume a live worker hours later, so only a proven terminal Dispatch may
-// release its reservation.
+// Release is idempotent. Each reservation generation has a unique ID, so a
+// delayed release cannot remove a replacement reservation for the same Task.
 func (b *ResourceBroker) Release(id string) (bool, error) {
+	return b.release(id, nil)
+}
+
+// ReleaseObserved rejects a stale reconciliation snapshot if the owner renewed
+// its launch reservation while Orca was being queried outside the lock.
+func (b *ResourceBroker) ReleaseObserved(observed ResourceLease) (bool, error) {
+	return b.release(observed.ID, &observed)
+}
+
+func (b *ResourceBroker) release(id string, observed *ResourceLease) (bool, error) {
 	if strings.TrimSpace(id) == "" {
 		return false, errors.New("resource release needs a lease id")
 	}
@@ -208,7 +245,7 @@ func (b *ResourceBroker) Release(id string) (bool, error) {
 		}
 		kept := state.Leases[:0]
 		for _, lease := range state.Leases {
-			if lease.ID == id {
+			if lease.ID == id && (observed == nil || lease.RenewedAt == observed.RenewedAt) {
 				released = true
 				continue
 			}
@@ -232,13 +269,34 @@ func (b *ResourceBroker) Status(capUnits int) (ResourceStatus, error) {
 	if err != nil {
 		return ResourceStatus{}, err
 	}
+	// Resume after the last attempted lease, so a slow/unreachable worker
+	// cannot exhaust every tick's probe budget before peers get inspected.
+	leases := append([]ResourceLease(nil), state.Leases...)
+	for i, lease := range leases {
+		if lease.ID > state.ReconcileAfter {
+			leases = append(append([]ResourceLease(nil), leases[i:]...), leases[:i]...)
+			break
+		}
+	}
 	return ResourceStatus{
 		Budget: resourceBudget(host, capUnits),
 		Used:   resourceUnits(state.Leases),
 		Host:   host,
 		Reason: resourcePressureReason(host),
-		Leases: append([]ResourceLease(nil), state.Leases...),
+		Leases: leases,
 	}, nil
+}
+
+// AdvanceReconciliation checkpoints probe progress independently of the owner.
+func (b *ResourceBroker) AdvanceReconciliation(id string) error {
+	return b.withLock(func() error {
+		state, err := b.load()
+		if err != nil {
+			return err
+		}
+		state.ReconcileAfter = id
+		return b.save(state)
+	})
 }
 
 func validateResourceRequest(req ResourceRequest) (ResourceProfile, error) {
@@ -311,13 +369,16 @@ func resourceExclusiveConflict(leases []ResourceLease, wanted []string) string {
 	return ""
 }
 
-func resourceLeaseID(foremanID, task string) string {
-	sum := sha256.Sum256([]byte(foremanID + "\x00" + task))
-	return "rsc-" + hex.EncodeToString(sum[:8])
+func resourceLeaseID() (string, error) {
+	var id [16]byte
+	if _, err := rand.Read(id[:]); err != nil {
+		return "", err
+	}
+	return "rsc-" + hex.EncodeToString(id[:]), nil
 }
 
 func (b *ResourceBroker) statePath() string { return filepath.Join(b.Dir, "foreman-leases.json") }
-func (b *ResourceBroker) lockPath() string  { return filepath.Join(b.Dir, ".foreman-leases.lock") }
+func (b *ResourceBroker) lockPath() string  { return filepath.Join(b.Dir, ".foreman-leases.flock") }
 
 func (b *ResourceBroker) probe() HostResources {
 	if b.Probe == nil {
@@ -337,16 +398,11 @@ func (b *ResourceBroker) withLock(fn func() error) error {
 	if err := os.MkdirAll(b.Dir, 0o755); err != nil {
 		return err
 	}
-	for tries := 0; ; tries++ {
-		if err := os.Mkdir(b.lockPath(), 0o755); err == nil {
-			break
-		}
-		if tries >= resourceLockRetries {
-			return fmt.Errorf("failed to acquire resource lock after 5s — remove %s if no foreman resource command is active", b.lockPath())
-		}
-		time.Sleep(resourceLockDelay)
+	release, err := lockResources(b.lockPath())
+	if err != nil {
+		return err
 	}
-	defer os.RemoveAll(b.lockPath())
+	defer release()
 	return fn()
 }
 
