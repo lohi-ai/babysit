@@ -66,6 +66,9 @@ type Record struct {
 	// than the Foreman agent command. Such panes must not receive Foreman
 	// status prompts from the watcher. It is false for legacy records.
 	ManualCommand bool `yaml:"manual_command,omitempty"`
+	// Auto delegates project design review to Foreman. Unlike child review,
+	// this requires an explicit --auto and survives restart/adoption.
+	Auto bool `yaml:"auto,omitempty"`
 	// Run is the Orca orchestration Run this foreman's mailbox lives in, bound
 	// fresh per session by `run-create`. It is recorded because coordinator
 	// binding is per-TERMINAL, not per-record: a foreman that resumes in a new

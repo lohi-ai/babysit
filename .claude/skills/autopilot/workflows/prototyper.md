@@ -14,8 +14,15 @@ not durability.
 1. Resolve the assumption to test from `requirement.md` or the invocation. If it
    is unclear whether the idea is even worth a spike, run `office-hours` first.
 2. Run `prototype`: build the smallest quarantined spike and capture the signal.
-3. Checkpoint the verdict and what was learned.
-4. Write a handoff: assumption, signal observed, and the one next action.
+3. Checkpoint the verdict and what was learned. Keep throwaway code quarantined;
+   a validated spike supplies evidence and a production requirement, never code
+   to merge or put through `create-pr`. Before handoff, copy the signal and any
+   artifact worth keeping into ticket storage, remove repo-local throwaway files,
+   and verify the checkout matches its starting revision. Do not commit the spike.
+4. Write a handoff: assumption, signal observed, and the one next action. End
+   with `LIFECYCLE: prototyper -> builder` only when the signal validated the
+   assumption and the production requirement is named; otherwise iterate or
+   stop rather than manufacturing validation.
 **Stop conditions**
 
 - `NEEDS_CONTEXT`: the assumption to test cannot be determined.
@@ -25,5 +32,7 @@ not durability.
 STATUS: DONE | DONE_WITH_CONCERNS | NEEDS_CONTEXT | BLOCKED
 VERDICT: VALIDATED | INVALIDATED | INCONCLUSIVE
 SUMMARY: <assumption + signal>
+LIFECYCLE: prototyper -> builder | prototyper | stop
+TRIGGER: <validation evidence and production requirement, next experiment, or drop reason>
 NEXT: promote via /bbs:autopilot builder, iterate, or drop the spike
 ```

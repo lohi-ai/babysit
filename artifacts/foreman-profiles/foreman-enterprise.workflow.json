@@ -64,7 +64,7 @@
       "title": "Enterprise control plane",
       "items": [
         "Strict QA covers 8–12 cases; review-pr runs at high effort",
-        "N comes from parallel_max_workers; default 8 per foreman",
+        "N comes from parallel_max_workers; default 4 per foreman",
         "Parent claims fence concurrent Foreman coordinators"
       ]
     },

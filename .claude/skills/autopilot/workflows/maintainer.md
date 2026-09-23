@@ -14,7 +14,7 @@ production system safe as it scales. Two modes, chosen from the invocation:
 | **audit** | "is this secure / current / reliable / cheap at scale?" | `maintain` |
 | **fix** | a specific bug, regression, flake, or crash is reported | `investigate` |
 ## run
-> produces: verdict:maintainer + qa:checked
+> produces: verdict:maintainer
 1. Pick the mode. For **audit**, resolve the lens (security, dependencies,
    reliability, scale/performance — schema/indexes/partitioning, caching,
    batching, async background processing — or architecture for change/scale
@@ -23,17 +23,22 @@ production system safe as it scales. Two modes, chosen from the invocation:
    then fix the top finding with the smallest safe change. A pure audit (no safe
    fix) is a valid run. **fix:** run `investigate` to root-cause, then apply the
    smallest fix via `implement` with a regression check.
-3. If code changed, run `review-pr --fix` in the current autopilot session via
-   autopilot's Current-session gates (`review-pr`, `qa`) policy (applies fixes
-   to the working tree).
-4. Run `qa` in the same session (or the strongest fallback) to confirm no
-   regression. Persist the verdict with
-   `bbs ticket set-verdict --skill qa`.
-5. Commit any fix locally. Autopilot never pushes, lands, or opens a PR —
+3. If code changed, in the current autopilot session run `review-pr --fix` and
+   then `qa` under its gate policy. Persist and read back both verdicts, apply the
+   **Repair until the final change passes** loop, and require
+   `bbs ticket readiness --action review --json` to report `data.ready=true`
+   for the final committed tree. Persist with
+   `bbs ticket set-verdict --skill review-pr` and
+   `bbs ticket set-verdict --skill qa`. A pure audit records its commands and
+   evidence but does not manufacture code gates.
+4. Commit any fix locally. Autopilot never pushes, lands, or opens a PR —
    close-out is the human's `create-pr` (or the dispatching foreman's).
-6. Write a handoff: mode + lens/root-cause, fix, verification, and the remaining
+5. Write a handoff: mode + lens/root-cause, fix, verification, and the remaining
    prioritized backlog. When the audit surfaced structural cruft (not a scale
    fix), name a `sweeper` pass as the follow-up — don't fold it into this run.
+   Route to `builder` only when the evidence requires a separately designed
+   structural change; route to `grower` when analysis identifies a product
+   experiment. Otherwise stop after the maintained outcome.
 **Stop conditions**
 
 - `NEEDS_CONTEXT`: the lens/bug cannot be determined, or the only fix needs a
@@ -45,5 +50,7 @@ production system safe as it scales. Two modes, chosen from the invocation:
 STATUS: DONE | DONE_WITH_CONCERNS | NEEDS_CONTEXT | BLOCKED
 VERDICT: AUDITED | HARDENED | FIXED
 SUMMARY: <mode + top finding/root-cause + fix/verification + backlog size>
-NEXT: triage backlog; human review, then /bbs:create-pr
+LIFECYCLE: maintainer -> sweeper | builder | grower | stop
+TRIGGER: <characterized cruft, structural requirement, product experiment, or no promoted work>
+NEXT: if AUDITED, triage the backlog; if code changed, human review then /bbs:create-pr
 ```

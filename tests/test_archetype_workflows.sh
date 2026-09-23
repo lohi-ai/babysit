@@ -53,6 +53,12 @@ check_workflow() {  # $1=name $2=verdict-vocab regex (matched on the VERDICT lin
   else
     fail "$name-verdict-vocabulary" "expected 'VERDICT: $vocab', got: $(grep '^VERDICT:' "$f" | head -1)"
   fi
+
+  if grep -q '^LIFECYCLE: ' "$f" && grep -q '^TRIGGER: ' "$f"; then
+    ok "$name-lifecycle-signal"
+  else
+    fail "$name-lifecycle-signal"
+  fi
 }
 
 check_workflow prototyper 'VALIDATED | INVALIDATED | INCONCLUSIVE'
@@ -112,7 +118,8 @@ else
 fi
 
 for name in builder grower sweeper maintainer; do
-  if grep -q 'review-pr.*current autopilot session' "$WF_DIR/$name.md"; then
+  if grep -q 'review-pr' "$WF_DIR/$name.md" \
+     && grep -q 'current autopilot session' "$WF_DIR/$name.md"; then
     ok "$name-runs-review-in-current-session"
   else
     fail "$name-runs-review-in-current-session"
@@ -122,6 +129,13 @@ for name in builder grower sweeper maintainer; do
     ok "$name-persists-qa-verdict"
   else
     fail "$name-persists-qa-verdict"
+  fi
+
+  if grep -q 'set-verdict --skill review-pr' "$WF_DIR/$name.md" \
+     && grep -q 'readiness --action review --json' "$WF_DIR/$name.md"; then
+    ok "$name-enforces-final-production-gates"
+  else
+    fail "$name-enforces-final-production-gates"
   fi
 done
 

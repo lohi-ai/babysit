@@ -321,6 +321,26 @@ func TestResourceReserveEnforcesConfiguredWorkerLimit(t *testing.T) {
 	}
 }
 
+func TestResourceReserveDefaultsToFourWorkers(t *testing.T) {
+	resourceCLIFixture(t)
+	reserve := func(task string) string {
+		return captureStdout(t, func() {
+			if err := foremanResourceReserve([]string{"fm-a", "--ticket", "bs-a", "--task", task, "--profile", "plan"}); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+	for _, task := range []string{"one", "two", "three", "four"} {
+		if out := reserve(task); !strings.Contains(out, "ADMISSION=reserved\n") {
+			t.Fatalf("%s: %s", task, out)
+		}
+	}
+	if out := reserve("five"); !strings.Contains(out, "ADMISSION=queued\n") ||
+		!strings.Contains(out, "foreman worker limit reached: 4 of 4") {
+		t.Fatalf("default worker limit not enforced: %s", out)
+	}
+}
+
 func TestWatchRecoversCapacityWithoutOpenForeman(t *testing.T) {
 	resourceCLIFixture(t)
 	old := time.Now().Add(-time.Hour)

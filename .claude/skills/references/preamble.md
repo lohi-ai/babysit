@@ -76,6 +76,9 @@ human's note to stderr. Rules for anything that consumes it:
 - Publish once per checkpoint: re-publishing over a `pending` record is a no-op,
   so a resumed run re-running its checkpoint step will not reset the clock on a
   decision the human is already reading.
+Foreman's `kind=project-plan` binds the reviewed artifacts. `status`/`await`
+may return `stale` if they changed: re-publish and review the current revision,
+never treat stale as approved. An unchanged pending record stays idempotent.
 Honored by `autopilot` (its `/goal` handoff), `foreman` (the design gate), and
 any skill that would otherwise call `AskUserQuestion` at a design checkpoint.
 ### `AGENT_ROLE=orca`

@@ -5,6 +5,7 @@ set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 F="$ROOT/.claude/skills/foreman/SKILL.md"
 A="$ROOT/.claude/skills/autopilot/SKILL.md"
+C="$ROOT/.claude/skills/create-pr/SKILL.md"
 WRAPPER="$ROOT/skills/foreman/SKILL.md"
 
 PASS=0; FAIL=0; FAIL_NAMES=()
@@ -44,7 +45,7 @@ has_all "finish-cleans-worker-workspace" \
   'human inspection' 'keep the branch'
 
 has_all "bounded-worker-pool" \
-  'bbs config get parallel_max_workers' 'MAX_WORKERS=8' \
+  'bbs config get parallel_max_workers' 'MAX_WORKERS=4' \
   'positive integer' 'one writer per child worktree'
 
 has_all "global-weighted-admission" \
@@ -74,6 +75,11 @@ fi
 has_all "agent-independent-design-gate" \
   'Two-phase ticket dispatch' '--stop-after=plan' 'Orca decision gate' \
   'approval self-resolve'
+
+has_all "lifecycle-aware-dispatch" \
+  'pointers.workflow' 'Never hard-code every' \
+  'Non-builder Execution Task' 'LIFECYCLE' 'TRIGGER' \
+  'evidence-only prototype, recommendation, or audit'
 
 has_all "project-qa-gate" \
   'Integration QA Task' 'bbs ticket surface compose' 'parent surface lease' \
@@ -133,12 +139,61 @@ has_all "active-status-reconcile" \
   'never a liveness-only reply' 'maximum admitted ready wave' \
   'active for the next bounded check'
 has_all "eager-per-ticket-finish" \
-  '## Eager per-ticket finish' 'done tickets never wait' \
+  '## Eager per-ticket finish' 'settled workers need not wait' \
   'bbs ticket land <child>' 'create-pr' 'dependency order' \
-  'pending Integration QA Task' 'resets local base' \
+  'Final Integration QA' 'resets local base' \
   'pointers.pr' 'merge-base --is-ancestor' \
   'supervised repair Dispatch' 'never blind-retry' \
-  'Under `land`' 'under `pr`' '`review`'
+  'under `land`' 'final integration QA does not' '`review`'
+
+has_all "parent-design-gates-child-topology" \
+  'Before step 2, pass' 'Project design checkpoint' \
+  'Append `--auto` only when explicitly requested' 'read recorded `auto`' \
+  'accepted parent plan/design/prototype'
+
+has_all "final-qa-after-finish-before-done" \
+  'After the handlers, run' 'Do not set parent completion' \
+  'landed `<base>`' 'retained `qa/<parent>`' \
+  'Independent tickets still need' 'Final Integration QA'
+
+PROJECT_CONTRACT="$ROOT/.claude/skills/foreman/references/project-contract.md"
+if python3 - "$PROJECT_CONTRACT" "$ROOT/.claude/skills/qa/SKILL.md" <<'PY'
+from pathlib import Path
+import sys
+contract, qa = (Path(p).read_text() for p in sys.argv[1:])
+for required in (
+    'approval publish --kind project-plan',
+    'Only current `approved` unlocks children',
+    '`--auto` delegates the human design reviews',
+    'auto: true', 'approval self-resolve',
+    'bbs foreman report <parent>', 'atomically replace parent `report.md`',
+    'PR_READY', 'LANDED_LOCAL', 'MERGED_REMOTE', 'UNKNOWN',
+    'Never move `<base>`', 'No `-B`, force update or deletion',
+    'Do not use\n   `surface revert` as restoration',
+    'Changed inputs mean STALE',
+):
+    assert required in contract, required
+assert 'Foreman final integration mode' in qa
+assert "coordinator's lease" in qa
+assert 'This explicit mode takes precedence' in qa
+PY
+then
+  ok "project-approval-report-and-final-surface-contract"
+else
+  fail "project-approval-report-and-final-surface-contract"
+fi
+
+has_all "ticket-status-closeout" \
+  'bbs ticket set-status done' 'bbs ticket set-status in_review' \
+  'only after the PR is observed merged' \
+  'parent ticket to `done`' 'parent to `in_review`'
+
+if grep -q 'bbs ticket set-status in_review' "$C" \
+   && grep -q 'status becomes `done` only after the PR is observed merged' "$C"; then
+  ok "create-pr-persists-review-status"
+else
+  fail "create-pr-persists-review-status"
+fi
 
 
 has_all "status-wake-full-snapshot" \

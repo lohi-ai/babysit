@@ -65,7 +65,7 @@
       "items": [
         "Foreman keeps topology and worker lifecycle out of autopilot",
         "Smoke QA covers 3–5 cases; review-pr runs at low effort",
-        "N comes from parallel_max_workers; default 8 per foreman",
+        "N comes from parallel_max_workers; default 4 per foreman",
         "Different parents may run under different Foreman IDs"
       ]
     },

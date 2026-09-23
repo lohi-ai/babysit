@@ -38,7 +38,14 @@ or exact string values.
 - Keep workflows declarative; skills do task-level reasoning.
 - Re-read files and checkpoint before every resumed step.
 - Every `##` step needs a `> produces:` directive.
-- End with `STATUS`, `VERDICT`, `SUMMARY`, and `NEXT`.
+- End with `STATUS`, `VERDICT`, `SUMMARY`, `LIFECYCLE`, `TRIGGER`, and `NEXT`.
+- A workflow that may change production code uses autopilot's current-session
+  `review-pr` then `qa` gates, persists both verdicts, repairs until they cover
+  the same final tree, and requires readiness. Evidence-only outcomes do not
+  fabricate code gates; any code delta takes the production path.
+- Lifecycle promotion is evidence, not scope expansion. Name the observed
+  trigger; use `stop` when the next archetype needs unavailable product or
+  operational data.
 - Emit `NEEDS_CONTEXT` only for genuinely missing human input.
 - Never force-push, destroy data, or send external messages.
 ## Validate

@@ -22,6 +22,8 @@ const foremanResourceUsage = `Usage:
 Profiles: plan, standard, android-simulator, ios-simulator, local-ml
 `
 
+const defaultForemanMaxWorkers = 4
+
 var newResourceBroker = foreman.DefaultResourceBroker
 
 func foremanResource(args []string) error {
@@ -190,7 +192,7 @@ func foremanResourceReserve(args []string) error {
 	if err != nil {
 		return err
 	}
-	maxWorkers := 8
+	maxWorkers := defaultForemanMaxWorkers
 	if value, ok := config.Get("parallel_max_workers"); ok && strings.TrimSpace(value) != "" {
 		maxWorkers, err = strconv.Atoi(strings.TrimSpace(value))
 		if err != nil || maxWorkers <= 0 {

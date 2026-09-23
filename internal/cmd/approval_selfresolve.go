@@ -228,7 +228,7 @@ var designArtifacts = []string{"requirement.md", "plan.md", "design.md", "protot
 // pointers.design, which internal/cmd/design.go already treats as
 // authoritative — so a floor that only globbed the ticket root would read
 // nothing at all for exactly the tickets that have a design spec.
-var designPointers = []string{"pointers.requirement", "pointers.plan", "pointers.design"}
+var designPointers = []string{"pointers.requirement", "pointers.plan", "pointers.design", "pointers.prototype"}
 
 // designText is the corpus the floor is checked against: what the foreman
 // asserts in the rubric plus what the worker actually wrote. Reading the
@@ -324,6 +324,9 @@ func runApprovalSelfResolve(st *ticket.Store, env identity.Env, args []string) {
 	// when present) so history.jsonl can tell a foreman approval from a
 	// human one.
 	note := fmt.Sprintf("auto-approved by foreman %s (default autonomy)", fmID)
+	if rec.Auto {
+		note = fmt.Sprintf("auto-approved by foreman %s (--auto)", fmID)
+	}
 	if rec.Grant != nil {
 		note = fmt.Sprintf("auto-approved by foreman %s under grant from %s (%s)",
 			fmID, rec.Grant.GrantedBy, rec.Grant.At)
@@ -372,6 +375,9 @@ func selfResolveGate(st *ticket.Store, env identity.Env, rec foreman.Record, rub
 	}
 
 	// 3. Allows — human hold, or a grant bound that does not cover this.
+	if ticket.ReadDoc(st.IndexPath()).Get("approval.kind") == "project-plan" && !rec.Auto {
+		return exitGrant, nil, "project design review requires a human; explicit --auto delegates this checkpoint"
+	}
 	if ok, why := rec.Allows(env.Ticket, time.Now()); !ok {
 		return exitGrant, nil, why
 	}
@@ -385,8 +391,12 @@ func logSelfResolvedApproval(env identity.Env, fmID string, rec foreman.Record, 
 	stateMap := map[string]interface{}{
 		"foreman": fmID,
 		"rubric":  filled,
+		"auto":    rec.Auto,
 	}
 	choice := "auto-approved (default autonomy)"
+	if rec.Auto {
+		choice = "auto-approved (--auto)"
+	}
 	if rec.Grant != nil {
 		stateMap["granted_by"] = rec.Grant.GrantedBy
 		stateMap["granted_at"] = rec.Grant.At

@@ -15,6 +15,11 @@ server live only there (one heavy tree per repo), and each ticket lands into it
 for QA. The cost is real — a commit + `surface compose` per test iteration
 instead of edit-and-refresh — which is why nothing opts into it by default.
 
+Foreman's final project QA is a separate surface lifecycle: test landed base
+as-is, or compose a retained QA branch in the leased primary without moving
+base. Follow [the project contract](../foreman/references/project-contract.md).
+Never apply the reset-based loop below to final integration QA.
+
 ## QA loop (worktree → shared surface)
 1. Implement + commit in the ticket worktree.
 2. `bbs ticket surface compose` from the worktree — resets the base checkout

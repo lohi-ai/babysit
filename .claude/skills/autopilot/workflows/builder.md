@@ -75,7 +75,10 @@ no ticket/requirement, stop with `NEEDS_CONTEXT`.
    branch. Write it so a non-technical owner can act: lead with what was
    built and where to see it (URL), and give the next action as a copy-paste
    command. Confirm clean state first: no debug leftovers, nothing
-   uncommitted, checkpoint current.
+   uncommitted, checkpoint current. End with the lifecycle signal required by
+   autopilot's **Lifecycle loop**: promote to `grower` only when there is a
+   release/experiment venue, metric, and instrumentation; route to `sweeper`
+   only for concrete characterized cruft; otherwise stop.
 ### Foreman-dispatched children
 `origin.type=sub_ticket` scopes child mode; the current checkout is already the
 branch/worktree foreman prepared. Never derive or check out a child branch in
@@ -120,5 +123,7 @@ review and QA each repo's change against *its own* base, once per repo touched.
 STATUS: DONE | DONE_WITH_CONCERNS | NEEDS_CONTEXT | BLOCKED
 VERDICT: BUILT
 SUMMARY: <mode, branch, files, QA evidence>
+LIFECYCLE: builder -> grower | sweeper | stop
+TRIGGER: <release/metric/instrumentation evidence, characterized cruft, or missing signal>
 NEXT: /bbs:create-pr for the verified change, or the parent foreman's finish policy
 ```

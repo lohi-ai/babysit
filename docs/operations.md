@@ -10,17 +10,18 @@ bbs config set update_check true     # false silences upgrade notifications
 bbs config set auto_upgrade false    # true runs bbs update on session start
 bbs config set proactive true        # false = only run skills typed explicitly
 bbs config set foreman_status_interval 3600  # seconds between foreman reconciliation ticks
-bbs config set parallel_max_workers 8     # per-Foreman worker ceiling
+bbs config set parallel_max_workers 4     # balanced laptop-safe ceiling
 bbs config set parallel_global_units auto  # global weighted Foreman capacity
 bbs config list                      # show all keys + annotated docs
 ```
 
 ### Machine-global worker admission
 
-`parallel_max_workers` remains a per-Foreman ceiling. It cannot protect one
-machine running several Foremen: three coordinators with a ceiling of eight
-could otherwise launch 24 workers. Every Foreman therefore also reserves from
-one atomic weighted pool under `~/.babysit/resources/`.
+`parallel_max_workers` remains a per-Foreman ceiling. Its default of four keeps
+headroom for the coordinator and OS while still exposing useful parallelism.
+It cannot protect one machine running several Foremen: three coordinators with
+a ceiling of four could otherwise launch 12 workers. Every Foreman therefore
+also reserves from one atomic weighted pool under `~/.babysit/resources/`.
 
 With `parallel_global_units: auto`, the pool uses the smaller of the
 machine's CPUs and one unit per GiB after a 6 GiB OS reserve, with a minimum
@@ -71,6 +72,46 @@ bbs foreman resource release rsc-0123456789abcdef
 
 `ADMISSION=queued` is backpressure, not a failed Task. Foreman may dispatch
 other admitted work and retries the queued Task on its next reconcile tick.
+
+### Project review and delivery evidence
+
+Foreman prepares one parent plan, design/prototype and proposed ticket map
+before creating child worktrees or dispatching production work. Review that
+project checkpoint once; Foreman reviews the child plans against it. Product
+scope/design changes return to the parent checkpoint. Approval is bound to
+the artifact revision, so changed documents require a new review.
+
+To delegate the human design reviews too, explicitly pass `--auto`:
+
+```text
+Claude Code  /bbs:foreman --auto <large project>
+OMP          /foreman --auto <large project>
+Codex        $bbs:foreman --auto <large project>
+```
+
+`bbs foreman spawn fm-project --auto` and direct adoption with `--auto` persist
+the choice on that Foreman record across resumes. It still creates and
+reviews the artifacts; hold/grant bounds, non-delegable decisions, code review,
+QA, and `finish:` authorization remain in force. Existing records without
+`auto: true` use human project review; child plan autonomy is unchanged.
+
+`bbs foreman report <parent-ticket>` reads the last durable `report.md`, even
+after Orca closes. Each reconciliation writes the observation time, meaningful
+ticket titles, worker/phase, branch/head, gate evidence, PR/merge state and
+cleanup/blockers. It is explicitly a saved snapshot; ask the running Foreman
+to check status for a fresh reconciliation. Execution, delivery and cleanup
+are separate: PR_READY does not mean merged, and LANDED_LOCAL does not mean
+pushed. Missing evidence stays UNKNOWN.
+
+Final project integration QA runs after finish handlers and before Foreman
+reports done: on the actual landed `<base>` for `finish: land`, or a retained
+`qa/<parent>` branch composed from verified heads for `pr`/`review`. It records
+the tested branch/SHA and acceptance evidence on the parent. Independent
+code-bearing tickets still require this final check. QA branch preparation
+and restoration never reset local base; `surface compose/revert` are only
+for the earlier scratch/per-ticket lifecycle. Failures return to child repair
+and verification. The full protocol is in
+[the Foreman project contract](../.claude/skills/foreman/references/project-contract.md).
 
 ### Which coding agent runs the work
 

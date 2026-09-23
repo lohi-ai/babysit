@@ -1,10 +1,13 @@
 # The five archetypes
 Babysit maps work to five archetypes — the useful unit is the *shape of the
-work*, not a job title. One autopilot workflow per archetype; they are also
-the product lifecycle in order (prototype → build → sweep → grow → maintain).
-A ticket runs one archetype end to end; the human reviews once, at the final
-handoff (mid-flow stops are opt-in via `--stop-after=…`); each workflow's
-handoff names the forward lifecycle edge when a signal warrants it.
+work*, not a job title. One autopilot workflow owns one evidence-bounded ticket.
+The product loop is prototype → build → grow → maintain; sweep is a conditional
+branch whenever characterized cruft or a measured hot path justifies it, not a
+mandatory toll after every build. A ticket runs one archetype end to end; the
+human reviews once, at the final handoff (mid-flow stops are opt-in via
+`--stop-after=…`). Each handoff names `LIFECYCLE` and the observed `TRIGGER`
+when evidence warrants the next edge. A foreman may turn that edge into a
+dependent child; autopilot never recursively expands its own scope.
 
 | # | Archetype | Mandate | Workflow | Skills it composes |
 |---|-----------|---------|----------|--------------------|

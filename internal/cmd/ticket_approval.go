@@ -43,7 +43,7 @@ func approvalPublish(st *ticket.Store, kind, note, actor string) (conflict strin
 	err = withLock(st, func() error {
 		doc := st.LoadForMutate()
 		if cur := doc.Get("approval.state"); cur != "" && cur != "dropped" {
-			if cur == "pending" {
+			if cur == "pending" && projectApprovalCurrent(st, doc) {
 				conflict = "pending"
 				return nil
 			}
@@ -51,10 +51,18 @@ func approvalPublish(st *ticket.Store, kind, note, actor string) (conflict strin
 			// second checkpoint on the same ticket (redirect → rework → re-ask),
 			// which is exactly the loop this is for.
 		}
-		obj, err := json.Marshal(map[string]interface{}{
+		record := map[string]interface{}{
 			"state": "pending", "kind": kind, "note": note,
 			"requested_by": actor, "at": time.Now().UTC().Format(time.RFC3339),
-		})
+		}
+		if kind == "project-plan" {
+			revision, err := projectApprovalRevision(st, doc)
+			if err != nil {
+				return err
+			}
+			record["artifact_revision"] = revision
+		}
+		obj, err := json.Marshal(record)
 		if err != nil {
 			return err
 		}
@@ -171,6 +179,9 @@ func approvalResolve(st *ticket.Store, action, note, actor string) (state string
 			missing = true
 			return nil
 		}
+		if action == "approve" && !projectApprovalCurrent(st, doc) {
+			return fmt.Errorf("project-plan artifacts changed; publish and review the current revision before approving")
+		}
 		// A redirect the foreman cannot act on is worse than no answer: it ends
 		// the wait and says nothing. Inline comments are that same information in
 		// anchored form, so a redirect carrying comments needs no summary note.
@@ -202,6 +213,9 @@ func approvalResolve(st *ticket.Store, action, note, actor string) (state string
 // waiter and for `approval status`.
 func approvalRead(st *ticket.Store) (state, outcome, note string) {
 	doc := ticket.ReadDoc(st.IndexPath())
+	if (doc.Get("approval.state") == "pending" || doc.Get("approval.state") == "approved") && !projectApprovalCurrent(st, doc) {
+		return "stale", "stale", "project-plan artifacts changed; publish and review the current revision"
+	}
 	return doc.Get("approval.state"), doc.Get("approval.resolved.outcome"), doc.Get("approval.resolved.note")
 }
 

@@ -39,6 +39,35 @@ commands, including relevant failure paths; add build, packaging, migration,
 compatibility, or rollout checks only where the change needs them. A named
 fallback must prove the same required behavior; a unit check cannot stand in
 for a required browser journey merely because the browser is unavailable.
+
+## Lifecycle loop
+
+Autopilot advances **one evidence-bounded ticket through one archetype**. It
+never recursively invokes itself or turns a suggested next stage into accepted
+scope. A foreman may chain lifecycle tickets in a DAG; a serial run leaves the
+next stage in its handoff.
+
+The product loop is `prototyper -> builder -> grower -> maintainer`, with
+`sweeper` inserted only when a measured simplification opportunity exists.
+Promotion is evidence-gated:
+
+- `prototyper -> builder`: the risky assumption was validated and the handoff
+  names the production requirement; throwaway spike code is not promoted.
+- `builder -> grower`: the feature is released or has an authorized experiment
+  venue, and a target metric plus instrumentation are available.
+- `builder|grower|maintainer -> sweeper`: current behavior is characterized and
+  specific removable weight or a measured hot path was found.
+- `grower -> maintainer`: a shipped experiment exposed a reliability, security,
+  cost, dependency, or scale signal.
+- `maintainer -> grower|builder`: analysis found a product experiment or a
+  structural change; maintain does not smuggle that larger scope into its fix.
+
+Every workflow handoff ends with `LIFECYCLE: <stage> -> <next|stop>` and
+`TRIGGER: <observed evidence or missing signal>`. `stop` is a successful answer
+when the next stage would require fabricated validation, unavailable production
+data, or scope the ticket did not authorize. Under a foreman, those two lines
+are durable routing evidence: create or unblock the next child only when the
+trigger is satisfied.
 ## Harness and terminal portability
 - Follow [the preamble](../references/preamble.md) and
   [Auto-Decision Framework](../references/auto-decision-framework.md) —
@@ -107,7 +136,8 @@ for a required browser journey merely because the browser is unavailable.
    ticket, each running autopilot). `NEEDS_CONTEXT` only when there is no ticket,
    requirement, plan, manifest, or branch work at all *and* no archetype was
    named — a named archetype is direction enough to proceed.
-4. Seed the plan when the routed mode needs one (build mode, size above XS):
+4. Seed the plan when the routed mode needs one (build mode, size above XS)
+   or `--stop-after=plan` explicitly requests it, regardless of archetype:
    run `plan-draft` in this session, per the planning policy below — `plan.md` on
    disk is what a crashed loop recovers from. User-facing work routes through
    `design-ui` inside `plan-draft`; make sure that ran, so the spec and
@@ -348,6 +378,8 @@ human should not need to repeat review or QA to discover whether it is ready.
 STATUS: DONE | DONE_WITH_CONCERNS | NEEDS_CONTEXT | BLOCKED
 VERDICT: PLANNED | BUILT | FIXED | HANDOFF
 SUMMARY: <acceptance results, final revision, review/QA evidence, release readiness>
+LIFECYCLE: <current stage> -> <next stage | stop>
+TRIGGER: <observed promotion evidence or missing signal>
 NEXT: /bbs:create-pr for the verified change — or, under a foreman, whatever its
 finish policy does with the ticket
 ```

@@ -25,10 +25,11 @@ import (
 const foremanUsage = `Usage:
   bbs foreman list
   bbs foreman inbox <id>
+  bbs foreman report <parent-ticket>     read the last durable project report
   bbs foreman register <id> [--dir <path>] [--workspace-title <title>] [--session <uuid>]
-  bbs foreman adopt [<id>] [--agent <name>]
+  bbs foreman adopt [<id>] [--agent <name>] [--auto]
   bbs foreman heartbeat <id> [--status <status>] [--session <uuid>]
-  bbs foreman spawn [<id>] [--dir <path>] [--command <text>] [--agent <name>]
+  bbs foreman spawn [<id>] [--dir <path>] [--command <text>] [--agent <name>] [--auto]
   bbs foreman ensure <id>
   bbs foreman worker-command --prompt <text> [--skill <name>] [--agent <name>] [--dir <path>]
   bbs foreman resource <status|reserve|release> ...
@@ -103,6 +104,8 @@ func dispatchForeman(args []string) error {
 		return foremanList()
 	case "inbox":
 		return foremanInbox(rest)
+	case "report":
+		return foremanReport(rest)
 	case "register":
 		return foremanRegister(rest)
 	case "adopt":
@@ -152,7 +155,7 @@ func foremanFlags(args []string) (id string, kv map[string]string, err error) {
 			return "", nil, fmt.Errorf("foreman: unexpected argument '%s'", a)
 		}
 		key := strings.TrimPrefix(a, "--")
-		if key == "keep-workspace" || key == "unbounded" || key == "once" || key == "ack" { // the boolean flags
+		if key == "keep-workspace" || key == "unbounded" || key == "once" || key == "ack" || key == "auto" { // the boolean flags
 			kv[key] = "1"
 			continue
 		}
@@ -231,13 +234,16 @@ func foremanInbox(args []string) error {
 			fmt.Printf("%-16s %-14s %-12s %s\n", "TICKET", "STATUS", "CONTROL", "APPROVAL")
 		}
 		rows++
-		approval := orDefault(doc.Get("approval.state"), "-")
+		childEnv := env
+		childEnv.Ticket = tid
+		approval, _, _ := approvalRead(ticket.New(childEnv))
+		approval = orDefault(approval, "-")
 		// A pending row under human hold means "wait for the human". Under
 		// default autonomy (or a covering grant bound) it means the opposite
 		// — the foreman is the one being waited on — and a foreman that read
 		// plain `pending` and waited would stall the batch.
 		if approval == "pending" {
-			if ok, _ := rec.Allows(tid, now); ok {
+			if ok, _ := rec.Allows(tid, now); ok && (doc.Get("approval.kind") != "project-plan" || rec.Auto) {
 				approval = "pending(auto)"
 			}
 		}
@@ -418,6 +424,7 @@ func foremanAdopt(args []string) error {
 	r.WorkspaceRef = term.Handle
 	r.WorkspaceTitle = title
 	r.Agent = agentName
+	r.Auto = r.Auto || kv["auto"] == "1"
 	r.Status = "working"
 	r.Heartbeat = foreman.Now()
 	r.Unreachable = ""
@@ -458,7 +465,7 @@ func foremanSpawn(args []string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return spawnForeman(id, kv["dir"], kv["command"], kv["agent"])
+	return spawnForeman(id, kv["dir"], kv["command"], kv["agent"], kv["auto"] == "1")
 }
 
 // foremanEnsure is the idempotent watchdog entrypoint: an open terminal is a
@@ -567,7 +574,7 @@ func foremanWorkerCommand(args []string) error {
 // recorded conversation when one exists and otherwise starts from durable
 // Foreman state. A registered id whose terminal is still OPEN stays an error —
 // that is a real collision, not a restart.
-func spawnForeman(id, dir, command, agentFlag string) (string, error) {
+func spawnForeman(id, dir, command, agentFlag string, auto ...bool) (string, error) {
 	client, err := orca.Preflight()
 	if err != nil {
 		return "", err
@@ -609,6 +616,10 @@ func spawnForeman(id, dir, command, agentFlag string) (string, error) {
 		}
 	} else {
 		r = foreman.Record{ID: id}
+	}
+
+	if len(auto) > 0 && auto[0] {
+		r.Auto = true
 	}
 
 	// The session id is minted here rather than read back afterwards. When the
@@ -695,6 +706,9 @@ func spawnForeman(id, dir, command, agentFlag string) (string, error) {
 			return "", err
 		}
 		prompt := foremanSkillPrompt(prof, id, "")
+		if r.Auto {
+			prompt += " --auto"
+		}
 		if resumable {
 			command = prof.ResumeCommand(session, prompt)
 		} else {

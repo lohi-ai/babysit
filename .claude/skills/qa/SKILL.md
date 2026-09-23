@@ -44,7 +44,15 @@ Exercise the application like a user and leave reproducible evidence.
    the stale surface rather than testing blind. Fixes edit the files in the
    checkout under test — committing them stays the invoking workflow's job —
    re-verify on the updated surface.
-   Running inside a ticket worktree (a foreman batch) is the exception: the
+   **Foreman final integration mode:** a Task explicitly assigned a prepared
+   primary branch/HEAD plus parent acceptance and child/base revision manifest
+   tests that exact surface read-only. Verify its identity before and after
+   testing. Do not compose, revert/reset, switch branches, edit code, or release
+   the coordinator's lease. Report findings to Foreman for child repairs;
+   persist evidence/verdict on the parent. Foreman owns environment cleanup
+   and restoration under its lease. This explicit mode takes precedence over
+   the worktree protocol and surface-retention rules below.
+   Running inside a ticket worktree (a foreman batch) is the other exception: the
    dev server lives in the repo's **primary checkout only** (one heavy tree
    per repo — never npm-install or boot a server in a worktree), so this
    skill runs the surface protocol itself — `surface acquire`, `surface
