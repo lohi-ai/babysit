@@ -7,11 +7,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
-	"syscall"
 
 	"github.com/reallongnguyen/babysit/internal/identity"
 	"github.com/reallongnguyen/babysit/internal/ticket"
@@ -358,6 +356,11 @@ func attemptLiveness(rec *attemptRecord) string {
 		if !alive {
 			return "dead"
 		}
+		if actual == "" {
+			// Alive but unqueryable (e.g. Windows OpenProcess ACCESS_DENIED):
+			// neither dead nor provably reused.
+			return "unknown"
+		}
 		if actual != expected {
 			return "reused"
 		}
@@ -372,25 +375,9 @@ func attemptLiveness(rec *attemptRecord) string {
 	return "unknown"
 }
 
-func processAlive(pid int) bool {
-	p, err := os.FindProcess(pid)
-	if err != nil {
-		return false
-	}
-	return p.Signal(syscall.Signal(0)) == nil
-}
-
-func processStartIdentity(pid int) (string, bool) {
-	if pid <= 0 || !processAlive(pid) {
-		return "", false
-	}
-	out, err := exec.Command("ps", "-o", "lstart=", "-p", strconv.Itoa(pid)).Output()
-	if err != nil {
-		return "", false
-	}
-	start := strings.Join(strings.Fields(string(out)), " ")
-	return start, start != ""
-}
+// processAlive and processStartIdentity live in process_liveness_{unix,
+// windows,other}.go — liveness is a platform question (Signal(0) is a no-op
+// on Windows and `ps` does not exist there).
 
 func readJSONObjectArg(args []string) (map[string]interface{}, error) {
 	path := argValue(args, "--json-file")

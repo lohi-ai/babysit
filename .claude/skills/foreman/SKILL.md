@@ -491,7 +491,8 @@ Archive every settled worker's readable output through Orca, then call
 Dispatch-owned agent terminal. After every successful `review`, `land`, or
 `pr`, run the Orca worktree close-out from **Eager per-ticket finish**. Only
 after `land` or `pr` remove the verified-clean non-primary Git worktree with
-ordinary `git worktree remove`, keeping its branch. A failure or hold keeps the
+`bbs ticket worktree-remove` (bounded retry for transient NTFS open handles),
+keeping its branch. A failure or hold keeps the
 Git worktree but never justifies a settled orphan terminal; archive, release,
 and bulk-close it once Orca proves no Dispatch remains active. Never use
 `--force`, broad Git worktree removal, or terminal-close commands in place of

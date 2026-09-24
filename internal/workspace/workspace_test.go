@@ -158,3 +158,24 @@ func TestSamePathIgnoresSymlinkSpelling(t *testing.T) {
 		t.Fatal("different directories must not compare equal")
 	}
 }
+
+func TestSamePathFoldsCaseOnInsensitiveFS(t *testing.T) {
+	// NTFS compares case-insensitively: a registry path and a cwd spelling
+	// that differ only in case are the same directory on Windows, and a
+	// case-sensitive compare false-negatives workspace matching there.
+	// Non-existent paths keep canonPath from resolving to the on-disk
+	// spelling, so the fold itself is what is exercised.
+	old := fsCaseInsensitive
+	defer func() { fsCaseInsensitive = old }()
+	dir := t.TempDir()
+	upper := filepath.Join(dir, "REPO")
+	lower := filepath.Join(dir, "repo")
+	fsCaseInsensitive = true
+	if !SamePath(upper, lower) {
+		t.Fatalf("%s and %s differ only by case on a case-insensitive filesystem", upper, lower)
+	}
+	fsCaseInsensitive = false
+	if SamePath(upper, lower) {
+		t.Fatal("case-sensitive filesystems must not fold case")
+	}
+}

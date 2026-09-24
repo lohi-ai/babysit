@@ -127,6 +127,8 @@ func newTicketCmd() *cobra.Command {
 				runList(args[1:])
 			case "reconcile":
 				runReconcile(args[1:])
+			case "worktree-remove":
+				runWorktreeRemove(args[1:])
 			default:
 				fmt.Fprintf(os.Stderr, "unknown subcommand: %s\n", args[0])
 				os.Exit(2)
@@ -250,6 +252,8 @@ standing on, so none of the next four apply:
   list <kind> [selectors]                  list ticket files of a kind
   reconcile [--ticket <id> | --all] [--dry-run] [--quiet]
                     advance index.json.status from observable filesystem state
+  worktree-remove <path>       git worktree remove with bounded retry — survives
+                               transient NTFS open handles during close-out
   session <list|attach|end>      inspect/rehydrate ~/.babysit/sessions/
   env               print SLUG / BRANCH / TICKET / BABYSIT_PROJECT_HOME
                     (+ TICKET_HOME / INDEX when a ticket is in scope) for eval

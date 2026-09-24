@@ -216,8 +216,11 @@ func secretsSeed(args []string) error {
 			fmt.Fprintf(&b, "# %s=\n", v)
 		}
 	}
-	if err := os.WriteFile(target, []byte(b.String()), 0o644); err != nil {
+	if err := os.WriteFile(target, []byte(b.String()), 0o600); err != nil {
 		return errSilent
+	}
+	if err := protectSecretFile(target); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: could not restrict %s to the current user: %v\n", target, err)
 	}
 	fmt.Printf("created: %s\n", target)
 	return nil
