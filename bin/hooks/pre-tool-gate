@@ -67,8 +67,8 @@ CMD="$(printf '%s' "$INPUT" | jq -r '(.tool_input // .toolInput // .input // {})
 # checked before a bare push so `gh pr merge` isn't mis-read as a push.
 STAGE=""
 # Windows shells invoke git.exe / gh.exe — strip the suffix before matching
-# so the gate cannot be bypassed by an executable extension.
-CMD_NORM="$(printf '%s' "$CMD" | sed -E 's/\b(git|gh|glab)\.exe\b/\1/g')"
+# so the gate cannot be bypassed by an executable extension. No \b (GNU-only).
+CMD_NORM="$(printf '%s' "$CMD" | sed -E 's/(git|gh|glab)\.exe/\1/g')"
 case "$CMD_NORM" in
   *"gh pr merge"*|*"glab mr merge"*) STAGE="merge" ;;
   *"gh pr create"*|*"glab mr create"*) STAGE="pr" ;;
