@@ -83,6 +83,52 @@ func TestSnapshotServesComposeShape(t *testing.T) {
 	}
 }
 
+// The default dashboard path reconciles before composing. A corrupt index.json
+// must survive that reconcile byte-for-byte and still surface in
+// meta.warnings — before the strict-read fix, reconcile rewrote the file with
+// a bare status, which both destroyed the record and suppressed the warning.
+func TestServedSnapshotKeepsCorruptIndexWarning(t *testing.T) {
+	s, home := sandboxServer(t)
+	s.reconcile = true
+	corrupt := []byte(`{"id":"bs-aaaa1111","status":"triage",`)
+	idx := filepath.Join(home, "index.json")
+	if err := os.WriteFile(idx, corrupt, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// A signal that would advance a healthy ticket, so reconcile has a reason
+	// to write if it misreads the corrupt file as an empty record.
+	if err := os.WriteFile(filepath.Join(home, "requirement.md"), []byte("req\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	w := send(t, s, "GET", "/api/snapshot")
+	if w.Code != 200 {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	got, err := os.ReadFile(idx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, corrupt) {
+		t.Fatalf("reconcile rewrote a malformed index.json:\n%s", got)
+	}
+	var snap map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &snap); err != nil {
+		t.Fatal(err)
+	}
+	warnings, _ := snap["meta"].(map[string]interface{})["warnings"].([]interface{})
+	found := false
+	for _, wn := range warnings {
+		row, _ := wn.(map[string]interface{})
+		if row["ticket"] == "bs-aaaa1111" && strings.Contains(row["reason"].(string), "corrupt index.json") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("meta.warnings lost the corrupt-index row: %v", warnings)
+	}
+}
+
 // index.html loads ./data.js unconditionally. If the server let the stale file
 // through, window.__BBS_DATA__ would be set and the SPA would render last
 // week's snapshot instead of fetching live state.

@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -594,13 +595,22 @@ func reconcileOne(out io.Writer, env identity.Env, tid string, dry, quiet bool) 
 	st := ticket.New(stEnv)
 	th := st.Home()
 	idx := filepath.Join(th, "index.json")
-	if !fileExists(idx) {
-		if !quiet {
-			fmt.Fprintf(out, "%s: skip (no index.json)\n", tid)
+	doc, err := ticket.ReadDocStrict(idx)
+	if err != nil {
+		var re *ticket.ReadError
+		if errors.As(err, &re) && re.Kind == ticket.KindMissing {
+			if !quiet {
+				fmt.Fprintf(out, "%s: skip (no index.json)\n", tid)
+			}
+			return nil
 		}
-		return nil
+		// A malformed or unreadable index is not an empty record: reconciling
+		// it would rewrite the file with only a status field, destroying the
+		// bytes the dashboard's strict read reports as corrupt. Skip, and
+		// fail loud — stderr so the dashboard path (out=io.Discard) sees it.
+		fmt.Fprintf(os.Stderr, "%s: skip — unreadable index.json: %s\n", tid, err)
+		return err
 	}
-	doc := ticket.ReadDoc(idx)
 	cur := doc.Get("status")
 	if cur == "" {
 		cur = "triage"
@@ -697,7 +707,6 @@ func applyStatus(st *ticket.Store, target string) error {
 		fmt.Sprintf(`{"from":"%s","to":"%s"}`, old, target))
 	return nil
 }
-
 
 func printPathHelp() {
 	fmt.Fprint(os.Stderr, retarget(`usage: bbs-ticket path <kind> [selectors] --read|--write
