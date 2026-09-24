@@ -124,7 +124,7 @@ export function Foremen({ snapshot }: { snapshot: Snapshot }) {
 
   return (
     <>
-      <TopBar title="Foremen" count={foremen.length} actions={spawn} />
+      <TopBar title="Foremen" count={foremen.length} actions={spawn} warnings={snapshot.meta.warnings} />
       <div className="px-6 py-4 w-full" ref={containerRef}>
         {rows.length === 0 ? (
           <div style={FRAME_STYLE}>

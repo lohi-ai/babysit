@@ -31,11 +31,23 @@ export interface Meta {
   // empty when the server was launched outside a git repo.
   current_dir?: string;
   truncations: TruncationMarker[];
+  // Ticket dirs the walk skipped; absent on snapshots composed before the
+  // warnings channel shipped. Empty = nothing unreadable.
+  warnings?: SnapshotWarning[];
   // v1 compat fields (may be absent on v2 snapshots)
   snapshot_at?: string;
   slug?: string;
   active_pair?: { ticket: string; workflow: string; step: string; branch: string } | null;
   _stale?: boolean;
+}
+
+// One ticket dir the snapshot walk could not read — corrupt index, missing
+// index.json, or a rejected slug. `ticket` is "" when the skip names a whole
+// project dir rather than a ticket.
+export interface SnapshotWarning {
+  project: string;
+  ticket: string;
+  reason: string;
 }
 
 export interface TruncationMarker {
@@ -78,7 +90,9 @@ export interface TicketApproval {
   kind: string;
   note: string;
   requested_by: string;
-  at: string;
+  // Absent on legacy/hand-written records — the copy guards on it rather than
+  // printing the '—' empty marker mid-sentence.
+  at?: string;
   comments?: ApprovalComment[];
   resolved?: {
     outcome: 'approved' | 'redirected' | 'dropped';
@@ -244,6 +258,7 @@ export interface TicketDetail extends TicketSummary {
   requirement: string | null;
   plan: string | null;
   design: string | null;
+  report: string | null;
   prototype: TicketPrototype | null;
   manifest: string | null;
   repos: ManifestRepo[];
@@ -493,6 +508,7 @@ export function normalizeDetail(d: TicketDetail): TicketDetail {
   d.control ??= null;
   d.approval ??= null;
   d.design ??= null;
+  d.report ??= null;
   d.prototype ??= null;
   d.children ??= null;
   d.run ??= null;
@@ -554,6 +570,7 @@ export function normalizeSnapshot(raw: unknown): LoadedSnapshot {
   s.sessions.sessions ??= [];
   s.foremen ??= [];
   s.meta.truncations ??= [];
+  s.meta.warnings ??= [];
 
   // v1 compat: if top-level tickets/timeline/analytics present (v1 shape),
   // migrate them into projects[slug] for v1 SPA components that might read them.

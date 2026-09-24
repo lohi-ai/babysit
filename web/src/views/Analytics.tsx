@@ -44,7 +44,7 @@ export function Analytics({ snapshot }: { snapshot: Snapshot }) {
   if (!hasData) {
     return (
       <>
-        <TopBar title={title} />
+        <TopBar title={title} warnings={snapshot.meta.warnings} />
         <div className="px-6 py-4 w-full space-y-4">
           <EmptyState
             title="No analytics yet"
@@ -57,7 +57,7 @@ export function Analytics({ snapshot }: { snapshot: Snapshot }) {
 
   return (
     <>
-      <TopBar title={title} />
+      <TopBar title={title} warnings={snapshot.meta.warnings} />
       <div className="px-6 py-4 w-full space-y-6">
         {analytics.outcome.length > 0 && (
           <section>

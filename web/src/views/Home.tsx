@@ -88,6 +88,7 @@ export function Home({ snapshot }: { snapshot: Snapshot }) {
       <TopBar
         title={state.project === 'all' ? 'Dashboard — all projects' : 'Dashboard'}
         actions={<Liveness count={sessionCount} at={meta.generated_at || meta.snapshot_at} />}
+        warnings={snapshot.meta.warnings}
       />
       <div className="px-6 py-4 w-full space-y-6">
         <WaitingOnYou tickets={tickets} />
