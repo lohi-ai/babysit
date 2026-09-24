@@ -67,6 +67,7 @@ func (s *dashServer) mux() *http.ServeMux {
 	m.HandleFunc("POST /api/tickets/{project}/{ticket}/approval", s.handleApproval)
 	m.HandleFunc("POST /api/tickets/{project}/{ticket}/approval/comment", s.handleApprovalComment)
 	m.HandleFunc("GET /api/tickets/{project}/{ticket}/prototype", s.handlePrototype)
+	m.HandleFunc("GET /api/tickets/{project}/{ticket}", s.handleTicketDetail)
 	m.HandleFunc("GET /api/tickets/{project}/{ticket}/readiness", s.handleReadiness)
 	m.HandleFunc("GET /api/tickets/{project}/{ticket}/project", s.handleProject)
 	m.HandleFunc("POST /api/foremen", s.handleSpawnForeman)
@@ -166,8 +167,36 @@ func (s *dashServer) handleSnapshot(w http.ResponseWriter, _ *http.Request) {
 		CurrentDir:     s.currentDir,
 		DecisionsCap:   2000,
 		SkillEventsCap: 2000,
-		Warn:           dashErr,
+		// Served mode leaves detail bodies out of the poll: the SPA fetches
+		// them per ticket through handleTicketDetail. The file:// snapshot in
+		// dashboard.go sets EmbedDetails instead — one composer, two
+		// transports, and only the static one can afford to embed.
+		EmbedDetails: false,
+		Warn:         dashErr,
 	}))
+}
+
+// handleTicketDetail serves the body the poll no longer carries: the same
+// object Compose embeds under ticketDetail when EmbedDetails is set, fetched
+// on demand by the SPA's ticket page. It is a read, so it skips the origin
+// guard the mutations share — the idRe guard inside ticketStore is what keeps
+// the URL from reaching outside the state dir.
+func (s *dashServer) handleTicketDetail(w http.ResponseWriter, r *http.Request) {
+	st, err := s.ticketStore(r.PathValue("project"), r.PathValue("ticket"))
+	if err != nil {
+		writeErr(w, http.StatusNotFound, err.Error())
+		return
+	}
+	detail, ok := dashboard.TicketDetail(dashboard.Options{
+		StateDir: s.stateDir,
+		Version:  s.version,
+		Warn:     dashErr,
+	}, st.Env.ProjectHome, st.Home())
+	if !ok {
+		writeErr(w, http.StatusNotFound, "ticket index is missing or corrupt")
+		return
+	}
+	writeJSON(w, http.StatusOK, detail)
 }
 
 // projectEnv resolves {project} to the identity.Env the ticket store needs.

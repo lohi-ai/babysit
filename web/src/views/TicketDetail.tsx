@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { ArrowRight, Check, ChevronDown, Clock, Play, TriangleAlert } from 'lucide-react';
-import { foremanLive, type DagNode, type DagState, type ForemanRow, type HistoryRow, type ManifestRepo, type NamedFile, type Snapshot, type TicketApproval, type TicketControl, type TicketDetail as TicketDetailData, type TicketDag, type TicketSummary } from '../lib/data';
-import { assignTicket, controlTicket, ticketReadiness, type ControlAction, type ReadinessResult } from '../lib/api';
+import { fetchTicketDetail, foremanLive, type DagNode, type DagState, type ForemanRow, type HistoryRow, type ManifestRepo, type NamedFile, type Snapshot, type TicketApproval, type TicketControl, type TicketDetail as TicketDetailData, type TicketDag, type TicketSummary } from '../lib/data';
+import { assignTicket, controlTicket, ticketReadiness, type ApiError, type ControlAction, type ReadinessResult } from '../lib/api';
 import { Button } from '../components/Button';
 import { Tag } from '../components/Tag';
 import { ErrorBox } from '../components/ErrorBox';
@@ -41,19 +41,94 @@ interface TabSpec {
 
 export function TicketDetail({ snapshot, ticketId }: { snapshot: Snapshot; ticketId: string }) {
   const { state } = useFilter();
-  const detail = useScopedTicketDetail(snapshot, state.project, ticketId);
+  const embedded = useScopedTicketDetail(snapshot, state.project, ticketId);
+  const { mode } = useControlPlane();
+
+  // Served snapshots carry summaries only — the detail body loads on demand.
+  // The summary doubles as the staleness signal: index.json's updated_at and
+  // the run's checkpoint stamp are the two fields a mutation or a running
+  // worker bumps, so a change in either means the cached detail is behind.
+  const summary = useMemo(() => {
+    for (const p of Object.values(snapshot.projects)) {
+      const s = p.tickets.find(t => t.id === ticketId);
+      if (s) return s;
+    }
+    return undefined;
+  }, [snapshot, ticketId]);
 
   // Every mutation endpoint is scoped by project slug, and the detail can be
   // reached with the project filter on `all`, so the owning slug is looked up
-  // rather than taken from the filter.
+  // rather than taken from the filter. Served snapshots have no ticketDetail
+  // map to search — the summaries carry the same membership fact.
   const project = useMemo(() => {
     if (state.project !== 'all') return state.project;
     for (const [slug, p] of Object.entries(snapshot.projects)) {
       if (p.ticketDetail[ticketId]) return slug;
+      if (p.tickets.some(t => t.id === ticketId)) return slug;
     }
     return '';
   }, [snapshot, state.project, ticketId]);
-  const { mode } = useControlPlane();
+
+  // The last successfully loaded detail, kept across polls so a failed
+  // refetch degrades to a stale banner instead of blanking the page.
+  const [fetched, setFetched] = useState<TicketDetailData | null>(null);
+  const [detailError, setDetailError] = useState<{ id: string; status: number; message: string } | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [retryNonce, setRetryNonce] = useState(0);
+  const detailCtl = useRef<AbortController | null>(null);
+
+  const detail = embedded ?? (fetched?.id === ticketId ? fetched : null);
+
+  const stale =
+    !!detail &&
+    ((summary?.updated_at ?? null) !== (detail.updated_at ?? null) ||
+      (summary?.run?.updated_at ?? null) !== (detail.checkpoint?.updated_at ?? null));
+
+  const needsFetch =
+    !embedded && mode !== 'readonly' && project !== '' && (!detail || stale);
+
+  useEffect(() => {
+    if (!needsFetch) return;
+    // Own controller, independent of useSnapshot's poll: a poll tick must
+    // never abort a detail fetch in flight, and a detail fetch must never
+    // hold up the next poll.
+    const ctl = new AbortController();
+    detailCtl.current = ctl;
+    setLoading(true);
+    fetchTicketDetail(project, ticketId, ctl.signal).then(
+      d => {
+        if (ctl.signal.aborted) return;
+        setFetched(d);
+        setDetailError(null);
+        setLoading(false);
+      },
+      (e: unknown) => {
+        if (ctl.signal.aborted) return;
+        const err = e as Partial<ApiError>;
+        setDetailError({
+          id: ticketId,
+          status: typeof err.status === 'number' ? err.status : 0,
+          message: e instanceof Error ? e.message : String(e),
+        });
+        setLoading(false);
+      },
+    );
+  }, [needsFetch, project, ticketId, stale, retryNonce]);
+
+  // Abort on ticket change or unmount — never on a poll re-render.
+  useEffect(() => {
+    return () => {
+      detailCtl.current?.abort();
+      detailCtl.current = null;
+    };
+  }, [ticketId]);
+
+  const error = detailError?.id === ticketId ? detailError : null;
+  const retry = useCallback(() => {
+    setDetailError(null);
+    setRetryNonce(n => n + 1);
+  }, []);
+
   const [readiness, setReadiness] = useState<ReadinessResult | null>(null);
   // The parent's children resolved against the scoped list — the strip renders
   // each child's status, so it needs the summaries, not just the ids.
@@ -116,7 +191,31 @@ export function TicketDetail({ snapshot, ticketId }: { snapshot: Snapshot; ticke
   // its file.
   useEffect(() => { setTab(activeTab); }, [activeTab]);
 
+  // A 404 is authoritative even over a cached detail: the ticket is gone.
+  if (error?.status === 404) {
+    return <ErrorBox title="Ticket not found" body={`No detail for ${ticketId} — the server has no such ticket.`} />;
+  }
   if (!detail) {
+    if (error) {
+      return (
+        <div className="p-6 space-y-3">
+          <ErrorBox
+            title="Cannot reach the dashboard server"
+            body={`Ticket details could not be loaded: ${error.message}`}
+          />
+          <div>
+            <Button size="sm" onClick={retry}>Retry</Button>
+          </div>
+        </div>
+      );
+    }
+    if (mode !== 'readonly' && (loading || needsFetch)) {
+      return (
+        <div className="p-6 text-sm" style={{ color: 'var(--text-tertiary)' }}>
+          Loading ticket…
+        </div>
+      );
+    }
     return <ErrorBox title="Ticket not found" body={`No detail for ${ticketId} in this snapshot.`} />;
   }
 
@@ -168,6 +267,18 @@ export function TicketDetail({ snapshot, ticketId }: { snapshot: Snapshot; ticke
           control={detail.control}
           workerRunning={workerRunning}
         />
+      )}
+
+      {error && (
+        <div className="flex items-center gap-3">
+          <div className="flex-1 min-w-0">
+            <ErrorBox
+              title="Error loading detail"
+              body={`Ticket details could not be loaded. Showing the last data received. ${error.message}`}
+            />
+          </div>
+          <Button size="sm" onClick={retry}>Retry</Button>
+        </div>
       )}
 
       {detail.approval?.state === 'pending' && (

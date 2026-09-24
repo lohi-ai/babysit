@@ -12,6 +12,8 @@
 //     is deliberately empty, which is what leaves `window.__BBS_DATA__`
 //     undefined and selects this branch.
 
+import type { ApiError } from './api';
+
 export type TicketStatus =
   | 'triage' | 'backlog' | 'planned' | 'decomposed'
   | 'in_progress' | 'in_review' | 'blocked'
@@ -115,6 +117,10 @@ export interface TicketSummary {
   /** The ticket's checkpoint.json projected onto the summary, so a list can
    *  render the current workflow/step without opening every detail. */
   run: CheckpointRow | null;
+  /** Served snapshots leave ticketDetail empty and set this instead: the
+   *  detail body is fetchable through GET /api/tickets/{project}/{ticket}.
+   *  Absent on data.js written before lazy detail shipped. */
+  detail_available?: boolean;
 }
 
 // Where a sub-ticket sits in its parent's plan — index.json `origin`.
@@ -447,6 +453,56 @@ export async function fetchSnapshot(signal?: AbortSignal): Promise<LoadedSnapsho
   return normalizeSnapshot(await res.json());
 }
 
+/** Served mode: one ticket's detail body, fetched on demand. The served
+ *  snapshot leaves ticketDetail empty (see EmbedDetails in
+ *  internal/dashboard); this is the other half of that split. A 404 means
+ *  the ticket is gone or its index is unreadable — the caller renders the
+ *  not-found state, not a retry loop. */
+export async function fetchTicketDetail(
+  project: string,
+  ticket: string,
+  signal?: AbortSignal,
+): Promise<TicketDetail> {
+  const res = await fetch(
+    `/api/tickets/${encodeURIComponent(project)}/${encodeURIComponent(ticket)}`,
+    { signal, headers: { Accept: 'application/json' } },
+  );
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const err = new Error(body.error ?? `GET ticket detail failed: ${res.status} ${res.statusText}`) as ApiError;
+    err.status = res.status;
+    throw err;
+  }
+  return normalizeDetail(body as TicketDetail);
+}
+
+/**
+ * The per-detail defensive defaults normalizeSnapshot applies to embedded
+ * details — extracted so a lazily fetched detail gets the identical pass.
+ * Mutates and returns its argument, same as normalizeSnapshot.
+ */
+export function normalizeDetail(d: TicketDetail): TicketDetail {
+  d.history ??= [];
+  d.handoffs ??= [];
+  d.verdicts ??= [];
+  d.verdict_statuses ??= {};
+  d.reviews ??= [];
+  d.evidence ??= [];
+  d.repos ??= [];
+  d.assignee ??= null;
+  d.control ??= null;
+  d.approval ??= null;
+  d.design ??= null;
+  d.prototype ??= null;
+  d.children ??= null;
+  d.run ??= null;
+  d.origin ??= null;
+  d.relations ??= null;
+  d.siblings ??= [];
+  d.dag ??= null;
+  return d;
+}
+
 /**
  * The defensive-defaults pass both sources share. It mutates and returns its
  * argument — the snapshot path has always handed views the same object
@@ -484,25 +540,7 @@ export function normalizeSnapshot(raw: unknown): LoadedSnapshot {
       t.run ??= null;
     }
     for (const id of Object.keys(p.ticketDetail)) {
-      const d = p.ticketDetail[id];
-      d.history ??= [];
-      d.handoffs ??= [];
-      d.verdicts ??= [];
-      d.verdict_statuses ??= {};
-      d.reviews ??= [];
-      d.evidence ??= [];
-      d.repos ??= [];
-      d.assignee ??= null;
-      d.control ??= null;
-      d.approval ??= null;
-      d.design ??= null;
-      d.prototype ??= null;
-      d.children ??= null;
-      d.run ??= null;
-      d.origin ??= null;
-      d.relations ??= null;
-      d.siblings ??= [];
-      d.dag ??= null;
+      normalizeDetail(p.ticketDetail[id]);
     }
   }
   s.decisions ??= [];

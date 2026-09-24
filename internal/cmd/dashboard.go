@@ -264,7 +264,10 @@ func runDashboard(args []string) error {
 			CurrentDir:     currentDir,
 			DecisionsCap:   decisionsCap,
 			SkillEventsCap: skillEventsCap,
-			Warn:           dashErr,
+			// The static snapshot has no server to fetch detail from later, so
+			// it embeds the bodies the served poll leaves out.
+			EmbedDetails: true,
+			Warn:         dashErr,
 		}
 	}
 
