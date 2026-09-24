@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -173,6 +174,140 @@ func TestProjectCompletionAndCleanedChildRecovery(t *testing.T) {
 	mustWrite(t, filepath.Join(st.Home(), "plan.md"), "changed after reassignment")
 	if err := foremanCompletionCurrent(r); err == nil {
 		t.Fatal("reassignment hid a stale completion receipt")
+	}
+}
+
+// stubOrcaCLI puts a fake `orca` on ORCA_CLI_COMMAND that answers preflight
+// and returns the WORKERS env payload for every orchestration call.
+func stubOrcaCLI(t *testing.T) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "orca")
+	stub := `#!/bin/sh
+case "$1" in
+ status) echo '{"ok":true,"result":{"runtime":{"reachable":true,"capabilities":["orchestration.contract.v1"]}}}' ;;
+ orchestration) printf '%s\n' "$WORKERS" ;;
+esac
+`
+	if err := os.WriteFile(path, []byte(stub), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("ORCA_CLI_COMMAND", path)
+}
+
+// A settled dispatch whose terminal was reused by a later dispatch (retained)
+// or already closed (released) has no liveness row left to read — its
+// projection is unverifiable forever even though the dispatch itself is done.
+// Completion must not wedge on that; live and genuinely unverifiable active
+// workers still block.
+func TestProjectCompleteSettledWorkerTerminals(t *testing.T) {
+	for _, tc := range []struct {
+		name, status, terminal, verdict string
+		done                            bool
+	}{
+		{name: "retained terminal", status: "completed", terminal: "retained", verdict: "unverifiable", done: true},
+		{name: "released terminal", status: "failed", terminal: "released", verdict: "unverifiable", done: true},
+		{name: "live worker", status: "dispatched", terminal: "active", verdict: "live"},
+		{name: "unverifiable active worker", status: "dispatched", terminal: "active", verdict: "unverifiable"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p, _, repo := executionFixture(t)
+			stubOrcaCLI(t)
+			t.Setenv("WORKERS", fmt.Sprintf(`{"ok":true,"result":{"workers":[{"dispatchId":"ctx-w","dispatchStatus":%q,"terminalState":%q,"projection":{"liveness":{"verdict":%q}}}],"page":{"hasMore":false}}}`, tc.status, tc.terminal, tc.verdict))
+			doc := ticket.ReadDoc(p.IndexPath())
+			doc.Set("pointers.orca_run", "run-fm")
+			if err := ticket.WriteDoc(p.IndexPath(), doc); err != nil {
+				t.Fatal(err)
+			}
+			for _, kind := range []string{"integration", "product"} {
+				id := executionEvidence(t, p, repo, kind)
+				finishExecutionEvidence(t, p, id, kind, false)
+			}
+			runGit(t, repo, "switch", "main")
+			var err error
+			captureStdout(t, func() { err = projectComplete(p, "fm-test") })
+			if tc.done {
+				if err != nil {
+					t.Fatalf("settled worker with %s terminal wedged completion: %v", tc.terminal, err)
+				}
+				r, _ := foreman.Load("fm-test")
+				if r.Status != "done" {
+					t.Fatalf("foreman not marked done: %+v", r)
+				}
+				if err := foremanCompletionCurrent(r); err != nil {
+					t.Fatal(err)
+				}
+			} else if err == nil {
+				t.Fatal("completion ignored a live or unverifiable active worker")
+			}
+		})
+	}
+}
+
+// A leftover ticket directory without index.json (e.g. bs-cli holding only
+// review.rounds) is not a ticket: both the allDone scan inside projectComplete
+// and the receipt check in foremanCompletionCurrent must skip it rather than
+// wedge on leftover state.
+func TestCompletionSkipsStubTicketDirs(t *testing.T) {
+	p, _, _ := verifiedExecution(t)
+	stub := filepath.Join(p.Env.ProjectHome, "tickets", "bs-stub")
+	mustMkdirAll(t, stub)
+	mustWrite(t, filepath.Join(stub, "review.rounds"), "1\n")
+	var err error
+	captureStdout(t, func() { err = projectComplete(p, "fm-test") })
+	if err != nil {
+		t.Fatalf("stub ticket dir wedged completion: %v", err)
+	}
+	r, _ := foreman.Load("fm-test")
+	if r.Status != "done" {
+		t.Fatalf("foreman not marked done: %+v", r)
+	}
+	if err := foremanCompletionCurrent(r); err != nil {
+		t.Fatalf("stub ticket dir wedged receipt check: %v", err)
+	}
+}
+
+// A ticket directory whose index.json exists but cannot be parsed or read is
+// a real record in an unknown state — not a stub. Both completion scans must
+// fail loudly on it instead of skipping it like a missing index.
+func TestCompletionFailsOnMalformedTicketRecords(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		breakIndex func(t *testing.T, dir string)
+	}{
+		{name: "malformed index", breakIndex: func(t *testing.T, dir string) {
+			mustWrite(t, filepath.Join(dir, "index.json"), "{not json")
+		}},
+		{name: "unreadable index", breakIndex: func(t *testing.T, dir string) {
+			// A directory named index.json exists but cannot be read as a file.
+			mustMkdirAll(t, filepath.Join(dir, "index.json"))
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p, _, _ := verifiedExecution(t)
+			broken := filepath.Join(p.Env.ProjectHome, "tickets", "bs-broken")
+			mustMkdirAll(t, broken)
+			tc.breakIndex(t, broken)
+			var err error
+			captureStdout(t, func() { err = projectComplete(p, "fm-test") })
+			if err == nil {
+				t.Fatal("completion skipped a malformed ticket record")
+			}
+		})
+		t.Run(tc.name+" receipt check", func(t *testing.T) {
+			p, _, _ := verifiedExecution(t)
+			var err error
+			captureStdout(t, func() { err = projectComplete(p, "fm-test") })
+			if err != nil {
+				t.Fatal(err)
+			}
+			r, _ := foreman.Load("fm-test")
+			broken := filepath.Join(p.Env.ProjectHome, "tickets", "bs-broken")
+			mustMkdirAll(t, broken)
+			tc.breakIndex(t, broken)
+			if err := foremanCompletionCurrent(r); err == nil {
+				t.Fatal("receipt check skipped a malformed ticket record")
+			}
+		})
 	}
 }
 
