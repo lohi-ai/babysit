@@ -476,3 +476,116 @@ func TestMutatingAnUnknownTicketDoesNotCreateIt(t *testing.T) {
 		t.Error("a ticket directory was created by the failed mutation")
 	}
 }
+
+// The served poll must not carry detail bodies: ticketDetail stays an empty
+// map while the summary still lists the ticket and marks it fetchable. This
+// is the bound the whole lazy-detail change hangs on — if bodies leak back
+// into the poll, a mature state dir is unbounded again.
+func TestServedSnapshotOmitsDetailBodies(t *testing.T) {
+	s, home := sandboxServer(t)
+	if err := os.WriteFile(filepath.Join(home, "requirement.md"),
+		[]byte("# a ticket\n\n"+strings.Repeat("body ", 2000)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	w := send(t, s, "GET", "/api/snapshot")
+	if w.Code != 200 {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	var got map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	proj := got["projects"].(map[string]interface{})["proj"].(map[string]interface{})
+	if d := proj["ticketDetail"].(map[string]interface{}); len(d) != 0 {
+		t.Errorf("served snapshot embedded %d detail bodies", len(d))
+	}
+	tickets := proj["tickets"].([]interface{})
+	if len(tickets) != 1 {
+		t.Fatalf("summary missing from poll: %v", tickets)
+	}
+	sum := tickets[0].(map[string]interface{})
+	if sum["detail_available"] != true {
+		t.Errorf("summary lacks the detail_available marker: %v", sum)
+	}
+	if strings.Contains(w.Body.String(), "body body") {
+		t.Error("requirement body leaked into the served snapshot")
+	}
+}
+
+// The detail endpoint must return the same object Compose embeds statically —
+// one composer, two transports. Checking the requirement body round-trips is
+// the observable half of that contract.
+func TestTicketDetailEndpointServesTheComposeBody(t *testing.T) {
+	s, home := sandboxServer(t)
+	if err := os.WriteFile(filepath.Join(home, "requirement.md"),
+		[]byte("# a ticket\n\nthe requirement body"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	w := send(t, s, "GET", "/api/tickets/proj/bs-aaaa1111")
+	if w.Code != 200 {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	var got map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["id"] != "bs-aaaa1111" || got["status"] != "planned" {
+		t.Errorf("detail head wrong: %v", got)
+	}
+	if !strings.Contains(got["requirement"].(string), "the requirement body") {
+		t.Errorf("detail is missing the artifact body: %v", got["requirement"])
+	}
+}
+
+// Unknown and unreadable tickets are 404s, and the idRe guard still owns the
+// URL — a traversal attempt must never reach the filesystem.
+func TestTicketDetailEndpoint404s(t *testing.T) {
+	s, home := sandboxServer(t)
+	if w := send(t, s, "GET", "/api/tickets/proj/bs-nope0000"); w.Code != 404 {
+		t.Errorf("unknown ticket: want 404, got %d %s", w.Code, w.Body)
+	}
+	if w := send(t, s, "GET", "/api/tickets/no-such-proj/bs-aaaa1111"); w.Code != 404 {
+		t.Errorf("unknown project: want 404, got %d %s", w.Code, w.Body)
+	}
+	if err := os.WriteFile(filepath.Join(home, "index.json"), []byte("{corrupt"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if w := send(t, s, "GET", "/api/tickets/proj/bs-aaaa1111"); w.Code != 404 {
+		t.Errorf("corrupt index: want 404, got %d %s", w.Code, w.Body)
+	}
+}
+
+// The bound itself: doubling artifact volume must move the poll payload by a
+// fraction of the growth, while the detail endpoint still serves the full
+// body. 5% is loose enough to absorb per-ticket summary overhead and tight
+// enough that a leaked body fails it outright.
+func TestServedSnapshotIsBoundedByArtifactVolume(t *testing.T) {
+	s, home := sandboxServer(t)
+	artifact := strings.Repeat("x", 32*1024) // under the 50KB embed cap, so the body round-trips whole
+	write := func() {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(home, "plan.md"), []byte(artifact), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	snapSize := func() int {
+		t.Helper()
+		w := send(t, s, "GET", "/api/snapshot")
+		if w.Code != 200 {
+			t.Fatalf("status %d: %s", w.Code, w.Body)
+		}
+		return w.Body.Len()
+	}
+
+	before := snapSize()
+	write()
+	after := snapSize()
+	if grew := after - before; grew > len(artifact)/20 {
+		t.Errorf("snapshot grew %d bytes for %d artifact bytes — detail bodies are leaking into the poll", grew, len(artifact))
+	}
+
+	w := send(t, s, "GET", "/api/tickets/proj/bs-aaaa1111")
+	if w.Code != 200 || w.Body.Len() < len(artifact) {
+		t.Errorf("detail endpoint did not serve the full body: status %d, %d bytes", w.Code, w.Body.Len())
+	}
+}

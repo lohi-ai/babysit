@@ -41,6 +41,11 @@ type Options struct {
 	DecisionsCap   int
 	SkillEventsCap int
 	Warn           func(msg string) // stderr sink (caller adds the bbs-dashboard: prefix)
+	// EmbedDetails decides whether each project block carries full
+	// ticketDetail bodies. The served poll sets false — detail loads on demand
+	// through GET /api/tickets/{project}/{ticket} — while the file:// snapshot
+	// sets true, because a static page has no server to ask later.
+	EmbedDetails bool
 
 	// warnings collects the structured rows meta.warnings carries: every ticket
 	// dir the walk could not read, so the SPA can say so instead of the ticket
@@ -201,25 +206,32 @@ func projectBlock(o Options, projectDir string) obj {
 			continue
 		}
 		tdir := filepath.Join(ticketsDir, id)
-		detail, ok := ticketDetail(o, projectDir, tdir)
+		head, ok := ticketHead(o, projectDir, tdir)
 		if !ok {
 			continue
 		}
-		id, _ := detail["id"].(string)
-		details[id] = detail
+		id, _ := head["id"].(string)
+		// detail_available marks the ticket as fetchable through
+		// GET /api/tickets/{project}/{ticket}; served snapshots leave
+		// ticketDetail empty and the SPA loads the body on navigation.
+		head["detail_available"] = true
+		if o.EmbedDetails {
+			details[id] = ticketDetail(o, projectDir, tdir, head)
+		}
 		summaries = append(summaries, obj{
-			"id": detail["id"], "title": detail["title"], "status": detail["status"],
-			"phase": detail["phase"], "branch": detail["branch"], "parent": detail["parent"],
-			"size": detail["size"], "updated_at": detail["updated_at"], "created_at": detail["created_at"],
-			"assignee": detail["assignee"], "control": detail["control"],
+			"id": head["id"], "title": head["title"], "status": head["status"],
+			"phase": head["phase"], "branch": head["branch"], "parent": head["parent"],
+			"size": head["size"], "updated_at": head["updated_at"], "created_at": head["created_at"],
+			"assignee": head["assignee"], "control": head["control"],
 			// The summary carries the approval record so a list can pin
 			// "waiting on you" without loading every ticket's detail.
-			"approval": detail["approval"],
+			"approval": head["approval"],
 			// children + run are projections of the same index.json/checkpoint
-			// the detail already read — the list needs them to grade parent
+			// the head already read — the list needs them to grade parent
 			// progress and current step without opening every detail.
-			"children": detail["children"],
-			"run":      detail["checkpoint"],
+			"children":         head["children"],
+			"run":              head["checkpoint"],
+			"detail_available": head["detail_available"],
 		})
 		// timeline: each history row + {ticket: id}
 		if rows, ok := parseJSONL(filepath.Join(tdir, "history.jsonl")); ok {
@@ -245,7 +257,11 @@ func projectBlock(o Options, projectDir string) obj {
 	}
 }
 
-func ticketDetail(o Options, projectDir, tdir string) (obj, bool) {
+// ticketHead reads the light half of a ticket — index.json fields, the
+// requirement heading, and checkpoint.json — everything a summary projects
+// from and nothing heavier. The served poll stops here; artifact bodies are
+// the payload this split exists to keep out of it.
+func ticketHead(o Options, projectDir, tdir string) (obj, bool) {
 	id := filepath.Base(tdir)
 	idx, err := ticket.ReadDocStrict(filepath.Join(tdir, "index.json"))
 	if err != nil {
@@ -274,13 +290,6 @@ func ticketDetail(o Options, projectDir, tdir string) (obj, bool) {
 		checkpoint = v
 	}
 
-	history := arr{}
-	if rows, ok := parseJSONL(filepath.Join(tdir, "history.jsonl")); ok {
-		history = rows
-	}
-
-	repos := manifestRepos(filepath.Join(tdir, "manifest.yaml"))
-
 	return obj{
 		"id":         id,
 		"title":      title,
@@ -304,32 +313,65 @@ func ticketDetail(o Options, projectDir, tdir string) (obj, bool) {
 		"origin":    digRaw(idx, "origin"),
 		"relations": digRaw(idx, "relations"),
 		"siblings":  digRaw(idx, "siblings"),
-		// The graph itself, built here rather than derived in the SPA for the
-		// same reason the edges above travel verbatim: waves, admission state
-		// and cycles are one model with one implementation, and a browser that
-		// recomputed them would be a second place for them to be wrong.
-		// Absent on a leaf ticket — the panel's tab is not rendered for those.
-		"dag": dagFor(projectDir, id, idx),
 		// The approval record and the artifacts it points at travel together:
 		// the record is the question, these are what the human reads to answer
 		// it, and a screen that had one without the other could not decide.
-		"approval":         digRaw(idx, "approval"),
-		"requirement":      fileCappedOrNull(filepath.Join(tdir, "requirement.md"), 51200),
-		"report":           fileCappedOrNull(filepath.Join(tdir, "report.md"), 51200),
-		"plan":             fileCappedOrNull(filepath.Join(tdir, "plan.md"), 51200),
-		"design":           fileCappedOrNull(filepath.Join(tdir, "design.md"), 51200),
-		"prototype":        prototype(tdir),
-		"manifest":         fileCappedOrNull(filepath.Join(tdir, "manifest.md"), 51200),
-		"project_contract": fileCappedOrNull(filepath.Join(tdir, "project.json"), 51200),
-		"repos":            repos,
-		"checkpoint":       checkpoint,
-		"history":          history,
-		"handoffs":         namedFiles(filepath.Join(tdir, "handoffs"), ".md"),
-		"verdicts":         namedFiles(filepath.Join(tdir, "verdicts"), ".md"),
-		"verdict_statuses": verdictStatuses(filepath.Join(tdir, "verdicts")),
-		"reviews":          namedFiles(filepath.Join(tdir, "reviews"), ".md"),
-		"evidence":         evidenceFiles(filepath.Join(tdir, "evidence")),
+		"approval":   digRaw(idx, "approval"),
+		"checkpoint": checkpoint,
 	}, true
+}
+
+// TicketDetail composes one ticket's full detail body — the head fields plus
+// every artifact the detail page renders. It backs both the embedded
+// ticketDetail map (EmbedDetails) and the served
+// GET /api/tickets/{project}/{ticket} endpoint, so the two transports can
+// never disagree about what a detail is. ok=false means the index is missing
+// or corrupt — the endpoint maps that to 404.
+func TicketDetail(o Options, projectDir, tdir string) (map[string]interface{}, bool) {
+	head, ok := ticketHead(o, projectDir, tdir)
+	if !ok {
+		return nil, false
+	}
+	return ticketDetail(o, projectDir, tdir, head), true
+}
+
+// ticketDetail fills a head with the heavy fields: artifact bodies, the DAG,
+// history, and the named-file collections. It re-reads index.json for dagFor
+// rather than threading the Doc through ticketHead's return — the head's
+// callers (the served poll) are exactly the ones that must not pay for it.
+func ticketDetail(o Options, projectDir, tdir string, head obj) obj {
+	id := filepath.Base(tdir)
+	// The head already parsed this index successfully; a second read failing
+	// would mean the file changed mid-compose, which the nil-dag fallback
+	// absorbs the same way BuildGraph's own error does.
+	idx, _ := ticket.ReadDocStrict(filepath.Join(tdir, "index.json"))
+
+	history := arr{}
+	if rows, ok := parseJSONL(filepath.Join(tdir, "history.jsonl")); ok {
+		history = rows
+	}
+
+	// The graph itself, built here rather than derived in the SPA for the
+	// same reason the edges above travel verbatim: waves, admission state
+	// and cycles are one model with one implementation, and a browser that
+	// recomputed them would be a second place for them to be wrong.
+	// Absent on a leaf ticket — the panel's tab is not rendered for those.
+	head["dag"] = dagFor(projectDir, id, idx)
+	head["requirement"] = fileCappedOrNull(filepath.Join(tdir, "requirement.md"), 51200)
+	head["report"] = fileCappedOrNull(filepath.Join(tdir, "report.md"), 51200)
+	head["plan"] = fileCappedOrNull(filepath.Join(tdir, "plan.md"), 51200)
+	head["design"] = fileCappedOrNull(filepath.Join(tdir, "design.md"), 51200)
+	head["prototype"] = prototype(tdir)
+	head["manifest"] = fileCappedOrNull(filepath.Join(tdir, "manifest.md"), 51200)
+	head["project_contract"] = fileCappedOrNull(filepath.Join(tdir, "project.json"), 51200)
+	head["repos"] = manifestRepos(filepath.Join(tdir, "manifest.yaml"))
+	head["history"] = history
+	head["handoffs"] = namedFiles(filepath.Join(tdir, "handoffs"), ".md")
+	head["verdicts"] = namedFiles(filepath.Join(tdir, "verdicts"), ".md")
+	head["verdict_statuses"] = verdictStatuses(filepath.Join(tdir, "verdicts"))
+	head["reviews"] = namedFiles(filepath.Join(tdir, "reviews"), ".md")
+	head["evidence"] = evidenceFiles(filepath.Join(tdir, "evidence"))
+	return head
 }
 
 // dagFor builds the project graph a decomposed ticket roots, or nil when the
