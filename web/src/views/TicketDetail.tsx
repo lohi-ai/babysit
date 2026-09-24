@@ -18,11 +18,11 @@ import { useFilter } from '../contexts/FilterContext';
 import { gateProps, useControlPlane, useMutation } from '../contexts/ControlContext';
 import { useScopedTicketDetail, useScopedTickets } from '../lib/scope';
 
-// The five documents the page is *for*, then everything else behind one menu.
+// The documents the page is *for*, then everything else behind one menu.
 // Split rather than ordered, because the split is what keeps the strip from
 // overflowing: eight tabs pushed Reviews off a 1440px screen entirely.
 type Tab =
-  | 'project' | 'requirement' | 'plan' | 'dag' | 'prototype' | 'handoffs' | 'qa'
+  | 'project' | 'report' | 'requirement' | 'plan' | 'dag' | 'prototype' | 'handoffs' | 'qa'
   | 'activity' | 'reviews' | 'manifest' | 'repos' | 'approval';
 
 const OVERFLOW: Tab[] = ['activity', 'reviews', 'manifest', 'repos', 'approval'];
@@ -90,6 +90,7 @@ export function TicketDetail({ snapshot, ticketId }: { snapshot: Snapshot; ticke
   const qaCount = detail ? detail.verdicts.length + detail.evidence.length : 0;
   const tabs: TabSpec[] = detail ? ([
     { key: 'project',     label: 'Project',     available: !!detail.project_contract || !!detail.manifest || !!detail.children?.length },
+    { key: 'report',      label: 'Project report', available: !!detail.report },
     { key: 'requirement', label: 'Requirement', available: !!detail.requirement },
     { key: 'plan',        label: 'Plan',        available: !!detail.plan },
     { key: 'dag',         label: 'DAG',         count: detail.dag?.counts.nodes, available: !!detail.dag },
@@ -117,7 +118,14 @@ export function TicketDetail({ snapshot, ticketId }: { snapshot: Snapshot; ticke
   useEffect(() => { setTab(activeTab); }, [activeTab]);
 
   if (!detail) {
-    return <ErrorBox title="Ticket not found" body={`No detail for ${ticketId} in this snapshot.`} />;
+    return (
+      <>
+        <TopBar title={ticketId} warnings={snapshot.meta.warnings} />
+        <div className="px-6 py-4 w-full">
+          <ErrorBox title="Ticket not found" body={`No detail for ${ticketId} in this snapshot.`} />
+        </div>
+      </>
+    );
   }
 
   const backHref = state.project !== 'all' ? `#/tickets?project=${encodeURIComponent(state.project)}` : '#/tickets';
@@ -141,6 +149,7 @@ export function TicketDetail({ snapshot, ticketId }: { snapshot: Snapshot; ticke
     <>
       <TopBar
         title={detail.id}
+        warnings={snapshot.meta.warnings}
         breadcrumb={breadcrumb}
         actions={
           // Status and phase used to sit here too. The strip below carries both
@@ -215,6 +224,7 @@ export function TicketDetail({ snapshot, ticketId }: { snapshot: Snapshot; ticke
 
         <div className="pt-4" id={TABPANEL_ID} role="tabpanel">
           {activeTab === 'project' && <ProjectPanel project={project} ticket={detail.id} />}
+          {activeTab === 'report' && detail.report && <Markdown source={detail.report} />}
           {activeTab === 'requirement' && detail.requirement && <Markdown source={detail.requirement} />}
           {activeTab === 'plan' && detail.plan && <Markdown source={detail.plan} />}
           {activeTab === 'dag' && detail.dag && <DagPanel dag={detail.dag} />}
@@ -957,8 +967,12 @@ function ApprovalCallout({
         </div>
         <div className="text-xs mt-0.5" style={{ color: 'var(--text-secondary)' }}>
           {approval.requested_by || 'a worker'} published a plan for review
-          {' · '}
-          <span title={formatDate(approval.at)}>{formatRelative(approval.at)}</span>
+          {approval.at && (
+            <>
+              {' · '}
+              <span title={formatDate(approval.at)}>{formatRelative(approval.at)}</span>
+            </>
+          )}
         </div>
       </div>
       <Button size="lg" variant="primary" onClick={onOpen} disabled={isOpen}>

@@ -58,7 +58,7 @@ export function DecisionsFeed({ snapshot }: { snapshot: Snapshot }) {
 
   return (
     <>
-      <TopBar title="Decisions feed" count={filtered.length} />
+      <TopBar title="Decisions feed" count={filtered.length} warnings={snapshot.meta.warnings} />
       <div className="px-6 py-4 w-full space-y-4">
       {truncation && (
         <div

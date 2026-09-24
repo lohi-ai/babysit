@@ -44,7 +44,7 @@ export function Timeline({ snapshot }: { snapshot: Snapshot }) {
 
   return (
     <>
-      <TopBar title="Timeline" count={filtered.length} />
+      <TopBar title="Timeline" count={filtered.length} warnings={snapshot.meta.warnings} />
       <div className="px-6 py-4 w-full space-y-4">
       <FiltersPopover facets={facets} />
 

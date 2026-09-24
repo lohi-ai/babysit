@@ -41,6 +41,11 @@ type Options struct {
 	DecisionsCap   int
 	SkillEventsCap int
 	Warn           func(msg string) // stderr sink (caller adds the bbs-dashboard: prefix)
+
+	// warnings collects the structured rows meta.warnings carries: every ticket
+	// dir the walk could not read, so the SPA can say so instead of the ticket
+	// silently not being there. Compose owns the slice; the walk appends.
+	warnings *arr
 }
 
 func (o Options) warn(msg string) {
@@ -60,8 +65,20 @@ func badSlug(s string) bool {
 	return s == "" || s == "." || s == ".." || strings.Contains(s, "/") || slugBad.MatchString(s)
 }
 
+// warnSkip records one unreadable ticket dir: the structured row for
+// meta.warnings plus the stderr line operators already get. ticket is "" for a
+// project-level skip (a rejected slug names no ticket).
+func (o Options) warnSkip(project, ticket, reason, stderrMsg string) {
+	if o.warnings != nil {
+		*o.warnings = append(*o.warnings, obj{"project": project, "ticket": ticket, "reason": reason})
+	}
+	o.warn(stderrMsg)
+}
+
 // Compose builds the full v2 snapshot object.
 func Compose(o Options) obj {
+	warnings := arr{}
+	o.warnings = &warnings
 	projects := obj{}
 	var projectDirs []string
 	if o.SlugOverride != "" {
@@ -77,7 +94,7 @@ func Compose(o Options) obj {
 		}
 		slug := filepath.Base(dir)
 		if badSlug(slug) {
-			o.warn("skipping '" + slug + "' (rejected by path-traversal guard)")
+			o.warnSkip(slug, "", "rejected by path-traversal guard", "skipping '"+slug+"' (rejected by path-traversal guard)")
 			continue
 		}
 		projects[slug] = projectBlock(o, dir)
@@ -117,6 +134,7 @@ func Compose(o Options) obj {
 			"active_project":  activeProject,
 			"current_dir":     o.CurrentDir,
 			"truncations":     truncations,
+			"warnings":        warnings,
 		},
 		"projects":       projects,
 		"decisions":      decisions,
@@ -175,13 +193,14 @@ func projectBlock(o Options, projectDir string) obj {
 	summaries := arr{}
 	details := obj{}
 	timeline := arr{}
-
 	ids, _ := ticket.TicketIDs(projectDir)
 	for _, id := range ids {
-		tdir := filepath.Join(ticketsDir, id)
-		if _, err := os.Stat(filepath.Join(tdir, "index.json")); err != nil {
+		// Only bs-* dirs are ticket dirs; anything else (scratch dirs, .git,
+		// stray folders) is skipped silently as before — it was never a ticket.
+		if !strings.HasPrefix(id, "bs-") {
 			continue
 		}
+		tdir := filepath.Join(ticketsDir, id)
 		detail, ok := ticketDetail(o, projectDir, tdir)
 		if !ok {
 			continue
@@ -230,7 +249,18 @@ func ticketDetail(o Options, projectDir, tdir string) (obj, bool) {
 	id := filepath.Base(tdir)
 	idx, err := ticket.ReadDocStrict(filepath.Join(tdir, "index.json"))
 	if err != nil {
-		o.warn("skipping " + id + " -- corrupt index at " + filepath.Join(tdir, "index.json") + ": " + err.Error())
+		reason := "corrupt index.json: " + err.Error()
+		stderr := "skipping " + id + " -- corrupt index at " + filepath.Join(tdir, "index.json") + ": " + err.Error()
+		if re, ok := err.(*ticket.ReadError); ok {
+			switch re.Kind {
+			case ticket.KindMissing:
+				reason = "missing index.json"
+				stderr = "skipping " + id + " -- missing index.json at " + re.Path
+			case ticket.KindUnreadable:
+				reason = "unreadable index.json: " + err.Error()
+			}
+		}
+		o.warnSkip(filepath.Base(projectDir), id, reason, stderr)
 		return nil, false
 	}
 
@@ -285,6 +315,7 @@ func ticketDetail(o Options, projectDir, tdir string) (obj, bool) {
 		// it, and a screen that had one without the other could not decide.
 		"approval":         digRaw(idx, "approval"),
 		"requirement":      fileCappedOrNull(filepath.Join(tdir, "requirement.md"), 51200),
+		"report":           fileCappedOrNull(filepath.Join(tdir, "report.md"), 51200),
 		"plan":             fileCappedOrNull(filepath.Join(tdir, "plan.md"), 51200),
 		"design":           fileCappedOrNull(filepath.Join(tdir, "design.md"), 51200),
 		"prototype":        prototype(tdir),
