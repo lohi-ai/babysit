@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.93.1 — 2026-09-24
+
+### Added
+
+- **Ticket DAG relationship mutations** — `bbs ticket add-child` and
+  `add-relation` persist parent membership and dependency edges through locked
+  ticket mutations. `remove-relation` removes a specific edge, allowing Foreman
+  to update the dependency graph without editing `index.json` directly.
+
+### Fixed
+
+- Relationship commands reject malformed ticket indexes without overwriting
+  them and preserve `duplicate_of null` as the clear sentinel.
+
 ## 1.56.0 — 2026-07-29
 
 ### Changed

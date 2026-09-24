@@ -242,6 +242,39 @@ func (d Doc) AppendObj(dotted, objJSON string) error {
 	return nil
 }
 
+// RemoveObj removes every matching value from a dotted-path list. A bare string
+// is treated as a one-item list, matching the DAG reader's legacy tolerance.
+func (d Doc) RemoveObj(dotted, objJSON string) error {
+	dec := json.NewDecoder(strings.NewReader(objJSON))
+	dec.UseNumber()
+	var obj interface{}
+	if err := dec.Decode(&obj); err != nil {
+		return err
+	}
+	existing := d.Value(dotted)
+	if existing == nil {
+		return nil
+	}
+	parent, key := walk(d, strings.Split(dotted, "."))
+	switch value := existing.(type) {
+	case string:
+		if reflect.DeepEqual(value, obj) {
+			parent[key] = []interface{}{}
+		}
+	case []interface{}:
+		remaining := value[:0]
+		for _, item := range value {
+			if !reflect.DeepEqual(item, obj) {
+				remaining = append(remaining, item)
+			}
+		}
+		parent[key] = remaining
+	default:
+		return fmt.Errorf("%s is not a list", dotted)
+	}
+	return nil
+}
+
 func asList(parent map[string]interface{}, key, dotted string) ([]interface{}, error) {
 	existing, present := parent[key]
 	if !present {

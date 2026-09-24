@@ -52,8 +52,19 @@ production dispatch. Reuse current approved artifacts on resume.
    `bbs ticket init --parent <parent> --origin-type sub_ticket --seed <seed
    path> --plan <parent plan> --position <n> --worktree <path>`. Running it
    from the worktree records the ticket branch in `pointers.branch`; from
-   the primary it would record `main`. Write `requirement.md`, link both
-   sides of every relation, and assign parent and children to this foreman.
+   the primary it would record `main`. `init --parent` sets only the child's
+   parent field, so add the parent-side membership after initialization:
+   `BABYSIT_TICKET="$PARENT" bbs ticket add-child "$CHILD"`.
+   For each dependency, add `blocked_by` on the dependent and `blocks` on the
+   prerequisite with `BABYSIT_TICKET="$DEPENDENT" bbs ticket add-relation
+   blocked_by "$PREREQUISITE"` and
+   `BABYSIT_TICKET="$PREREQUISITE" bbs ticket add-relation blocks "$DEPENDENT"`.
+   When moving a dependency, remove both old sides with
+   `BABYSIT_TICKET="$DEPENDENT" bbs ticket remove-relation blocked_by "$OLD_PREREQUISITE"` and
+   `BABYSIT_TICKET="$OLD_PREREQUISITE" bbs ticket remove-relation blocks "$DEPENDENT"`.
+   Relationship commands lock one ticket index and append history; never edit
+   `index.json` directly. Write `requirement.md` and assign parent and
+   children to this foreman.
    Bind the accepted seed with `bbs foreman bind "$PARENT" --seed <key>
    --child "$TICKET"`, initialize code children with contract version 2 per
    execution.md, and include their parent acceptance IDs in the Task.
