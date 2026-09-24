@@ -194,13 +194,13 @@ func projectBlock(o Options, projectDir string) obj {
 	details := obj{}
 	timeline := arr{}
 	ids, _ := ticket.TicketIDs(projectDir)
-	slug := filepath.Base(projectDir)
 	for _, id := range ids {
-		tdir := filepath.Join(ticketsDir, id)
-		if _, err := os.Stat(filepath.Join(tdir, "index.json")); err != nil {
-			o.warnSkip(slug, id, "missing index.json", "skipping "+id+" -- missing index.json at "+filepath.Join(tdir, "index.json"))
+		// Only bs-* dirs are ticket dirs; anything else (scratch dirs, .git,
+		// stray folders) is skipped silently as before — it was never a ticket.
+		if !strings.HasPrefix(id, "bs-") {
 			continue
 		}
+		tdir := filepath.Join(ticketsDir, id)
 		detail, ok := ticketDetail(o, projectDir, tdir)
 		if !ok {
 			continue
@@ -249,7 +249,18 @@ func ticketDetail(o Options, projectDir, tdir string) (obj, bool) {
 	id := filepath.Base(tdir)
 	idx, err := ticket.ReadDocStrict(filepath.Join(tdir, "index.json"))
 	if err != nil {
-		o.warnSkip(filepath.Base(projectDir), id, "corrupt index.json: "+err.Error(), "skipping "+id+" -- corrupt index at "+filepath.Join(tdir, "index.json")+": "+err.Error())
+		reason := "corrupt index.json: " + err.Error()
+		stderr := "skipping " + id + " -- corrupt index at " + filepath.Join(tdir, "index.json") + ": " + err.Error()
+		if re, ok := err.(*ticket.ReadError); ok {
+			switch re.Kind {
+			case ticket.KindMissing:
+				reason = "missing index.json"
+				stderr = "skipping " + id + " -- missing index.json at " + re.Path
+			case ticket.KindUnreadable:
+				reason = "unreadable index.json: " + err.Error()
+			}
+		}
+		o.warnSkip(filepath.Base(projectDir), id, reason, stderr)
 		return nil, false
 	}
 

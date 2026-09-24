@@ -77,17 +77,24 @@ export function TopBar({
           }}
         >
           <div className="font-medium" style={{ fontSize: 13 }}>
-            {warnings.length === 1
-              ? '1 ticket directory could not be read'
-              : `${warnings.length} ticket directories could not be read`}
+            {(() => {
+              const allTickets = warnings.every(w => w.ticket !== '');
+              const noun = allTickets
+                ? (warnings.length === 1 ? 'ticket directory' : 'ticket directories')
+                : (warnings.length === 1 ? 'directory' : 'directories');
+              return `${warnings.length} ${noun} could not be read`;
+            })()}
           </div>
           <ul className="mt-1 space-y-1" style={{ fontSize: 13, paddingLeft: 20, listStyle: 'disc' }}>
-            {warnings.map((w, i) => (
-              <li key={`${w.project}/${w.ticket}/${i}`} className="break-words">
-                <code className="font-mono">{w.ticket || w.project}</code>
+            {warnings.slice(0, 8).map(w => (
+              <li key={`${w.project}/${w.ticket}`} className="break-words">
+                <code className="font-mono">{w.ticket ? `${w.project}/${w.ticket}` : w.project}</code>
                 {' — '}{w.reason}
               </li>
             ))}
+            {warnings.length > 8 && (
+              <li style={{ listStyle: 'none' }}>…and {warnings.length - 8} more</li>
+            )}
           </ul>
         </div>
       )}

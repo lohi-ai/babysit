@@ -118,7 +118,14 @@ export function TicketDetail({ snapshot, ticketId }: { snapshot: Snapshot; ticke
   useEffect(() => { setTab(activeTab); }, [activeTab]);
 
   if (!detail) {
-    return <ErrorBox title="Ticket not found" body={`No detail for ${ticketId} in this snapshot.`} />;
+    return (
+      <>
+        <TopBar title={ticketId} warnings={snapshot.meta.warnings} />
+        <div className="px-6 py-4 w-full">
+          <ErrorBox title="Ticket not found" body={`No detail for ${ticketId} in this snapshot.`} />
+        </div>
+      </>
+    );
   }
 
   const backHref = state.project !== 'all' ? `#/tickets?project=${encodeURIComponent(state.project)}` : '#/tickets';
