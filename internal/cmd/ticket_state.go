@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"regexp"
@@ -11,10 +13,11 @@ import (
 )
 
 // This file ports the index.json state-accessor family of bin/bbs-ticket.bash:
-// env, get, set-status, set-phase, set-parent, set-sibling, set-pointer,
-// get-pointer, ensure-size, append-history.
-// Each mutates index.json under the shared .index.lock and appends to
-// history.jsonl exactly where the bash original does. Manifest.yaml operations
+// env, get, set-status, set-phase, set-parent, add-child, add-relation,
+// remove-relation, set-sibling, set-pointer, get-pointer, ensure-size,
+// append-history.
+// Write operations use the shared .index.lock; relationship commands append
+// history events after successful writes. Manifest.yaml operations
 // (init/get-manifest/set-branch) and the git-mutating base-ops stay delegated.
 
 // actorRole mirrors bash ${AGENT_ROLE:-${GT_ROLE:-developer}}.
@@ -208,6 +211,156 @@ func runSetParent(args []string) {
 	os.Exit(0)
 }
 
+func appendTicketString(doc ticket.Doc, path, value string) error {
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return err
+	}
+	return doc.AppendObj(path, string(encoded))
+}
+
+func loadRelationshipDoc(st *ticket.Store) (ticket.Doc, error) {
+	doc, err := ticket.ReadDocStrict(st.IndexPath())
+	if err == nil {
+		return doc, nil
+	}
+	if errors.Is(err, os.ErrNotExist) {
+		doc = ticket.Doc{}
+		doc.EnsureDefaults(st.Env.Ticket)
+		return doc, nil
+	}
+	return nil, err
+}
+
+func runAddChild(args []string) {
+	env := resolveEnv()
+	needTicket(env)
+	child := ""
+	if len(args) > 0 {
+		child = args[0]
+	}
+	if child == "" {
+		fmt.Fprintln(os.Stderr, "add-child: child ticket id required")
+		os.Exit(2)
+	}
+	st := ticket.New(env)
+	mutateLocked(st, func() error {
+		doc, err := loadRelationshipDoc(st)
+		if err != nil {
+			return err
+		}
+		extra, err := json.Marshal(map[string]string{"child": child})
+		if err != nil {
+			return err
+		}
+		if err := appendTicketString(doc, "children", child); err != nil {
+			return err
+		}
+		if err := ticket.WriteDoc(st.IndexPath(), doc); err != nil {
+			return err
+		}
+		st.HistoryAppendExtra("child_added", actorRole(), string(extra))
+		return nil
+	})
+	os.Exit(0)
+}
+
+func runAddRelation(args []string) {
+	env := resolveEnv()
+	needTicket(env)
+	relation, target := "", ""
+	if len(args) > 0 {
+		relation = args[0]
+	}
+	if len(args) > 1 {
+		target = args[1]
+	}
+	switch relation {
+	case "blocks", "blocked_by", "duplicate_of", "related":
+	default:
+		fmt.Fprintln(os.Stderr, "add-relation: type must be blocks|blocked_by|duplicate_of|related")
+		os.Exit(2)
+	}
+	if target == "" {
+		fmt.Fprintln(os.Stderr, "add-relation: target ticket id required")
+		os.Exit(2)
+	}
+	st := ticket.New(env)
+	mutateLocked(st, func() error {
+		doc, err := loadRelationshipDoc(st)
+		if err != nil {
+			return err
+		}
+		extra, err := json.Marshal(map[string]string{"type": relation, "target": target})
+		if err != nil {
+			return err
+		}
+		if relation == "duplicate_of" {
+			doc.Set("relations.duplicate_of", target)
+		} else if err := appendTicketString(doc, "relations."+relation, target); err != nil {
+			return err
+		}
+		if err := ticket.WriteDoc(st.IndexPath(), doc); err != nil {
+			return err
+		}
+		st.HistoryAppendExtra("relation_added", actorRole(), string(extra))
+		return nil
+	})
+	os.Exit(0)
+}
+
+func runRemoveRelation(args []string) {
+	env := resolveEnv()
+	needTicket(env)
+	relation, target := "", ""
+	if len(args) > 0 {
+		relation = args[0]
+	}
+	if len(args) > 1 {
+		target = args[1]
+	}
+	switch relation {
+	case "blocks", "blocked_by", "duplicate_of", "related":
+	default:
+		fmt.Fprintln(os.Stderr, "remove-relation: type must be blocks|blocked_by|duplicate_of|related")
+		os.Exit(2)
+	}
+	if target == "" {
+		fmt.Fprintln(os.Stderr, "remove-relation: target ticket id required")
+		os.Exit(2)
+	}
+	st := ticket.New(env)
+	mutateLocked(st, func() error {
+		doc, err := loadRelationshipDoc(st)
+		if err != nil {
+			return err
+		}
+		extra, err := json.Marshal(map[string]string{"type": relation, "target": target})
+		if err != nil {
+			return err
+		}
+		path := "relations." + relation
+		if relation == "duplicate_of" {
+			if value, ok := doc.Value(path).(string); ok && value == target {
+				doc.Set(path, "null")
+			}
+		} else {
+			encoded, err := json.Marshal(target)
+			if err != nil {
+				return err
+			}
+			if err := doc.RemoveObj(path, string(encoded)); err != nil {
+				return err
+			}
+		}
+		if err := ticket.WriteDoc(st.IndexPath(), doc); err != nil {
+			return err
+		}
+		st.HistoryAppendExtra("relation_removed", actorRole(), string(extra))
+		return nil
+	})
+	os.Exit(0)
+}
 
 func runSetSibling(args []string) {
 	env := resolveEnv()
@@ -242,7 +395,6 @@ func runSetSibling(args []string) {
 	})
 	os.Exit(0)
 }
-
 
 func runSetPointer(args []string) {
 	env := resolveEnv()

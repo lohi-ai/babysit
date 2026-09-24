@@ -58,6 +58,17 @@ tickets — there is no parallel queue that can drift.
 Set at creation time: `bbs ticket init --parent <id> --origin-type sub_ticket
 --seed <path> --position <n>`. `set-parent` writes only the parent link, so a
 child left at the `standalone` default will not route to `builder`'s child mode.
+
+`init --parent` and `set-parent` write only the child's `parent` field. Add the
+parent-side DAG membership in the parent's scope with
+`BABYSIT_TICKET=<parent> bbs ticket add-child <child>`. Record dependencies and
+other relations in the source ticket's scope with
+`bbs ticket add-relation <blocks|blocked_by|duplicate_of|related> <target>`.
+Remove an edge in that same source ticket's scope with
+`bbs ticket remove-relation <blocks|blocked_by|duplicate_of|related> <target>`;
+for `duplicate_of`, this clears the relation only when the target matches.
+These mutations use the ticket index lock and append history; the DAG walks
+`children`, not `parent`.
 ## Bootstrap: how tickets come into being
 Tickets resolve through the identity ladder — `BABYSIT_TICKET` env →
 `manifest.yaml` cwd-match → branch regex
