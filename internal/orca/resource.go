@@ -25,8 +25,10 @@ func (c *Client) ExitedWorkers(run string) (map[string]bool, error) {
 		}
 		var page struct {
 			Workers []struct {
-				DispatchID string `json:"dispatchId"`
-				Projection struct {
+				DispatchID     string `json:"dispatchId"`
+				DispatchStatus string `json:"dispatchStatus"`
+				TerminalState  string `json:"terminalState"`
+				Projection     struct {
 					Liveness struct {
 						Verdict string `json:"verdict"`
 					} `json:"liveness"`
@@ -41,7 +43,13 @@ func (c *Client) ExitedWorkers(run string) (map[string]bool, error) {
 			return nil, err
 		}
 		for _, worker := range page.Workers {
-			exited[worker.DispatchID] = worker.Projection.Liveness.Verdict == "exited"
+			// A settled dispatch whose terminal was reused by a later dispatch
+			// (retained) or already closed (released) cannot still be running:
+			// its liveness row is gone with the terminal, which projects as
+			// "unverifiable" even though the dispatch itself is completed.
+			settled := worker.DispatchStatus == "completed" || worker.DispatchStatus == "failed"
+			terminalGone := worker.TerminalState == "retained" || worker.TerminalState == "released"
+			exited[worker.DispatchID] = worker.Projection.Liveness.Verdict == "exited" || (settled && terminalGone)
 		}
 		if !page.Page.HasMore {
 			return exited, nil
