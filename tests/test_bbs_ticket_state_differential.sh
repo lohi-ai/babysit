@@ -132,8 +132,10 @@ fi
 # a superset instead of a diff: every bash line still present, same values.
 BASHENV="$( BABYSIT_PROJECT_HOME="$ROOT/bash-home/projects/slug" "$ROOT/bash-cmd" env \
             | sed "s|$ROOT/bash-home|X|" )"
+# Go now single-quotes env values for eval safety (Windows backslashes);
+# strip quotes before comparing against the frozen unquoted oracle.
 GOENV="$( BABYSIT_PROJECT_HOME="$ROOT/go-home/projects/slug" "$ROOT/go-cmd" env \
-          | sed "s|$ROOT/go-home|X|" )"
+          | sed "s|$ROOT/go-home|X|" | tr -d "'" )"
 missing=""
 while IFS= read -r ln; do
   [ -n "$ln" ] || continue

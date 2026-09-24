@@ -89,16 +89,23 @@ func printJSONRead(st *ticket.Store, path string) {
 // are simply omitted, so an eval'ing caller can test for an empty $TICKET.
 func runTicketEnv() {
 	env := resolveEnv()
-	fmt.Printf("SLUG=%s\n", env.Slug)
-	fmt.Printf("BRANCH=%s\n", env.Branch)
-	fmt.Printf("TICKET=%s\n", env.Ticket)
-	fmt.Printf("BABYSIT_PROJECT_HOME=%s\n", env.ProjectHome)
+	fmt.Printf("SLUG=%s\n", shellQuote(env.Slug))
+	fmt.Printf("BRANCH=%s\n", shellQuote(env.Branch))
+	fmt.Printf("TICKET=%s\n", shellQuote(env.Ticket))
+	fmt.Printf("BABYSIT_PROJECT_HOME=%s\n", shellQuote(env.ProjectHome))
 	if env.Ticket != "" {
 		st := ticket.New(env)
-		fmt.Printf("TICKET_HOME=%s\n", st.Home())
-		fmt.Printf("INDEX=%s\n", st.IndexPath())
+		fmt.Printf("TICKET_HOME=%s\n", shellQuote(st.Home()))
+		fmt.Printf("INDEX=%s\n", shellQuote(st.IndexPath()))
 	}
 	os.Exit(0)
+}
+
+// shellQuote renders v as a single-quoted POSIX shell word (' → '\”), so
+// `eval "$(bbs ticket env)"` survives values with spaces or Windows
+// backslashes — eval would otherwise eat `\t` in C:\…\tickets as a TAB.
+func shellQuote(v string) string {
+	return "'" + strings.ReplaceAll(v, "'", `'\''`) + "'"
 }
 
 func runGet(args []string) {
@@ -208,7 +215,6 @@ func runSetParent(args []string) {
 	os.Exit(0)
 }
 
-
 func runSetSibling(args []string) {
 	env := resolveEnv()
 	needTicket(env)
@@ -242,7 +248,6 @@ func runSetSibling(args []string) {
 	})
 	os.Exit(0)
 }
-
 
 func runSetPointer(args []string) {
 	env := resolveEnv()

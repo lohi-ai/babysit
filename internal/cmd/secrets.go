@@ -242,7 +242,8 @@ func ensureGitignore(repoRoot string) (string, error) {
 		return "", errSilent
 	}
 	for _, line := range strings.Split(string(existing), "\n") {
-		if line == ".babysit/.env" {
+		// TrimRight "\r": core.autocrlf=true checkouts carry CRLF endings.
+		if strings.TrimRight(line, "\r") == ".babysit/.env" {
 			return "present", nil
 		}
 	}

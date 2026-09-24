@@ -193,6 +193,14 @@ if ! command -v go >/dev/null 2>&1; then
 elif [ "$DRY_RUN" -eq 1 ]; then
   echo "  [dry-run] go build -o bin/bbs ./cmd/bbs"
 elif (cd "$PROJECT_DIR" && go build -o bin/bbs ./cmd/bbs); then
+  # Windows can't exec an extension-less binary natively, and some Go
+  # versions emit bbs.exe for -o bin/bbs — keep both names so the committed
+  # bbs-* symlinks (→ bbs) and native callers (bbs.exe) both resolve.
+  if [ -f "$PROJECT_DIR/bin/bbs.exe" ] && [ ! -f "$PROJECT_DIR/bin/bbs" ]; then
+    cp "$PROJECT_DIR/bin/bbs.exe" "$PROJECT_DIR/bin/bbs"
+  elif [ -f "$PROJECT_DIR/bin/bbs" ] && [ "$(go env GOOS 2>/dev/null)" = "windows" ]; then
+    cp "$PROJECT_DIR/bin/bbs" "$PROJECT_DIR/bin/bbs.exe"
+  fi
   ok "bbs built → bin/bbs"
 else
   warn "go build failed — the bbs-* compat symlinks will not resolve until built"

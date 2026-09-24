@@ -70,12 +70,15 @@ func ResolveStrict() (Env, error) {
 	return e, err
 }
 
-// BabysitHome is ${BABYSIT_HOME:-$HOME/.babysit}.
+// BabysitHome is ${BABYSIT_HOME:-<user-home>/.babysit}.
 func BabysitHome() string {
 	if h := os.Getenv("BABYSIT_HOME"); h != "" {
 		return h
 	}
-	return filepath.Join(os.Getenv("HOME"), ".babysit")
+	// UserHomeDir, not $HOME: native Windows has no HOME, and an empty
+	// expansion would silently root state at <cwd>/.babysit.
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".babysit")
 }
 
 func orElse(v, def string) string {

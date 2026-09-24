@@ -128,8 +128,8 @@ bbs ticket set-pointer plan plan.md
 bbs ticket set-status planned
 bbs ticket set-phase plan-draft
 
-bbs ticket add-handoff --skill plan-draft --status DONE --body-file /tmp/brief.md
-bbs ticket set-verdict  --skill plan-draft --body-file /tmp/verdict.md
+bbs ticket add-handoff --skill plan-draft --status DONE --body-file "${TMPDIR:-/tmp}/brief.md"
+bbs ticket set-verdict  --skill plan-draft --body-file "${TMPDIR:-/tmp}/verdict.md"
 
 ORIGIN_TYPE="$(bbs ticket get origin.type)"      # reads, e.g. sub-ticket check
 ```

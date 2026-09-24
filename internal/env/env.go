@@ -163,6 +163,8 @@ func detectApp(configDir string) string {
 // isPathComponent reports whether name appears as a directory component of
 // path — the `*/name/*` and `*/name` globs in _detect_app.
 func isPathComponent(path, name string) bool {
+	// ToSlash: os.Getwd returns backslashes on Windows.
+	path = filepath.ToSlash(path)
 	return strings.Contains(path, "/"+name+"/") || strings.HasSuffix(path, "/"+name)
 }
 

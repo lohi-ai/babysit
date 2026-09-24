@@ -338,7 +338,8 @@ def resolve_ticket_home(bbs_ticket: str, env: dict, cwd: str | None = None) -> P
     )
     for line in result.stdout.splitlines():
         if line.startswith("TICKET_HOME="):
-            return Path(line.split("=", 1)[1].strip())
+            # Values are POSIX single-quoted for eval safety; strip the quotes.
+            return Path(line.split("=", 1)[1].strip().strip("'"))
     raise RuntimeError(f"bbs-ticket env did not emit TICKET_HOME: {result.stdout!r}")
 
 

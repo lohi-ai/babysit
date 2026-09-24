@@ -66,7 +66,10 @@ CMD="$(printf '%s' "$INPUT" | jq -r '(.tool_input // .toolInput // .input // {})
 # only push/PR/merge pays the ticket-resolution cost. Order matters: merge is
 # checked before a bare push so `gh pr merge` isn't mis-read as a push.
 STAGE=""
-case "$CMD" in
+# Windows shells invoke git.exe / gh.exe — strip the suffix before matching
+# so the gate cannot be bypassed by an executable extension.
+CMD_NORM="$(printf '%s' "$CMD" | sed -E 's/\b(git|gh|glab)\.exe\b/\1/g')"
+case "$CMD_NORM" in
   *"gh pr merge"*|*"glab mr merge"*) STAGE="merge" ;;
   *"gh pr create"*|*"glab mr create"*) STAGE="pr" ;;
   *"git push"*|*"git -C "*" push"*) STAGE="push" ;;
@@ -98,7 +101,7 @@ _bbs_resolve() { # $1=bbs-<sub>
   local own_bin
   own_bin="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
   BBS_ARGV=()
-  for c in "$root/bin/$name" "$own_bin/$name" "$HOME/.local/bin/$name" "$HOME/.claude/$name" "$HOME/.claude/skills/babysit/bin/$name"; do
+  for c in "$root/bin/$name" "$root/bin/$name.exe" "$own_bin/$name" "$own_bin/$name.exe" "$HOME/.local/bin/$name" "$HOME/.local/bin/$name.exe" "$HOME/.claude/$name" "$HOME/.claude/$name.exe" "$HOME/.claude/skills/babysit/bin/$name" "$HOME/.claude/skills/babysit/bin/$name.exe"; do
     if [ -x "$c" ]; then BBS_ARGV=("$c"); return 0; fi
   done
   if command -v "$name" >/dev/null 2>&1; then BBS_ARGV=("$name"); return 0; fi
@@ -111,7 +114,7 @@ _bbs_resolve() { # $1=bbs-<sub>
   # bbs-ticket's own "no ticket" exit 1. Probing capability up front is what
   # keeps an unusable binary from being mistaken for a working one. `bbs help
   # <sub>` is NOT a usable probe — cobra exits 0 for unknown help topics.
-  for c in "$root/bin/bbs" "$own_bin/bbs" "$HOME/.local/bin/bbs" "$HOME/.claude/bbs" "$HOME/.claude/skills/babysit/bin/bbs" bbs; do
+  for c in "$root/bin/bbs" "$root/bin/bbs.exe" "$own_bin/bbs" "$own_bin/bbs.exe" "$HOME/.local/bin/bbs" "$HOME/.local/bin/bbs.exe" "$HOME/.claude/bbs" "$HOME/.claude/bbs.exe" "$HOME/.claude/skills/babysit/bin/bbs" "$HOME/.claude/skills/babysit/bin/bbs.exe" bbs; do
     if command -v "$c" >/dev/null 2>&1 && "$c" "$sub" --help >/dev/null 2>&1; then
       BBS_ARGV=("$c" "$sub"); return 0
     fi

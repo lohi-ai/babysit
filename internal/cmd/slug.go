@@ -50,10 +50,12 @@ func newSlugCmd() *cobra.Command {
 			}
 			switch sub {
 			case "env", "":
-				fmt.Printf("SLUG=%s\n", info.Slug)
-				fmt.Printf("BRANCH=%s\n", info.Branch)
-				fmt.Printf("TICKET=%s\n", info.Ticket)
-				fmt.Printf("BABYSIT_PROJECT_HOME=%s\n", info.ProjectHome)
+				// shellQuote: eval'd output must survive spaces and Windows
+				// backslashes in paths.
+				fmt.Printf("SLUG=%s\n", shellQuote(info.Slug))
+				fmt.Printf("BRANCH=%s\n", shellQuote(info.Branch))
+				fmt.Printf("TICKET=%s\n", shellQuote(info.Ticket))
+				fmt.Printf("BABYSIT_PROJECT_HOME=%s\n", shellQuote(info.ProjectHome))
 			case "home":
 				os.MkdirAll(info.ProjectHome, 0o755)
 				fmt.Println(info.ProjectHome)

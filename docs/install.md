@@ -117,7 +117,9 @@ Released artifacts (no Windows — see below):
 
 **Windows:** `bbs` is cross-compiled for Windows in CI purely as a regression
 check (so a change that breaks the Windows build fails a PR). **No Windows
-artifact is published.**
+artifact is published.** The skill pack itself (preamble, hooks, `bbs <sub>`
+invocations) assumes a POSIX shell — on Windows it needs Git-Bash or WSL;
+native PowerShell/cmd is not supported.
 
 ## How the aliases work
 

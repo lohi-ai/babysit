@@ -14,7 +14,8 @@ import (
 func main() {
 	root := cmd.NewRootCmd()
 	if base := filepath.Base(os.Args[0]); strings.HasPrefix(base, "bbs-") {
-		sub := strings.TrimPrefix(base, "bbs-")
+		// Windows executables carry .exe: bbs-config.exe → "config".
+		sub := strings.TrimSuffix(strings.TrimPrefix(base, "bbs-"), ".exe")
 		root.SetArgs(append([]string{sub}, os.Args[1:]...))
 	}
 	if err := root.Execute(); err != nil {
