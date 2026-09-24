@@ -541,6 +541,58 @@ fi
     && [ ! -d "$DEPENDENT/.index.lock" ] \
     && [ ! -d "$T/home/projects/demo/tickets/bs-first/.index.lock" ] \
     || { echo "ticket mutation lock left behind"; exit 1; }
+  # Moving the prerequisite removes both serialized halves of the old edge.
+  ticket_cli "$T" bs-third init --origin-type sub_ticket --position 3 >/dev/null \
+    || { echo "replacement blocker init failed"; exit 1; }
+  ticket_cli "$T" bs-third set-status planned >/dev/null || exit 1
+  ticket_cli "$T" bs-third set-parent bs-parent >/dev/null || exit 1
+  ticket_cli "$T" bs-parent add-child bs-third >/dev/null || exit 1
+  ticket_cli "$T" bs-second add-relation blocked_by bs-third >/dev/null || exit 1
+  ticket_cli "$T" bs-third add-relation blocks bs-second >/dev/null || exit 1
+  ticket_cli "$T" bs-second remove-relation blocked_by bs-first >/dev/null || exit 1
+  ticket_cli "$T" bs-first remove-relation blocks bs-second >/dev/null || exit 1
+  OUT="$(ticket_cli "$T" bs-parent dag bs-parent)"
+  echo "$OUT" | grep -q '^DAG bs-parent (demo) - 3 tickets, 2 waves: 2 ready, 1 waiting, 0 running, 0 done$' \
+    || { echo "unexpected DAG after edge move: $OUT"; exit 1; }
+  echo "$OUT" | sed -n '/^WAVE 1/,/^$/p' | grep -q 'WAITING   bs-second.*blocked by bs-third' \
+    || { echo "replacement blocker missing from DAG: $OUT"; exit 1; }
+  if echo "$OUT" | grep -q 'blocked by bs-first'; then
+    echo "removed blocker still appears in DAG: $OUT"; exit 1
+  fi
+  [ "$(grep -c '"event":"relation_removed"' "$DEPENDENT/history.jsonl")" -eq 1 ] \
+    || { echo "dependent relation removal history missing"; exit 1; }
+  [ "$(grep -c '"event":"relation_removed"' "$T/home/projects/demo/tickets/bs-first/history.jsonl")" -eq 1 ] \
+    || { echo "prerequisite relation removal history missing"; exit 1; }
+  [ ! -d "$DEPENDENT/.index.lock" ] \
+    && [ ! -d "$T/home/projects/demo/tickets/bs-first/.index.lock" ] \
+    && [ ! -d "$T/home/projects/demo/tickets/bs-third/.index.lock" ] \
+    || { echo "relation removal lock left behind"; exit 1; }
+
+  # The duplicate_of null sentinel clears the scalar relation.
+  ticket_cli "$T" bs-second add-relation duplicate_of bs-first >/dev/null || exit 1
+  [ "$(ticket_cli "$T" bs-second get relations.duplicate_of)" = "bs-first" ] \
+    || { echo "duplicate_of target was not stored"; exit 1; }
+  ticket_cli "$T" bs-second add-relation duplicate_of null >/dev/null || exit 1
+  [ -z "$(ticket_cli "$T" bs-second get relations.duplicate_of)" ] \
+    || { echo "duplicate_of null did not clear the relation"; exit 1; }
+
+  # Relationship writes refuse malformed indexes without replacing the bytes.
+  SECOND_INDEX="$DEPENDENT/index.json"
+  printf '{broken\n' > "$SECOND_INDEX"
+  cp "$SECOND_INDEX" "$T/malformed-index.json"
+  if ticket_cli "$T" bs-second add-child bs-first >/dev/null 2>&1; then
+    echo "add-child accepted a malformed index"; exit 1
+  fi
+  cmp -s "$SECOND_INDEX" "$T/malformed-index.json" \
+    || { echo "add-child replaced the malformed index"; exit 1; }
+  if ticket_cli "$T" bs-second add-relation blocked_by bs-first >/dev/null 2>&1; then
+    echo "add-relation accepted a malformed index"; exit 1
+  fi
+  cmp -s "$SECOND_INDEX" "$T/malformed-index.json" \
+    || { echo "add-relation replaced the malformed index"; exit 1; }
+  [ ! -d "$DEPENDENT/.index.lock" ] \
+    || { echo "malformed-index mutation lock left behind"; exit 1; }
+
   exit 0
 ) && ok "ticket-relationship-cli-dag-waves" || fail "ticket-relationship-cli-dag-waves"
 

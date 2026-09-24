@@ -14,8 +14,8 @@ import (
 //
 // Every subcommand now runs natively: the identity core (resolve/verdicts/
 // session/board), the index.json state-accessors (env/get/set-status/set-phase/
-// set-parent/add-child/add-relation/set-sibling/set-pointer/get-pointer/
-// ensure-size/append-history), the file-only manifest.yaml ops (init/
+// set-parent/add-child/add-relation/remove-relation/set-sibling/set-pointer/
+// get-pointer/ensure-size/append-history), the file-only manifest.yaml ops (init/
 // get-manifest/set-branch), the git-mutating base-ops family (refresh/surface/
 // serve/land), `ensure`, and path/list/reconcile. A byte-identical frozen copy
 // of the retired script survives at tests/fixtures/bbs-ticket.reference as the
@@ -65,6 +65,8 @@ func newTicketCmd() *cobra.Command {
 				runAddChild(args[1:])
 			case "add-relation":
 				runAddRelation(args[1:])
+			case "remove-relation":
+				runRemoveRelation(args[1:])
 			case "assign":
 				runAssign(args[1:])
 			case "claim":
@@ -166,6 +168,8 @@ Subcommands:
   add-child <t>     append child id to current ticket's children
   add-relation <type> <target>
                     append blocks|blocked_by|related or set duplicate_of
+  remove-relation <type> <target>
+                    remove blocks|blocked_by|related entry or matching duplicate_of
   assign <foreman-id>|--none    set the owning foreman (assignee)
   claim <foreman-id>             atomically claim an unowned project; same owner is idempotent
   pause [--note M]  human override: stop dispatch, keep status (reversible)

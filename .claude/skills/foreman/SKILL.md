@@ -347,7 +347,10 @@ production dispatch. Reuse current approved artifacts on resume.
    prerequisite with `BABYSIT_TICKET="$DEPENDENT" bbs ticket add-relation
    blocked_by "$PREREQUISITE"` and
    `BABYSIT_TICKET="$PREREQUISITE" bbs ticket add-relation blocks "$DEPENDENT"`.
-   Relationship commands lock the ticket index and append history; never edit
+   When moving a dependency, remove both old sides with
+   `BABYSIT_TICKET="$DEPENDENT" bbs ticket remove-relation blocked_by "$OLD_PREREQUISITE"` and
+   `BABYSIT_TICKET="$OLD_PREREQUISITE" bbs ticket remove-relation blocks "$DEPENDENT"`.
+   Relationship commands lock one ticket index and append history; never edit
    `index.json` directly. Write `requirement.md`, assign parent and children to
    this foreman, then emit the DAG with the dispatch plan — **The project DAG**.
 4. Validate the primary checkout, `git worktree list`, every recorded path,

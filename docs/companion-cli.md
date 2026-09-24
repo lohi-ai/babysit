@@ -14,7 +14,7 @@ which is why skills and docs always use the space form.
 Every subcommand is now native Go, behaving identically to the bash it
 replaced (guarded by the differential harnesses in `tests/`). `ticket` was the
 last strangler: identity/verdict/session/board, the index.json state-accessors
-(`get`/`set-*`/`add-child`/`add-relation`/`ensure-size`/
+(`get`/`set-*`/`add-child`/`add-relation`/`remove-relation`/`ensure-size`/
 `append-history`/`env`), the file-only
 manifest.yaml ops (`init`/`get-manifest`/`set-branch`), the git-mutating
 base-ops (`refresh`/`surface`/`serve`/`land`),

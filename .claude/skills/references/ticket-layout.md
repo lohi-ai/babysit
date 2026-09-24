@@ -64,6 +64,9 @@ parent-side DAG membership in the parent's scope with
 `BABYSIT_TICKET=<parent> bbs ticket add-child <child>`. Record dependencies and
 other relations in the source ticket's scope with
 `bbs ticket add-relation <blocks|blocked_by|duplicate_of|related> <target>`.
+Remove an edge in that same source ticket's scope with
+`bbs ticket remove-relation <blocks|blocked_by|duplicate_of|related> <target>`;
+for `duplicate_of`, this clears the relation only when the target matches.
 These mutations use the ticket index lock and append history; the DAG walks
 `children`, not `parent`.
 ## Bootstrap: how tickets come into being

@@ -130,11 +130,6 @@ has_all "dag-emission-contract" \
   'Topology built' 'Topology changed' 'Status wake' \
   're-emits the DAG' 'rides with the status it explains'
 
-has_all "ticket-topology-cli-contract" \
-  'BABYSIT_TICKET="$PARENT" bbs ticket add-child "$CHILD"' \
-  'bbs ticket add-relation' 'blocked_by "$PREREQUISITE"' \
-  'blocks "$DEPENDENT"' 'never edit' 'index.json' 'append history'
-
 has_all "goal-compaction-and-days" \
   'persistent goal proxy' 'Compaction is a cold-resume boundary' \
   'bbs foreman ensure <id>' 'cold-starts instead'

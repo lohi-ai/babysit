@@ -30,9 +30,11 @@
 - **Ticket DAG relationships are first-class CLI mutations** — with the
   parent in scope, `bbs ticket add-child <child>` records its `children` list;
   `bbs ticket add-relation <type> <target>` records `blocks`, `blocked_by`,
-  `duplicate_of`, or `related`. `init --parent` and `set-parent` still record
-  the child-side parent field. Both relationship commands use the ticket index
-  lock and append history; Foreman now records these edges through the CLI.
+  `duplicate_of`, or `related`; `remove-relation` removes a matching edge.
+  `init --parent` and `set-parent` still record only the child-side parent field.
+  `add-relation duplicate_of null` clears that scalar relation. These mutations
+  lock the ticket index and append history; Foreman records and updates edges
+  through the CLI.
 - **`setup-skills` puts `bbs` on your `PATH`** — the installer now builds the
   binary and symlinks `~/.local/bin/bbs`, warning when that directory is not on
   `PATH`. It also removes the pre-Go bun shim left at that path by older
