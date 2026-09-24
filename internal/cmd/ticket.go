@@ -14,12 +14,12 @@ import (
 //
 // Every subcommand now runs natively: the identity core (resolve/verdicts/
 // session/board), the index.json state-accessors (env/get/set-status/set-phase/
-// set-parent/set-sibling/set-pointer/get-pointer/ensure-size/append-history),
-// the file-only manifest.yaml ops (init/get-manifest/set-branch), the
-// git-mutating base-ops family (refresh/surface/serve/land), `ensure`, and
-// path/list/reconcile. A byte-identical frozen copy of the retired script
-// survives at tests/fixtures/bbs-ticket.reference as the differential-harness
-// oracle.
+// set-parent/add-child/add-relation/set-sibling/set-pointer/get-pointer/
+// ensure-size/append-history), the file-only manifest.yaml ops (init/
+// get-manifest/set-branch), the git-mutating base-ops family (refresh/surface/
+// serve/land), `ensure`, and path/list/reconcile. A byte-identical frozen copy
+// of the retired script survives at tests/fixtures/bbs-ticket.reference as the
+// differential-harness oracle.
 //
 // Flag parsing is disabled and each subcommand hand-parses its argv, because
 // the bash original hand-parses too and its quirks are part of the contract
@@ -61,6 +61,10 @@ func newTicketCmd() *cobra.Command {
 				runSetPhase(args[1:])
 			case "set-parent":
 				runSetParent(args[1:])
+			case "add-child":
+				runAddChild(args[1:])
+			case "add-relation":
+				runAddRelation(args[1:])
 			case "assign":
 				runAssign(args[1:])
 			case "claim":
@@ -158,7 +162,10 @@ Subcommands:
   get <path>        print a field (dotted path)
   set-status <s>    set ticket status
   set-phase <s>     set current owning skill
-  set-parent <t>    set parent ticket
+  set-parent <t>    set child-side parent link
+  add-child <t>     append child id to current ticket's children
+  add-relation <type> <target>
+                    append blocks|blocked_by|related or set duplicate_of
   assign <foreman-id>|--none    set the owning foreman (assignee)
   claim <foreman-id>             atomically claim an unowned project; same owner is idempotent
   pause [--note M]  human override: stop dispatch, keep status (reversible)
