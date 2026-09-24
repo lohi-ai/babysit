@@ -99,7 +99,7 @@ func runUpgrade(args []string) error {
 	}
 
 	fmt.Println("→ Relinking skills...")
-	setup := exec.Command(filepath.Join(babysit, "bin", "setup-skills"))
+	setup := setupSkillsCmd(filepath.Join(babysit, "bin", "setup-skills"))
 	setup.Stderr = os.Stderr // stdout is dropped, as in `setup-skills >/dev/null`
 	if err := setup.Run(); err != nil {
 		// `set -e` propagates setup-skills' own status, so exit with it rather

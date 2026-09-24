@@ -47,7 +47,8 @@ code — in dependency order, one child at a time:
 After a successful `review`, `land`, or `pr`: archive the settled worker's
 output, `worker-release` it, release the resource lease, and run Orca worktree
 close-out. After `land` or `pr`, also remove the verified-clean non-primary Git
-worktree with ordinary `git worktree remove`; keep the branch. On any failure
+worktree with `bbs ticket worktree-remove` (git worktree remove + bounded
+retry for transient NTFS open handles); keep the branch. On any failure
 or hold, close settled terminals but keep the Git worktree recoverable.
 
 **Orca worktree close-out** — `worker-release` closes only the one agent
@@ -71,7 +72,9 @@ orca worktree set --worktree path:<worktreePath> \
 orca automations list --json                               # land/pr only: rows whose
                                                           #   runContext.path matches
 orca automations edit <id> --disabled --json               #   disable, keep history
-git worktree remove <worktreePath>                          # land/pr only; last
+bbs ticket worktree-remove <worktreePath>                 # land/pr only; last —
+                                                          # retries transient NTFS
+                                                          # open-handle failures
 ```
 
 The bulk terminal close is mandatory even under `review`: it stops setup

@@ -19,6 +19,7 @@ import (
 	"github.com/reallongnguyen/babysit/internal/git"
 	"github.com/reallongnguyen/babysit/internal/identity"
 	"github.com/reallongnguyen/babysit/internal/ticket"
+	"github.com/reallongnguyen/babysit/internal/workspace"
 )
 
 type v2Envelope struct {
@@ -771,11 +772,13 @@ func stringSlice(v interface{}) []string {
 	return out
 }
 
+// samePath delegates to the workspace resolver's canonical compare: absolute +
+// symlink-resolved, and case-insensitive on Windows where NTFS folds case.
+// Empty operands never match — a manifest row without a worktree path must not
+// resolve against the caller's cwd.
 func samePath(a, b string) bool {
 	if a == "" || b == "" {
 		return false
 	}
-	aa, errA := filepath.Abs(a)
-	bb, errB := filepath.Abs(b)
-	return errA == nil && errB == nil && filepath.Clean(aa) == filepath.Clean(bb)
+	return workspace.SamePath(a, b)
 }

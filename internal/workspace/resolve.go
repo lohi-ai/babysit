@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io/fs"
 	"path/filepath"
+	"runtime"
+	"strings"
 )
 
 // Resolver answers topology questions for one repo checkout. It loads the
@@ -128,7 +130,20 @@ func samePath(a, b string) bool {
 	if a == b {
 		return true
 	}
-	return canonPath(a) == canonPath(b)
+	return pathEqual(canonPath(a), canonPath(b))
+}
+
+// fsCaseInsensitive mirrors the platform filesystem's default case handling:
+// NTFS compares case-insensitively, so `C:\Repo` and `c:\repo` are the same
+// directory and a case-sensitive compare would false-negative workspace
+// matching. Tests flip it to exercise the Windows branch on any host.
+var fsCaseInsensitive = runtime.GOOS == "windows"
+
+func pathEqual(a, b string) bool {
+	if fsCaseInsensitive {
+		return strings.EqualFold(a, b)
+	}
+	return a == b
 }
 
 // canonPath is absolute + symlinks resolved where possible. On macOS /tmp is a
