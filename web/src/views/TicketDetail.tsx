@@ -69,15 +69,19 @@ export function TicketDetail({ snapshot, ticketId }: { snapshot: Snapshot; ticke
     return '';
   }, [snapshot, state.project, ticketId]);
 
-  // The last successfully loaded detail, kept across polls so a failed
-  // refetch degrades to a stale banner instead of blanking the page.
-  const [fetched, setFetched] = useState<TicketDetailData | null>(null);
+  // The last successfully loaded detail plus the project it came from, kept
+  // across polls so a failed refetch degrades to a stale banner instead of
+  // blanking the page — and so a ticket that vanishes from the summaries
+  // (trashed mid-view under the 'all' filter) can still be re-fetched once
+  // to learn its 404.
+  const [fetched, setFetched] = useState<{ project: string; detail: TicketDetailData } | null>(null);
   const [detailError, setDetailError] = useState<{ id: string; status: number; message: string } | null>(null);
   const [loading, setLoading] = useState(false);
   const [retryNonce, setRetryNonce] = useState(0);
   const detailCtl = useRef<AbortController | null>(null);
 
-  const detail = embedded ?? (fetched?.id === ticketId ? fetched : null);
+  const detail = embedded ?? (fetched?.detail.id === ticketId ? fetched.detail : null);
+  const fetchProject = project || (fetched?.detail.id === ticketId ? fetched.project : '');
 
   const stale =
     !!detail &&
@@ -85,7 +89,7 @@ export function TicketDetail({ snapshot, ticketId }: { snapshot: Snapshot; ticke
       (summary?.run?.updated_at ?? null) !== (detail.checkpoint?.updated_at ?? null));
 
   const needsFetch =
-    !embedded && mode !== 'readonly' && project !== '' && (!detail || stale);
+    !embedded && mode !== 'readonly' && fetchProject !== '' && (!detail || stale);
 
   useEffect(() => {
     if (!needsFetch) return;
@@ -95,10 +99,10 @@ export function TicketDetail({ snapshot, ticketId }: { snapshot: Snapshot; ticke
     const ctl = new AbortController();
     detailCtl.current = ctl;
     setLoading(true);
-    fetchTicketDetail(project, ticketId, ctl.signal).then(
+    fetchTicketDetail(fetchProject, ticketId, ctl.signal).then(
       d => {
         if (ctl.signal.aborted) return;
-        setFetched(d);
+        setFetched({ project: fetchProject, detail: d });
         setDetailError(null);
         setLoading(false);
       },
@@ -113,8 +117,7 @@ export function TicketDetail({ snapshot, ticketId }: { snapshot: Snapshot; ticke
         setLoading(false);
       },
     );
-  }, [needsFetch, project, ticketId, stale, retryNonce]);
-
+  }, [needsFetch, fetchProject, ticketId, stale, retryNonce]);
   // Abort on ticket change or unmount — never on a poll re-render.
   useEffect(() => {
     return () => {
