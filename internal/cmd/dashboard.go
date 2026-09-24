@@ -28,7 +28,7 @@ import (
 func newDashboardCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:                "dashboard",
-		Short:              "snapshot babysit state into the web dashboard",
+		Short:              "serve the babysit dashboard on localhost and open it",
 		DisableFlagParsing: true,
 		RunE: func(_ *cobra.Command, args []string) error {
 			return runDashboard(args)

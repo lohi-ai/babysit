@@ -192,6 +192,9 @@ production bash remains.
 The formula also drops two argv0 aliases, `bbs-config` and `bbs-env` — only
 those two, which is why skills always call the space form.
 
+Run `bbs dashboard` to open the web control plane — tickets, verdicts,
+approvals, and foremen — served locally from the binary (no npm needed).
+
 It is the half of babysit that the skills call on your behalf: ticket identity,
 verdicts, git-flow moves, telemetry. It does **not** contain the skill pack —
 skills, workflows, and DESIGN.md/CSV data come from the plugin. That's why the

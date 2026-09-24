@@ -12,7 +12,7 @@ const BINDINGS: { keys: React.ReactNode; desc: string }[] = [
   { keys: <><Kbd>Esc</Kbd></>,              desc: 'Close overlay or palette' },
   { keys: <><Kbd>G</Kbd> <Kbd>H</Kbd></>,   desc: 'Go to Home' },
   { keys: <><Kbd>G</Kbd> <Kbd>T</Kbd></>,   desc: 'Go to Tickets' },
-  { keys: <><Kbd>G</Kbd> <Kbd>L</Kbd></>,   desc: 'Go to Live' },
+  { keys: <><Kbd>G</Kbd> <Kbd>L</Kbd></>,   desc: 'Go to Home (was Live)' },
   { keys: <><Kbd>G</Kbd> <Kbd>F</Kbd></>,   desc: 'Go to Foremen' },
   { keys: <><Kbd>G</Kbd> <Kbd>D</Kbd></>,   desc: 'Go to Decisions' },
   { keys: <><Kbd>G</Kbd> <Kbd>S</Kbd></>,   desc: 'Go to Skill events' },
