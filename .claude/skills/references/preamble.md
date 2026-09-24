@@ -168,10 +168,23 @@ _UPD=$(bbs update check 2>/dev/null || true)
 [ -n "$_UPD" ] && echo "$_UPD" >&2 || true
 
 # Session tracking — count concurrent babysit sessions, prune stale (>120 min).
+# Portable loop, not `find -mmin`: on Windows, C:\Windows\System32\find.exe
+# shadows POSIX find on PATH and silently eats these calls (audit
+# bs-b3m7rnkw #9). stat GNU/BSD fallback mirrors bin/hooks/session-writer.
 mkdir -p ~/.babysit/sessions
 touch ~/.babysit/sessions/"$PPID"
-_SESSIONS=$(find ~/.babysit/sessions -mmin -120 -type f 2>/dev/null | wc -l | tr -d ' ')
-find ~/.babysit/sessions -mmin +120 -type f -exec rm {} + 2>/dev/null || true
+_SESSIONS=0
+_NOW=$(date +%s)
+# `ls -A`, not a glob: zsh aborts a sourced script on an unmatched glob
+# (nomatch), and find.exe shadows POSIX find on Windows. Session filenames
+# are [a-zA-Z0-9._-] by construction (the writer rejects anything else), so
+# word-splitting ls output is safe here.
+for _f in $(ls -A ~/.babysit/sessions 2>/dev/null); do
+  _f="$HOME/.babysit/sessions/$_f"
+  [ -f "$_f" ] || continue
+  _MT="$(stat -c %Y "$_f" 2>/dev/null || stat -f %m "$_f" 2>/dev/null || echo 0)"
+  if [ $((_NOW - _MT)) -gt 7200 ]; then rm -f "$_f" 2>/dev/null; else _SESSIONS=$((_SESSIONS + 1)); fi
+done
 
 # Session-writer hook — persist (or refresh) ~/.babysit/sessions/<id>.yaml.
 # Best-effort: the guaranteed path is the bin/hooks/session-writer plugin

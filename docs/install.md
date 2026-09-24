@@ -117,9 +117,13 @@ Released artifacts (no Windows — see below):
 
 **Windows:** `bbs` is cross-compiled for Windows in CI purely as a regression
 check (so a change that breaks the Windows build fails a PR). **No Windows
-artifact is published.** The skill pack itself (preamble, hooks, `bbs <sub>`
-invocations) assumes a POSIX shell — on Windows it needs Git-Bash or WSL;
-native PowerShell/cmd is not supported.
+artifact is published.** The runtime hooks are compiled into `bbs`
+(`bbs hooks pre-tool-gate` / `bbs hooks session-writer`), so they run on any
+OS with no bash or jq on PATH. For native PowerShell/cmd, the skill pack
+ships `.claude/skills/references/preamble.ps1` (the shared preamble — same
+state-echo contract as the bash block) and `bin/setup-skills.ps1` (the
+install mirror); skill bodies still assume a POSIX shell for their own
+commands, so Git-Bash/WSL remains the fully supported path.
 
 ## How the aliases work
 

@@ -10,10 +10,13 @@ The repository's Git pre-commit hook remains separate.
 
 ## Installation and agent contracts
 
-Install Bash, jq, and the companion `bbs` CLI. Plugins ship shell scripts,
-not a compiled `bbs`; use `bin/setup-skills` from a checkout or the documented
-Homebrew install. The gate resolves the plugin's binary, its own sibling
-binary, `~/.local/bin`, legacy Claude installation paths, and PATH.
+Install the companion `bbs` CLI — the hooks are compiled into it as
+`bbs hooks pre-tool-gate` and `bbs hooks session-writer`, so neither bash nor
+jq is required on any OS. Plugins ship no compiled `bbs`; use
+`bin/setup-skills` (POSIX) or `bin/setup-skills.ps1` (PowerShell) from a
+checkout, or the documented Homebrew install. The manifest commands invoke
+`bbs` by name, so it must be on PATH (setup-skills links it into
+`~/.local/bin`).
 
 | Agent | Wiring | Payload / decision |
 | --- | --- | --- |
@@ -22,12 +25,10 @@ binary, `~/.local/bin`, legacy Claude installation paths, and PATH.
 | Grok Build | Plugin loads `hooks/hooks.json` | camelCase input; native deny JSON |
 | OMP | Load `hooks/omp.ts` as an extension | `tool_call` / `tool_result` / `session_start`; native block result |
 
-The command manifest resolves `GROK_PLUGIN_ROOT`, `PLUGIN_ROOT`,
-`CODEX_PLUGIN_ROOT`, then `CLAUDE_PLUGIN_ROOT`. Current Codex documents
-`PLUGIN_ROOT` and the Claude compatibility alias; `CODEX_PLUGIN_ROOT`
-is accepted as a fallback for integrations. Paths are quoted and scripts
-are invoked through Bash so spaces or missing executable bits don't prevent
-launch. A missing root produces an explicit reinstall diagnostic.
+The command manifest calls `bbs hooks <name>` directly — no shell syntax, so
+the same manifest works under POSIX shells, PowerShell, and cmd. The
+`bin/hooks/*` scripts remain as thin `exec bbs hooks <name>` shims for
+installations that still invoke them by path.
 
 For OMP, skills configuration alone does **not** activate these hooks:
 
@@ -62,10 +63,9 @@ checks its persisted verdicts.
 Claude Code and Codex can present their native `ask` decision. Grok and OMP
 return a denial/block with the missing check's reason, so an unattended agent
 can perform the check and retry. No custom prompt or automatic approval is
-introduced. Missing jq returns exit 2 with a diagnostic. OMP also blocks
-process failures, timeouts, and malformed decision responses. Host-native
-timeout/error handling otherwise applies; this is not a universal fail-closed
-boundary.
+introduced. OMP also blocks process failures, timeouts, and malformed
+decision responses. Host-native timeout/error handling otherwise applies;
+this is not a universal fail-closed boundary.
 
 The gate uses the payload's working directory (`tool_input.workdir` when
 provided, otherwise `cwd`). Shell-internal directory changes and `git -C`
@@ -78,7 +78,7 @@ Both snake_case and Grok's camelCase session IDs are supported. Files use
 `${BABYSIT_HOME:-$HOME/.babysit}/sessions`. Codex is identified by its
 session/thread environment or turn payload; OMP supplies its identity explicitly.
 Session IDs containing path separators are rejected. Tracking is advisory;
-missing jq or an unwritable state directory never blocks tool execution.
+an unwritable state directory never blocks tool execution.
 
 ## Removed audits
 
@@ -95,15 +95,18 @@ The gate has one registration instead of five host-specific `if` filters.
 ## Verification
 
 ```sh
-bash tests/test_pre_tool_gate_resolve.sh
+go test ./internal/cmd -run 'TestGate|TestRunPreToolGate|TestSessionWriter|TestClassifyGateStage'
+bash tests/test_autopilot_v2_readiness.sh
 bash tests/test_hook_session_writer.sh
 python3 tests/test_hooks_portability.py
 bun test tests/test_hooks_omp.test.ts
 ```
 
-The compatibility tests execute the shipped command manifest with isolated
-ticket stubs and state directories; OMP tests exercise its adapter contract.
-These tests make no model requests and never execute the proposed release command.
+The Go tests cover the gate's deny/ask/pass matrix (including the enforced v2
+readiness path) and the session writer; the portability suite executes the
+shipped command manifest against real ticket state; the OMP tests exercise
+the adapter contract. These tests make no model requests and never execute
+the proposed release command.
 
 Contracts checked against [Claude Code hooks](https://code.claude.com/docs/en/hooks),
 [Codex hooks](https://developers.openai.com/codex/hooks),

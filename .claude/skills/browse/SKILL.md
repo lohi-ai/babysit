@@ -36,14 +36,18 @@ agent-browser type @e<n> "$(printenv "${QA_ENV_PASSWORD_ENV:-QA_PASS}")"
 If a flow needs a login and the value resolves empty, it's missing from `.babysit/.env` — report `BLOCKED` naming that file; never hardcode or guess a credential.
 **Default: headed + cloakbrowser stealth.** Run agent-browser through [`cloakbrowser`](https://github.com/CloakHQ/cloakbrowser)'s patched Chromium in a visible window — survives Cloudflare Turnstile / FingerprintJS / DataDome, and a watching human sees the flow. agent-browser spawns the binary itself (it can't attach over CDP), so set these once per shell before any `agent-browser` call:
 ```bash
-CB="$(npm root -g)/cloakbrowser/dist/index.js"   # cloakbrowser is ESM-only; import by abs path (NODE_PATH won't resolve it)
+export CB="$(npm root -g)/cloakbrowser/dist/index.js"   # cloakbrowser is ESM-only; import by abs path (NODE_PATH won't resolve it)
+# pathToFileURL is required: on Windows `npm root -g` returns a backslash path
+# (C:\…), which is neither a valid ESM specifier nor survives JS string
+# escaping — import() needs a file:// URL. CB travels via env, never embedded
+# in the JS source (audit bs-b3m7rnkw #10).
 export AGENT_BROWSER_HEADED=1
-export AGENT_BROWSER_EXECUTABLE_PATH="$(node --input-type=module -e "import('$CB').then(m=>m.ensureBinary()).then(p=>process.stdout.write(p))" 2>/dev/null)"
+export AGENT_BROWSER_EXECUTABLE_PATH="$(node --input-type=module -e "import('node:url').then(u=>import(u.pathToFileURL(process.env.CB).href)).then(m=>m.ensureBinary()).then(p=>process.stdout.write(p))" 2>/dev/null)"
 # Deterministic --fingerprint seeded from the session name (NOT cwd — a cd between Bash
 # calls would change a cwd seed). getDefaultStealthArgs() randomizes --fingerprint on every
 # call; that flag feeds agent-browser's per-session launchHash, so a changed value makes it
 # tear down and relaunch the browser — a new window, tabs and logins gone.
-export AGENT_BROWSER_ARGS="$(node --input-type=module -e "import('$CB').then(m=>{const s=process.env.AGENT_BROWSER_SESSION||'bbs';let h=0;for(const c of s)h=(h*31+c.charCodeAt(0))>>>0;const fp=10000+(h%90000);process.stdout.write(m.getDefaultStealthArgs().map(a=>a.startsWith('--fingerprint=')?'--fingerprint='+fp:a).join(','))})" 2>/dev/null)"
+export AGENT_BROWSER_ARGS="$(node --input-type=module -e "import('node:url').then(u=>import(u.pathToFileURL(process.env.CB).href)).then(m=>{const s=process.env.AGENT_BROWSER_SESSION||'bbs';let h=0;for(const c of s)h=(h*31+c.charCodeAt(0))>>>0;const fp=10000+(h%90000);process.stdout.write(m.getDefaultStealthArgs().map(a=>a.startsWith('--fingerprint=')?'--fingerprint='+fp:a).join(','))})" 2>/dev/null)"
 ```
 `ensureBinary()` auto-downloads the ~140MB Chromium on first run (cached at `~/.cloakbrowser/`); `2>/dev/null` keeps the download banner out of the captured path. All `agent-browser` commands then work unchanged. Verify with `agent-browser eval "navigator.webdriver"` → `false`. Use only for legitimate access checks, never to evade authorization.
 Each Bash call is a fresh shell — these exports don't survive to the next call. Re-running the blocks per call is safe (session name and fingerprint are deterministic, so the launchHash stays constant and the daemon is reused), but to skip the repeated `node` startup cost, write all four exports (`AGENT_BROWSER_SESSION` + the three stealth vars) once to `env.sh` in the scratchpad and `source` it at the top of every later call. Don't stash the command in a var hoping word-splitting expands it: zsh doesn't split unquoted vars, so `$CMD click @e1` fails — call `agent-browser …` directly.
