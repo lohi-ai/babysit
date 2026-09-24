@@ -93,6 +93,10 @@ export function TicketDetail({ snapshot, ticketId }: { snapshot: Snapshot; ticke
 
   useEffect(() => {
     if (!needsFetch) return;
+    // A dep change mid-fetch (a poll bumped the summary while a detail was
+    // loading) retires the old request — its response must never overwrite
+    // the newer one.
+    detailCtl.current?.abort();
     // Own controller, independent of useSnapshot's poll: a poll tick must
     // never abort a detail fetch in flight, and a detail fetch must never
     // hold up the next poll.
