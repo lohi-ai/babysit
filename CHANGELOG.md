@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.93.1 — 2026-09-24
+
+### Added
+
+- **Ticket DAG relationship mutations** — `bbs ticket add-child` and
+  `add-relation` persist parent membership and dependency edges through locked
+  ticket mutations. `remove-relation` removes a specific edge, allowing Foreman
+  to update the dependency graph without editing `index.json` directly.
+
+### Fixed
+
+- Relationship commands reject malformed ticket indexes without overwriting
+  them and preserve `duplicate_of null` as the clear sentinel.
+
 ## 1.56.0 — 2026-07-29
 
 ### Changed
@@ -27,14 +41,6 @@
 
 ### Added
 
-- **Ticket DAG relationships are first-class CLI mutations** — with the
-  parent in scope, `bbs ticket add-child <child>` records its `children` list;
-  `bbs ticket add-relation <type> <target>` records `blocks`, `blocked_by`,
-  `duplicate_of`, or `related`; `remove-relation` removes a matching edge.
-  `init --parent` and `set-parent` still record only the child-side parent field.
-  `add-relation duplicate_of null` clears that scalar relation. These mutations
-  lock the ticket index and append history; Foreman records and updates edges
-  through the CLI.
 - **`setup-skills` puts `bbs` on your `PATH`** — the installer now builds the
   binary and symlinks `~/.local/bin/bbs`, warning when that directory is not on
   `PATH`. It also removes the pre-Go bun shim left at that path by older
