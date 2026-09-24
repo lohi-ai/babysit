@@ -576,6 +576,10 @@ func foremanCompletionCurrent(r foreman.Record) error {
 		st := storeForTicket(env, id)
 		doc, err := ticket.ReadDocStrict(st.IndexPath())
 		if err != nil {
+			var re *ticket.ReadError
+			if errors.As(err, &re) && re.Kind == ticket.KindMissing {
+				continue
+			}
 			return err
 		}
 		if doc.Get("assignee") != r.ID || doc.Get("parent") != "" {
