@@ -122,11 +122,15 @@ export function TicketDetail({ snapshot, ticketId }: { snapshot: Snapshot; ticke
       },
     );
   }, [needsFetch, fetchProject, ticketId, stale, retryNonce]);
-  // Abort on ticket change or unmount — never on a poll re-render.
+  // Abort on ticket change or unmount — never on a poll re-render. The
+  // aborted fetch's settle handlers no-op, so loading is reset here too:
+  // an unknown ticket id must land on not-found, not a spinner that never
+  // resolves.
   useEffect(() => {
     return () => {
       detailCtl.current?.abort();
       detailCtl.current = null;
+      setLoading(false);
     };
   }, [ticketId]);
 
