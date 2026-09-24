@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -520,6 +521,12 @@ func projectComplete(st *ticket.Store, id string) error {
 			other := storeForTicket(st.Env, ticketID)
 			d, e := ticket.ReadDocStrict(other.IndexPath())
 			if e != nil {
+				// A stub directory (no index.json) is not a ticket — skip it
+				// rather than wedging completion on leftover state.
+				var re *ticket.ReadError
+				if errors.As(e, &re) && re.Kind == ticket.KindMissing {
+					continue
+				}
 				return e
 			}
 			if d.Get("assignee") != id || ticketID == st.Env.Ticket || d.Get("parent") != "" {
