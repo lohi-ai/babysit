@@ -55,7 +55,7 @@ export function SkillEvents({ snapshot }: { snapshot: Snapshot }) {
 
   return (
     <>
-      <TopBar title="Skill events" count={filtered.length} />
+      <TopBar title="Skill events" count={filtered.length} warnings={snapshot.meta.warnings} />
       <div className="px-6 py-4 w-full space-y-4">
       {truncation && (
         <div

@@ -1,20 +1,26 @@
 import type { ReactNode } from 'react';
 import { Tag } from './Tag';
 import { useControlPlane } from '../contexts/ControlContext';
+import type { SnapshotWarning } from '../lib/data';
 
 export function TopBar({
   title,
   count,
   breadcrumb,
   actions,
+  warnings,
 }: {
   title: string;
   count?: number;
   breadcrumb?: ReactNode;
   actions?: ReactNode;
+  /** Ticket dirs the snapshot walk could not read — rendered once, below the
+   *  bar, so a missing ticket is announced rather than silently absent. */
+  warnings?: SnapshotWarning[];
 }) {
   const { mode, reason } = useControlPlane();
   return (
+    <>
     <div
       className="sticky top-0 z-10 flex items-center justify-between"
       style={{
@@ -59,5 +65,32 @@ export function TopBar({
         {actions && <div className="flex items-center gap-2">{actions}</div>}
       </div>
     </div>
+      {warnings && warnings.length > 0 && (
+        <div
+          role="status"
+          aria-label="Unreadable ticket warnings"
+          className="px-6 py-3"
+          style={{
+            backgroundColor: 'var(--status-started-bg)',
+            color: 'var(--status-started-text)',
+            borderBottom: '1px solid var(--border-emphasis)',
+          }}
+        >
+          <div className="font-medium" style={{ fontSize: 13 }}>
+            {warnings.length === 1
+              ? '1 ticket directory could not be read'
+              : `${warnings.length} ticket directories could not be read`}
+          </div>
+          <ul className="mt-1 space-y-1" style={{ fontSize: 13, paddingLeft: 20, listStyle: 'disc' }}>
+            {warnings.map((w, i) => (
+              <li key={`${w.project}/${w.ticket}/${i}`} className="break-words">
+                <code className="font-mono">{w.ticket || w.project}</code>
+                {' — '}{w.reason}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </>
   );
 }

@@ -176,6 +176,7 @@ export function TicketsList({ snapshot }: { snapshot: Snapshot }) {
             New ticket
           </Button>
         }
+        warnings={snapshot.meta.warnings}
       />
       <div className="px-6 py-4 w-full space-y-4">
       {/* Unfiltered on purpose: a blocked worker that a status chip happens to

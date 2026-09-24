@@ -105,7 +105,7 @@ export function ApprovalPanel({
           }}
         >
           <span style={{ color: 'var(--text-muted)' }}>
-            {approval.requested_by || 'a worker'} asked, {formatRelative(approval.at)}:
+            {approval.requested_by || 'a worker'} asked{approval.at ? `, ${formatRelative(approval.at)}` : ''}:
           </span>{' '}
           {approval.note}
         </div>
