@@ -95,7 +95,6 @@ func invalidLatestName(name string) bool {
 	return name == "" || strings.Contains(name, "/") || strings.Contains(name, "..") || strings.HasPrefix(name, ".")
 }
 
-
 // runSetReview ports set-review (bbs-ticket.bash:1475-1500): overwrite
 // reviews/<skill>.md and append a history row. Unknown args fail loud (exit 2).
 func runSetReview(args []string) {
@@ -295,11 +294,18 @@ var (
 func runQAEvidence(args []string) {
 	env := resolveEnv()
 	needTicket(env)
-	vp := filepath.Join(ticket.New(env).Home(), "verdicts", "qa.md")
+	fmt.Println(qaEvidenceClassify(ticket.New(env).Home()))
+	os.Exit(0)
+}
+
+// qaEvidenceClassify is the reusable read behind qa-evidence and the
+// pre-tool-gate hook: classify the persisted qa verdict under ticketHome as
+// {none|ok|contradiction:<d>|thin:<d>|unexplained}.
+func qaEvidenceClassify(ticketHome string) string {
+	vp := filepath.Join(ticketHome, "verdicts", "qa.md")
 	b, err := os.ReadFile(vp)
 	if err != nil {
-		fmt.Println("none")
-		os.Exit(0)
+		return "none"
 	}
 	lines := strings.Split(string(b), "\n")
 	var status, verdict, rubric, evid, summ string
@@ -354,7 +360,7 @@ func runQAEvidence(args []string) {
 				// Cleaned path escaped evidence/ (traversal) — flag it, never Stat.
 				return "thin:invalid-artifact-path:" + m
 			}
-			if _, err := os.Stat(filepath.Join(ticket.New(env).Home(), p)); err != nil {
+			if _, err := os.Stat(filepath.Join(ticketHome, p)); err != nil {
 				return "thin:missing-artifact:" + p
 			}
 		}
@@ -363,25 +369,23 @@ func runQAEvidence(args []string) {
 
 	switch status {
 	case "BLOCKED", "NEEDS_CONTEXT":
-		fmt.Println("ok")
+		return "ok"
 	case "DONE", "DONE_WITH_CONCERNS":
 		switch verdict {
 		case "PASS", "FIXED":
-			fmt.Println(passCheck())
+			return passCheck()
 		default:
 			if summ+evid != "" {
-				fmt.Println("ok")
-			} else {
-				fmt.Println("unexplained")
+				return "ok"
 			}
+			return "unexplained"
 		}
 	default:
 		switch verdict {
 		case "PASS", "FIXED":
-			fmt.Println(passCheck())
+			return passCheck()
 		default:
-			fmt.Println("ok")
+			return "ok"
 		}
 	}
-	os.Exit(0)
 }

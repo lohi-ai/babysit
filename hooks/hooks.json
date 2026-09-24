@@ -5,7 +5,7 @@
       {
         "matcher": "Bash",
         "hooks": [
-          { "type": "command", "command": "bbs_plugin_root=\"${GROK_PLUGIN_ROOT:-${PLUGIN_ROOT:-${CODEX_PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-}}}}\"; if [ -n \"$bbs_plugin_root\" ]; then exec bash \"$bbs_plugin_root/bin/hooks/pre-tool-gate\"; else echo 'Babysit plugin root is missing; reinstall the plugin' >&2; exit 2; fi", "timeout": 15 }
+          { "type": "command", "command": "bbs hooks pre-tool-gate", "timeout": 15 }
         ]
       }
     ],
@@ -13,14 +13,14 @@
       {
         "matcher": "Bash",
         "hooks": [
-          { "type": "command", "command": "bbs_plugin_root=\"${GROK_PLUGIN_ROOT:-${PLUGIN_ROOT:-${CODEX_PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-}}}}\"; if [ -n \"$bbs_plugin_root\" ]; then exec bash \"$bbs_plugin_root/bin/hooks/session-writer\"; else echo 'Babysit plugin root is missing; reinstall the plugin' >&2; exit 2; fi", "timeout": 10 }
+          { "type": "command", "command": "bbs hooks session-writer", "timeout": 10 }
         ]
       }
     ],
     "SessionStart": [
       {
         "hooks": [
-          { "type": "command", "command": "bbs_plugin_root=\"${GROK_PLUGIN_ROOT:-${PLUGIN_ROOT:-${CODEX_PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-}}}}\"; if [ -n \"$bbs_plugin_root\" ]; then exec bash \"$bbs_plugin_root/bin/hooks/session-writer\"; else echo 'Babysit plugin root is missing; reinstall the plugin' >&2; exit 2; fi", "timeout": 10 }
+          { "type": "command", "command": "bbs hooks session-writer", "timeout": 10 }
         ]
       }
     ]

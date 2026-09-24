@@ -1,10 +1,15 @@
 // OMP uses extension events, not Claude-style command-hook manifests.
-import { realpathSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
 
-const scripts = resolve(dirname(realpathSync(fileURLToPath(import.meta.url))), "../bin/hooks");
+// The hooks are compiled into the bbs binary (`bbs hooks <name>`), so no bash
+// or jq is required on any OS. A sibling build in this checkout wins over PATH
+// so an in-repo extension exercises the same code the tests do; otherwise the
+// installed `bbs` on PATH serves it (setup-skills / brew both put it there).
+const binDir = resolve(dirname(realpathSync(fileURLToPath(import.meta.url))), "../bin");
+const bbs = ["bbs", "bbs.exe"].map((n) => resolve(binDir, n)).find(existsSync) ?? "bbs";
 
 export default function babysit(pi: ExtensionAPI) {
   async function run(name: string, ctx: ExtensionContext, input = {}) {
@@ -12,9 +17,9 @@ export default function babysit(pi: ExtensionAPI) {
       agent: "omp", session_id: ctx.sessionManager.getSessionId(),
       cwd: ctx.cwd, tool_input: input,
     });
-    // Pass the payload as data, never interpolate tool commands into shell code.
-    return pi.exec("bash", ["-c", 'printf "%s" "$1" | bash "$2"',
-      "babysit-hook", payload, resolve(scripts, name)], { cwd: ctx.cwd, timeout: 10000 });
+    // pi.exec has no stdin channel — the payload travels as an argv value,
+    // never interpolated into shell code.
+    return pi.exec(bbs, ["hooks", name, "--payload", payload], { cwd: ctx.cwd, timeout: 10000 });
   }
 
   pi.on("tool_call", async (event, ctx) => {

@@ -180,7 +180,7 @@ once: an installed marketplace plugin wins the name collision.
 
 </details>
 
-Requirements: Claude Code or Codex CLI with plugin support, plus Git — and a POSIX shell environment (macOS, Linux, or Windows via Git-Bash/WSL; native PowerShell/cmd is not supported — see [docs/install.md](docs/install.md) for the platform matrix).
+Requirements: Claude Code or Codex CLI with plugin support, plus Git — and a POSIX shell environment (macOS, Linux, or Windows via Git-Bash/WSL). The compiled hooks (`bbs hooks …`) and the shared PowerShell preamble/install (`references/preamble.ps1`, `bin/setup-skills.ps1`) also run on native PowerShell/cmd — see [docs/install.md](docs/install.md) for the platform matrix.
 
 Recommended, not required to start: **[Orca](https://www.onorca.dev)**, an ADE for running coding agents side by side. `/bbs:autopilot` and everything else run in any terminal — Orca is a **hard dependency only for `foreman`**, which has no other backend: it gives each parallel worker its own terminal tab, diffs in the editor, and the running app in Orca's browser. `foreman` fails fast with an install message when Orca is missing.
 

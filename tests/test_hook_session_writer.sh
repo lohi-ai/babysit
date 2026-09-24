@@ -12,6 +12,10 @@ unset CODEX_SESSION_ID CODEX_THREAD_ID
 SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 HOOK="$SCRIPT_DIR/bin/hooks/session-writer"
 [ -x "$HOOK" ] || { echo "FAIL: $HOOK missing or not executable" >&2; exit 1; }
+# The shim execs `bbs hooks session-writer` — build bbs and put it on PATH.
+BIN_DIR="$(mktemp -d)"; trap 'rm -rf "$BIN_DIR"' EXIT
+( cd "$SCRIPT_DIR" && go build -o "$BIN_DIR/bbs" ./cmd/bbs ) || { echo "FAIL: go build" >&2; exit 1; }
+PATH="$BIN_DIR:$PATH"
 
 PASS=0; FAIL=0; FAIL_NAMES=()
 ok()   { PASS=$((PASS + 1)); printf '  \033[0;32mok\033[0m  %s\n' "$1"; }
