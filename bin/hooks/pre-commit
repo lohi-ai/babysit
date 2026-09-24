@@ -15,7 +15,7 @@ set -uo pipefail
 _bbs_resolve() { # $1=bbs-<sub>
   local name="$1" sub="${1#bbs-}" c
   BBS_ARGV=()
-  for c in "$HOME/.claude/$name" "${CLAUDE_PLUGIN_ROOT:-/nonexistent}/bin/$name" "$HOME/.claude/skills/babysit/bin/$name"; do
+  for c in "$HOME/.claude/$name" "$HOME/.claude/$name.exe" "${CLAUDE_PLUGIN_ROOT:-/nonexistent}/bin/$name" "${CLAUDE_PLUGIN_ROOT:-/nonexistent}/bin/$name.exe" "$HOME/.claude/skills/babysit/bin/$name" "$HOME/.claude/skills/babysit/bin/$name.exe"; do
     if [ -x "$c" ]; then BBS_ARGV=("$c"); return 0; fi
   done
   if command -v "$name" >/dev/null 2>&1; then BBS_ARGV=("$name"); return 0; fi
@@ -23,7 +23,7 @@ _bbs_resolve() { # $1=bbs-<sub>
   # subcommand existed exits 1 silently (internal/cmd/root.go sets
   # SilenceErrors). `bbs help <sub>` is not a usable probe — cobra exits 0 for
   # unknown help topics.
-  for c in "$HOME/.local/bin/bbs" "$HOME/.claude/bbs" "${CLAUDE_PLUGIN_ROOT:-/nonexistent}/bin/bbs" "$HOME/.claude/skills/babysit/bin/bbs" bbs; do
+  for c in "$HOME/.local/bin/bbs" "$HOME/.local/bin/bbs.exe" "$HOME/.claude/bbs" "$HOME/.claude/bbs.exe" "${CLAUDE_PLUGIN_ROOT:-/nonexistent}/bin/bbs" "${CLAUDE_PLUGIN_ROOT:-/nonexistent}/bin/bbs.exe" "$HOME/.claude/skills/babysit/bin/bbs" "$HOME/.claude/skills/babysit/bin/bbs.exe" bbs; do
     if command -v "$c" >/dev/null 2>&1 && "$c" "$sub" --help >/dev/null 2>&1; then
       BBS_ARGV=("$c" "$sub"); return 0
     fi
@@ -47,7 +47,7 @@ if [ -n "$STAGED" ]; then
   while IFS= read -r WF; do
     [ -z "$WF" ] && continue
     # Lint the staged version from the index, not the working tree.
-    TMP=$(mktemp /tmp/bbs-lint-XXXXXXXX.md)
+    TMP=$(mktemp "${TMPDIR:-/tmp}/bbs-lint-XXXXXXXX.md")
     git show ":$WF" > "$TMP" 2>/dev/null || { rm -f "$TMP"; ERRORS=$((ERRORS + 1)); continue; }
     "${AUTOPILOT[@]}" lint-workflow "$TMP" || ERRORS=$((ERRORS + 1))
     rm -f "$TMP"

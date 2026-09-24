@@ -194,7 +194,9 @@ func isBabysitCheckout(babysit string) bool {
 	if r, err := filepath.EvalSymlinks(babysit); err == nil {
 		babysit = r
 	}
-	return top == babysit
+	// EqualFold: Windows drive letters and NTFS paths are case-insensitive,
+	// and git may report forward slashes where os.Executable used backslashes.
+	return strings.EqualFold(filepath.ToSlash(top), filepath.ToSlash(babysit))
 }
 
 // upgradeExternal upgrades an install with no checkout behind it: the Homebrew

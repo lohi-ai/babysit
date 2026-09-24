@@ -55,9 +55,12 @@ fi
 # empty is fine (board just shows no session for the ticket).
 TICKET="${BABYSIT_TICKET:-}"
 if [ -z "$TICKET" ]; then
-case "$CWD" in
+# Native Windows agents report C:\… paths — normalize to slashes so the
+# worktree pattern below matches on either separator.
+CWD_NORM="${CWD//\\//}"
+case "$CWD_NORM" in
   */.babysit/worktrees/*)
-    WT="${CWD##*/.babysit/worktrees/}"; WT="${WT%%/*}"
+    WT="${CWD_NORM##*/.babysit/worktrees/}"; WT="${WT%%/*}"
     TICKET="${WT%%_*}"
     ;;
 esac

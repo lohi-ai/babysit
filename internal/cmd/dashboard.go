@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -137,7 +138,8 @@ func runDashboard(args []string) error {
 	}
 	stateDir := os.Getenv("BABYSIT_STATE_DIR")
 	if stateDir == "" {
-		stateDir = filepath.Join(os.Getenv("HOME"), ".babysit")
+		home, _ := os.UserHomeDir()
+		stateDir = filepath.Join(home, ".babysit")
 	}
 	webDir := filepath.Join(repoRoot, "web")
 	distDir := filepath.Join(webDir, "dist")
@@ -323,7 +325,8 @@ func runDashboard(args []string) error {
 			dashErr("web/dist/ missing; run: bbs-dashboard build")
 			os.Exit(1)
 		}
-		openBrowser("file://" + filepath.Join(distDir, "index.html"))
+		// ToSlash + three slashes: file://C:\… is not a valid URI on Windows.
+		openBrowser("file:///" + strings.TrimPrefix(filepath.ToSlash(filepath.Join(distDir, "index.html")), "/"))
 	}
 	return nil
 }
@@ -497,15 +500,21 @@ func runDevServer(webDir string, size int, open bool) error {
 
 func openBrowser(target string) {
 	var cmd *exec.Cmd
-	if _, err := exec.LookPath("open"); err == nil {
+	switch {
+	case runtime.GOOS == "windows":
+		// rundll32 avoids cmd's `start` quoting pitfalls.
+		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", target)
+	case lookPathOK("open"):
 		cmd = exec.Command("open", target)
-	} else if _, err := exec.LookPath("xdg-open"); err == nil {
+	case lookPathOK("xdg-open"):
 		cmd = exec.Command("xdg-open", target)
-	} else {
-		fmt.Printf("no `open` or `xdg-open`; visit: %s\n", target)
+	default:
+		fmt.Printf("no `open`, `xdg-open`, or rundll32; visit: %s\n", target)
 		return
 	}
 	if err := cmd.Run(); err != nil {
 		dashErr("open failed; visit " + target)
 	}
 }
+
+func lookPathOK(name string) bool { _, err := exec.LookPath(name); return err == nil }

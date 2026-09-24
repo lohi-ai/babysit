@@ -36,13 +36,13 @@ One per finished skill, appended via `bbs ticket` (never write the file
 directly — the helper claims the sequence number and logs the event):
 ```bash
 eval "$(bbs ticket env)"
-cat > /tmp/<skill>-brief.md <<EOF
+cat > "${TMPDIR:-/tmp}/<skill>-brief.md" <<EOF
 SUMMARY: <1–3 sentences: what changed and why>
 FILES: <comma-separated changed files>
 APPROACH: <one-line implementation approach>
 BLAST_RADIUS: <what existing behavior could be affected>
 EOF
-bbs ticket add-handoff <skill> /tmp/<skill>-brief.md
+bbs ticket add-handoff <skill> "${TMPDIR:-/tmp}/<skill>-brief.md"
 ```
 Single-line fields, no markdown headers (downstream skills grep them). A
 field that doesn't apply gets `none`, not omission.

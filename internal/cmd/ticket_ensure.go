@@ -245,7 +245,8 @@ func runEnsure(args []string) {
 				needAdd := true
 				if b, err := os.ReadFile(excl); err == nil {
 					for _, ln := range strings.Split(string(b), "\n") {
-						if ln == ".babysit/worktrees/" {
+						// TrimRight "\r": core.autocrlf=true checkouts carry CRLF.
+						if strings.TrimRight(ln, "\r") == ".babysit/worktrees/" {
 							needAdd = false
 							break
 						}

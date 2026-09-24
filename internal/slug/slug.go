@@ -63,7 +63,7 @@ func Resolve() (*Info, error) { return ResolveIn("") }
 // one the process is standing in. dir == "" means the process cwd, which is what
 // Resolve passes.
 func ResolveIn(dir string) (*Info, error) {
-	home := os.Getenv("HOME")
+	home, _ := os.UserHomeDir()
 	cacheDir := filepath.Join(home, ".babysit", "slug-cache")
 
 	// Key the cache by the repo's PRIMARY worktree, not the cwd. bin/bbs-slug
@@ -77,7 +77,9 @@ func ResolveIn(dir string) (*Info, error) {
 	if projectDir == "" {
 		projectDir = cwdOr(dir)
 	}
-	cacheKey := strings.ReplaceAll(projectDir, "/", "_")
+	// Strip every separator and the drive-letter colon: `\` and `:` are
+	// illegal in Windows filenames and would make the cache unwritable.
+	cacheKey := strings.NewReplacer("/", "_", "\\", "_", ":", "_").Replace(projectDir)
 	cacheFile := filepath.Join(cacheDir, cacheKey)
 
 	// 1. Cached slug wins (consistency across sessions).
