@@ -13,7 +13,12 @@ renders. Do not turn this into a product review unless asked.
   change.
 ## Engine
 Browsing runs on [`agent-browser`](https://github.com/vercel-labs/agent-browser) — `agent-browser open <url>`, then `snapshot -i` for refs, `click @e<n>` / `type @e<n> <text>` / `fill` / `select` to interact (the `@ref` is an argument to a verb, never a bare command), plus `eval`, `screenshot`, `errors`, `vitals`. One-time: `npm install -g agent-browser cloakbrowser`.
-**One agent session = one browser.** The session name is the browser identity: the same name reattaches to that browser's daemon (cookies, tabs, window); a different name — or *no* name, which silently falls through to the shared `default` session — launches another instance. So never derive the name from the target URL, task, or an ad-hoc label (that's how one run leaks N windows and loses the setup done in the previous one), and never run a bare `agent-browser` command before this export (that's the phantom second window at startup):
+**One agent session = one browser.** The session name is the browser identity:
+the same name reattaches to that browser's daemon (cookies, tabs, window); a
+different name — or *no* name, which silently falls through to the shared
+`default` session — launches another instance. Never derive the name from the
+target URL, task, or an ad-hoc label, and never run a bare `agent-browser`
+command before these exports:
 ```bash
 if [ -n "${CLAUDE_CODE_SESSION_ID:-}" ]; then
   export AGENT_BROWSER_SESSION="cc-${CLAUDE_CODE_SESSION_ID:0:8}"
@@ -22,9 +27,13 @@ elif [ -n "${CODEX_SESSION_ID:-}" ]; then
 else
   export AGENT_BROWSER_SESSION="$(agent-browser session id --scope worktree)"
 fi
+export AGENT_BROWSER_IDLE_TIMEOUT_MS=900000
 ```
-Every shell call in this agent session then reuses one window; another agent window gets its own. Refs (`@e<n>`) are per-session: snapshot the session you're about to act on. If parallel subagents each need their own window, give each `export AGENT_BROWSER_NAMESPACE=<agent-id>` on top.
-When the check is done, `agent-browser close` your session. A crashed run leaves its browser behind — on macOS even headless ones keep a Chrome-for-Testing icon in the Dock — so if `agent-browser session list` shows names you don't recognize, `agent-browser close --all` (and per `--namespace <ns>` for anything under `~/.agent-browser/namespaces/`).
+Every shell call in this agent session then reuses one window; another agent
+window gets its own. The idle timeout is a crash backstop for an orphaned
+daemon, not the normal cleanup path. Refs (`@e<n>`) are per-session: snapshot
+the session you're about to act on. If parallel subagents each need their own
+window, give each `export AGENT_BROWSER_NAMESPACE=<agent-id>` on top.
 Sessions are isolated browsers, so login state doesn't carry across agent windows by itself. To share one "profile", add `--restore bbs-profile` to `open` (and `close`): every session loads/saves the same cookies+localStorage bundle under `~/.agent-browser/sessions/`, so a login done in one window is there for the next. Don't point concurrent sessions at one `--profile` dir instead — Chromium locks the user-data-dir per instance.
 **Credentials for a sign-in never live in this skill or the transcript.** When a check needs to log in, take them from the project's standard QA env — `bbs secrets load` exports the gitignored `.babysit/.env` into the shell, and `.babysit/qa.yaml` names which vars hold them (standard: `QA_USER` / `QA_PASS`):
 ```bash
@@ -46,12 +55,45 @@ export AGENT_BROWSER_EXECUTABLE_PATH="$(node --input-type=module -e "import('$CB
 export AGENT_BROWSER_ARGS="$(node --input-type=module -e "import('$CB').then(m=>{const s=process.env.AGENT_BROWSER_SESSION||'bbs';let h=0;for(const c of s)h=(h*31+c.charCodeAt(0))>>>0;const fp=10000+(h%90000);process.stdout.write(m.getDefaultStealthArgs().map(a=>a.startsWith('--fingerprint=')?'--fingerprint='+fp:a).join(','))})" 2>/dev/null)"
 ```
 `ensureBinary()` auto-downloads the ~140MB Chromium on first run (cached at `~/.cloakbrowser/`); `2>/dev/null` keeps the download banner out of the captured path. All `agent-browser` commands then work unchanged. Verify with `agent-browser eval "navigator.webdriver"` → `false`. Use only for legitimate access checks, never to evade authorization.
-Each Bash call is a fresh shell — these exports don't survive to the next call. Re-running the blocks per call is safe (session name and fingerprint are deterministic, so the launchHash stays constant and the daemon is reused), but to skip the repeated `node` startup cost, write all four exports (`AGENT_BROWSER_SESSION` + the three stealth vars) once to `env.sh` in the scratchpad and `source` it at the top of every later call. Don't stash the command in a var hoping word-splitting expands it: zsh doesn't split unquoted vars, so `$CMD click @e1` fails — call `agent-browser …` directly.
-Drop to plain headless (unset the three stealth vars, or `--headless`; keep `AGENT_BROWSER_SESSION`) only when there's no display — CI, a remote box without X — or the caller asks.
+Each Bash call is a fresh shell — these exports don't survive to the next
+call. Re-running the blocks per call is safe (session name and fingerprint are
+deterministic, so the launchHash stays constant and the daemon is reused), but
+to skip the repeated `node` startup cost, write all five exports
+(`AGENT_BROWSER_SESSION`, `AGENT_BROWSER_IDLE_TIMEOUT_MS`, and the three
+stealth vars) once to `env.sh` in the scratchpad and source it at the top of
+every later call. Don't stash the command in a var hoping word-splitting
+expands it: zsh doesn't split unquoted vars, so `$CMD click @e1` fails — call
+`agent-browser …` directly.
+Drop to plain headless (unset the three stealth vars, or `--headless`; keep
+the session and idle-timeout exports) only when there's no display — CI, a
+remote box without X — or the caller asks.
+## Cleanup
+Cleanup is a mandatory finalizer, including on failed checks, tool errors, and
+`BLOCKED` exits. After capturing evidence:
+
+1. Close the exact session with the same session and namespace environment:
+   `agent-browser --session "$AGENT_BROWSER_SESSION" close`. Then confirm that
+   exact name is absent from `agent-browser session list --json`. This closes
+   its cloakbrowser/Chrome-for-Testing children and daemon; the idle timeout is
+   only protection for a process that outlives a crashed agent.
+2. If the run used the iOS provider, record booted simulator UDIDs before the
+   first browser command, shut down only the devices this run booted, and quit
+   `Simulator.app` only when this run launched it and no device remains booted.
+3. Never use `close --all`, `pkill`/`killall` on Chrome or Chromium, or
+   `simctl shutdown all` for routine cleanup. Those can destroy a human's or
+   sibling agent's work. A stale session from an earlier crash may be closed
+   only when its ownership is proven and its owner is no longer active.
+
+Do not emit `STATUS: DONE*` while a browser, daemon, or simulator owned by this
+run remains. Retry its scoped close; if it still cannot be reaped, return
+`BLOCKED` with the exact resource and attempted cleanup. Persistent auth state
+is data, not a live process, and may remain.
+
 ## Output
 End with:
 ```text
 STATUS: DONE | DONE_WITH_CONCERNS | BLOCKED
 SUMMARY: <what was checked, what passed, what failed>
 EVIDENCE: <url, screenshot/log paths, or "none">
+CLEANUP: <closed session and owned auxiliary processes; retained pre-existing resources>
 ```

@@ -316,6 +316,11 @@ step is ever dispatched to a child, a second session, or an external process.
    Subsequent edits invalidate affected gates; run them again before finish.
    On cold resume recover any recorded gate attempt and artifacts; do not
    start a duplicate run while one is still in flight.
+6. **Require cleanup evidence from QA.** Its verdict is incomplete without a
+   `CLEANUP:` line confirming that its exact browser session and every
+   QA-owned auxiliary process exited, while identifying any pre-existing or
+   coordinator-owned resource intentionally retained. Do not infer cleanup
+   from `STATUS: DONE` or from a browser screenshot.
 ### Repair until the final change passes
 Apply this loop to every production workflow before its final handoff:
 
@@ -350,6 +355,31 @@ Apply this loop to every production workflow before its final handoff:
 Leave one release handoff: acceptance results, final revision, review and QA
 evidence, nonblocking residuals, and the exact remaining release action. The
 human should not need to repeat review or QA to discover whether it is ready.
+### Process cleanup gate
+Autopilot owns the lifecycle of every external process its steps start. Keep an
+ownership ledger in the checkpoint/handoff as processes are launched: exact
+browser session and namespace, supervised server/watcher/recorder/proxy
+handles, simulator UDIDs and drivers. Record the relevant pre-existing state
+first; a shared dev server, human browser, or Foreman-owned leased surface is
+not yours to stop.
+
+On every terminal path — success, `NEEDS_CONTEXT`, `BLOCKED`, or a failed step
+that can still run cleanup — close owned resources and wait for exit before
+printing the status block. `qa`/`browse` must perform their own scoped
+finalizers; autopilot reads their `CLEANUP:` evidence and then closes anything
+started by other steps. Do not leave a server or browser running for review:
+durable screenshots/logs are the handoff. Never use broad
+`pkill`/`killall`, `agent-browser close --all`, or simulator-wide shutdown for
+routine cleanup; preserve resources whose ownership is uncertain.
+
+Verify the owned browser session is absent, supervised processes exited, and
+the simulator state returned to its recorded baseline. Retry a scoped close
+once. If any owned process remains, persist its exact resource/PID and cleanup
+attempt, then return `BLOCKED`; neither release readiness nor a passing QA
+verdict overrides this gate. A crash may prevent the finalizer, so browser
+steps also set the bounded idle timeout required by `browse`, but that backstop
+does not replace normal cleanup.
+
 ## Rules
 - Disk state must always be enough for a cold session to resume — but disk is
   the backup, not the brain; in a live session use everything already learned.
@@ -389,6 +419,7 @@ VERDICT: PLANNED | BUILT | FIXED | HANDOFF
 SUMMARY: <acceptance results, final revision, review/QA evidence, release readiness>
 LIFECYCLE: <current stage> -> <next stage | stop>
 TRIGGER: <observed promotion evidence or missing signal>
+CLEANUP: <owned processes stopped and verified; pre-existing/shared resources retained>
 NEXT: /bbs:create-pr for the verified change — or, under a foreman, whatever its
 finish policy does with the ticket
 ```

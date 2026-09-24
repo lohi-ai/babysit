@@ -44,6 +44,12 @@ Exercise the application like a user and leave reproducible evidence.
    the stale surface rather than testing blind. Fixes edit the files in the
    checkout under test — committing them stays the invoking workflow's job —
    re-verify on the updated surface.
+   Before launching anything, record the pre-existing target server and
+   automation resources, then keep an ownership ledger for every process this
+   attempt starts (server handle/PID, browser session/namespace, simulator
+   UDID, Appium or other driver). Prefer supervised process handles over
+   detached shell jobs. Ownership, not process name, decides what cleanup may
+   stop.
    **Foreman final integration mode:** a Task explicitly assigned a prepared
    primary branch/HEAD plus parent acceptance and child/base revision manifest
    tests that exact surface read-only. Verify its identity before and after
@@ -51,7 +57,7 @@ Exercise the application like a user and leave reproducible evidence.
    the coordinator's lease. Report findings to Foreman for child repairs;
    persist evidence/verdict on the parent. Foreman owns environment cleanup
    and restoration under its lease. This explicit mode takes precedence over
-   the worktree protocol and surface-retention rules below.
+   the worktree protocol and surface-ownership rules below.
    Running inside a ticket worktree (a foreman batch) is the other exception: the
    dev server lives in the repo's **primary checkout only** (one heavy tree
    per repo — never npm-install or boot a server in a worktree), so this
@@ -96,6 +102,23 @@ Exercise the application like a user and leave reproducible evidence.
    `bbs ticket path evidence --skill qa --name <f>.png --write`; list the
    paths in `EVIDENCE:`. (Ad-hoc `browse` checks stay screenshot-light; the
    QA verdict's screenshots are the durable proof a human audits later.)
+8. Run the cleanup finalizer before persisting the verdict or returning any
+   status, including `BLOCKED` and tool-error paths. The `browse` skill closes
+   and verifies its exact browser session plus any simulator it booted. Stop
+   every server, driver, recorder, proxy, or watcher this QA attempt started,
+   and wait for exit; leave pre-existing targets and coordinator-owned shared
+   surfaces untouched. In ticket-worktree mode, also run the required
+   `QA_ENV_REVERT` and release the surface lease. In Foreman final integration
+   mode, close this attempt's clients but leave environment restoration to
+   Foreman under its lease.
+
+   Compare the final process state with the ownership ledger. Never use broad
+   `pkill`/`killall`, `agent-browser close --all`, or simulator-wide shutdown
+   as routine cleanup. If an owned process survives a scoped stop, retry once,
+   record the exact process/resource and cleanup command, and return
+   `STATUS: BLOCKED`; a passing product flow does not excuse a leaked
+   automation fleet.
+
 ## Case design
 One case = user journey + expected observable + evidence — *as a user, do
 `<steps>` → observe `<result>`*, not a component check. The **primary
@@ -119,14 +142,12 @@ cases, not zero.
   change looks unrelated". Off-script exploration is mandatory. When the diff
   touches auth, money, or data paths, also run `security-review`.
 
-**Leave the surface serving the ticket** under `smoke`/`standard`, and put
-that URL in the handoff's `NEXT` — the human's review is a browser look, so
-handing back a live URL plus the screenshots below collapses "QA browses,
-releases, human re-serves and browses again" into one. Under `strict` the
-review happens on GitHub: `bbs ticket surface release` before handing off
-and let the evidence travel in the PR body. Exception: in a ticket worktree
-always release, lease included — the surface is shared, and composing the
-batch for review is `serve`'s job, not a QA session's.
+Do not leave a process running solely for human review. Under every rigor tier,
+the screenshots and evidence are the handoff: stop a target this QA attempt
+started, but preserve and name a target that was already running. In a ticket
+worktree always revert and release the shared surface lease. Foreman final
+integration mode still leaves coordinator-owned environment restoration to
+Foreman, while this QA attempt closes every browser/client it created.
 ## Coverage rubric
 Grade every dimension A–D against the change's risk surface; a dimension the
 change can't touch is `N/A` **with a one-line reason** — never a silent skip.
@@ -165,6 +186,9 @@ including `N/A: <reason>`.
 - `VERDICT: FAIL` always pairs with `STATUS: BLOCKED` — never `DONE*`. The
   PR gate treats any `DONE*` status as ready; a failing QA that reports
   `DONE_WITH_CONCERNS` silently opens the gate.
+- A terminal status requires completed cleanup evidence. An owned browser,
+  daemon, simulator, server, driver, recorder, proxy, or watcher still alive
+  forces `STATUS: BLOCKED`, even when the exercised product behavior passed.
 ## Output
 ```text
 STATUS: DONE | DONE_WITH_CONCERNS | NEEDS_CONTEXT | BLOCKED
@@ -173,10 +197,12 @@ SUMMARY: <rigor tier + local target/blocker + flow matrix + findings>
 SOURCES: <context read in step 1: requirement, plan, implement-handoff, review-pr — or conversation-only>
 RUBRIC: flow=<> boundary=<> regression=<> data=<> compat=<> security=<> a11y=<> perf=<> freshness=<>  (grade or N/A each)
 EVIDENCE: <last e2e run: tool + journey + result; screenshot + errors/report paths under evidence/qa/>
+CLEANUP: <owned resources stopped and verified; pre-existing/shared resources retained>
 ```
-When a ticket resolves, persist the **full block** (`RUBRIC` and `EVIDENCE`
-included) — `verdicts/qa.md` is the only artifact a human or orchestrator
-sees after the fact. A `qa-evidence` audit re-checks the body on write and
+When a ticket resolves, persist the **full block** (`RUBRIC`, `EVIDENCE`, and
+`CLEANUP` included) — `verdicts/qa.md` is the only artifact a human or
+orchestrator sees after the fact. A `qa-evidence` audit re-checks the body on
+write and
 the PR/merge gate **denies** a PASS that contradicts its own rubric
 (freshness < A, any C/D dimension) or carries no e2e evidence. Record it even
 when full QA was impossible (`DONE_WITH_CONCERNS` with the named blocker; a
@@ -189,6 +215,7 @@ SUMMARY: ...
 SOURCES: ...
 RUBRIC: flow=<> boundary=<> regression=<> data=<> compat=<> security=<> a11y=<> perf=<> freshness=<>
 EVIDENCE: <last e2e run: tool + journey + result; screenshot/log paths under evidence/qa/>
+CLEANUP: <owned resources stopped and verified; pre-existing/shared resources retained>
 EOF
 )"
 ```
