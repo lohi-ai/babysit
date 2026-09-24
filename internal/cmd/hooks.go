@@ -129,32 +129,37 @@ func gateGitCPush(norm string) bool {
 
 // gateCommand extracts .tool_input.command (or the Grok/Codex spellings).
 // jq picks ONE input object — (.tool_input // .toolInput // .input // {}) —
-// then reads .command // .cmd inside it; a present-but-empty tool_input does
-// not fall through to toolInput.
+// then reads .command // .cmd inside it: `//` falls through only on
+// null/false, so an empty-string command wins over cmd, and a non-string
+// scalar prints verbatim (jq -r).
 func gateCommand(payload map[string]any) string {
 	for _, key := range []string{"tool_input", "toolInput", "input"} {
 		ti, ok := payload[key].(map[string]any)
 		if !ok {
 			continue
 		}
-		if c, ok := ti["command"].(string); ok && c != "" {
-			return c
+		if c, present := ti["command"]; present && c != nil && c != false {
+			return jsonScalar(c)
 		}
-		if c, ok := ti["cmd"].(string); ok && c != "" {
-			return c
+		if c, present := ti["cmd"]; present && c != nil && c != false {
+			return jsonScalar(c)
 		}
 		return ""
 	}
 	return ""
 }
 
-// gateWorkdir mirrors `.tool_input.workdir // .toolInput.workdir // .cwd`.
+// gateWorkdir mirrors `.tool_input.workdir // .toolInput.workdir // .cwd`:
+// `//` falls through only on null/false — a present non-string value prints
+// verbatim under jq -r and then fails cd (deny), so it is returned as-is.
 func gateWorkdir(payload map[string]any) string {
 	for _, key := range []string{"tool_input", "toolInput"} {
-		if ti, ok := payload[key].(map[string]any); ok {
-			if w, ok := ti["workdir"].(string); ok && w != "" {
-				return w
-			}
+		ti, ok := payload[key].(map[string]any)
+		if !ok {
+			continue
+		}
+		if w, present := ti["workdir"]; present && w != nil && w != false {
+			return jsonScalar(w)
 		}
 	}
 	if w, ok := payload["cwd"].(string); ok {
@@ -420,8 +425,9 @@ func sweepStaleSessions(dir string, now time.Time) {
 	}
 }
 
-// jsonScalar renders a JSON scalar the way jq -r prints it (jq's number
-// formatting trims trailing zeros, so 1.5 → "1.5" and 2.0 → "2").
+// jsonScalar renders a JSON value the way jq -r prints it: strings verbatim,
+// numbers trimmed (1.5 → "1.5", 2.0 → "2"), booleans as true/false, and
+// objects/arrays as compact JSON.
 func jsonScalar(v any) string {
 	switch x := v.(type) {
 	case string:
@@ -430,6 +436,12 @@ func jsonScalar(v any) string {
 		return strconv.FormatFloat(x, 'f', -1, 64)
 	case json.Number:
 		return x.String()
+	case bool:
+		return strconv.FormatBool(x)
+	case map[string]any, []any:
+		if b, err := json.Marshal(x); err == nil {
+			return string(b)
+		}
 	}
 	return ""
 }
