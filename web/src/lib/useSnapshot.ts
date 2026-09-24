@@ -59,6 +59,7 @@ export function useSnapshot(): SnapshotState {
         setError(e instanceof Error ? e.message : String(e));
       })
       .finally(() => {
+        if (inFlight.current === ctl) inFlight.current = null;
         if (!ctl.signal.aborted) setLoading(false);
       });
   }, [source]);
@@ -67,7 +68,13 @@ export function useSnapshot(): SnapshotState {
     if (source !== 'server') return;
     refresh();
     const tick = () => {
-      if (document.visibilityState === 'visible') refresh();
+      // Skip rather than abort: a snapshot slower than POLL_MS (a mature state
+      // dir takes seconds) would otherwise have every response discarded by
+      // the aborted check above, and the dashboard would never leave
+      // "Loading babysit state…". Explicit refresh() calls still abort —
+      // a post-mutation read must not be answered by pre-mutation data.
+      if (document.visibilityState !== 'visible' || inFlight.current) return;
+      refresh();
     };
     const timer = window.setInterval(tick, POLL_MS);
     // Coming back to the tab should show current state immediately rather than
