@@ -61,7 +61,8 @@ const foremanDoneCloseGrace = 30 * time.Second
 // the same idle window a long-running loop does. Losing it costs one idle
 // period, so it is written best-effort and never fatal.
 type watchState struct {
-	Fingerprint string `json:"fingerprint"`
+	RuntimeObservedAt string `json:"runtime_observed_at,omitempty"`
+	Fingerprint       string `json:"fingerprint"`
 	// Since is when the pane last changed — the start of the current idle window.
 	Since string `json:"since"`
 	// Nudges counts consecutive nudges that have not produced independent
@@ -337,6 +338,9 @@ func watchTargets(client *orca.Client, id string) ([]foreman.Record, error) {
 // must not produce output every interval, or the signal drowns.
 func watchTick(client *orca.Client, r foreman.Record, o watchOpts, now time.Time) string {
 	if strings.EqualFold(r.Status, "done") {
+		if err := foremanCompletionCurrent(r); err != nil {
+			return fmt.Sprintf("CLOSE-BLOCKED %s — %v", r.ID, err)
+		}
 		// An unparseable heartbeat cannot prove the grace is still running,
 		// so it must not wedge the close: a done foreman's terminal is meant
 		// to be closed, and skipping it here would re-select the record on
@@ -364,6 +368,17 @@ func watchTick(client *orca.Client, r foreman.Record, o watchOpts, now time.Time
 
 	fp := paneFingerprint(pane)
 	s := watchLoad(r.ID)
+	s.RuntimeObservedAt = now.UTC().Format(time.RFC3339)
+	watchSave(r.ID, s)
+	progress, wait, managed := foremanProjectProgress(r, now)
+	if managed {
+		fp = progress
+		// Milestone digests cannot be the watcher's own terminal echo.
+		s.Pending, s.PendingStatus = false, false
+		if wait != "" {
+			return fmt.Sprintf("WAITING %s — reported %s (bounded; agent liveness unknown)", r.ID, wait)
+		}
+	}
 	moved := ""
 	if s.Fingerprint != fp {
 		moved = "MOVING"

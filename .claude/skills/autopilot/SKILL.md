@@ -248,6 +248,15 @@ Planning: `plan-draft`. Coding: `implement`. Landing review: `review-pr`.
 QA: `qa` (no runnable target → record the fallback, use `browse` or a narrow
 local check). Debug: `investigate`. Closing out is the human's `create-pr`
 (or foreman's finish policy) — never autopilot's.
+### Managed project evidence
+
+For a v2 child, read [verification.md](references/verification.md) before the
+review/QA loop. Use its producer to capture gate subjects before checks and
+archive results afterwards. Keep parent acceptance IDs, dependency revisions,
+and write scope in the durable plan/handoff; report milestones and bounded waits
+through `bbs foreman progress`. These are evidence responsibilities, not topology
+or sibling orchestration. Standalone v1 skills keep their existing fallback.
+
 ### Current-session gates (`review-pr`, `qa`)
 Applies to every workflow's `review-pr` and `qa` steps, without an opt-in
 flag. Both gates run in this session, on the session's model: no autopilot

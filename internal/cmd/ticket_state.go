@@ -127,6 +127,17 @@ const statusValid = "triage backlog planned decomposed in_progress in_review blo
 // whichever one moved the ticket.
 func statusSet(st *ticket.Store, status, actor string) error {
 	return withLock(st, func() error {
+		if status == "done" {
+			if _, err := os.Stat(projectContractPath(st)); err == nil {
+				s, err := projectRead(st)
+				if err != nil {
+					return err
+				}
+				if s.Completion != "verified" {
+					return fmt.Errorf("managed project completion requires bbs foreman complete")
+				}
+			}
+		}
 		doc := st.LoadForMutate()
 		old := doc.Get("status")
 		doc.Set("status", status)

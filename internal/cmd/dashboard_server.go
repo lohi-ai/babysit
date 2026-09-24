@@ -68,6 +68,7 @@ func (s *dashServer) mux() *http.ServeMux {
 	m.HandleFunc("POST /api/tickets/{project}/{ticket}/approval/comment", s.handleApprovalComment)
 	m.HandleFunc("GET /api/tickets/{project}/{ticket}/prototype", s.handlePrototype)
 	m.HandleFunc("GET /api/tickets/{project}/{ticket}/readiness", s.handleReadiness)
+	m.HandleFunc("GET /api/tickets/{project}/{ticket}/project", s.handleProject)
 	m.HandleFunc("POST /api/foremen", s.handleSpawnForeman)
 	m.HandleFunc("POST /api/foremen/{id}/retire", s.handleRetireForeman)
 
@@ -82,6 +83,20 @@ func (s *dashServer) mux() *http.ServeMux {
 	})
 	m.Handle("/", http.FileServerFS(s.distFS))
 	return m
+}
+
+func (s *dashServer) handleProject(w http.ResponseWriter, r *http.Request) {
+	st, err := s.ticketStore(r.PathValue("project"), r.PathValue("ticket"))
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	snapshot, err := projectRead(st)
+	if err != nil {
+		writeErr(w, http.StatusUnprocessableEntity, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, snapshot)
 }
 
 // handleReadiness exposes the release evaluator to the served dashboard. It

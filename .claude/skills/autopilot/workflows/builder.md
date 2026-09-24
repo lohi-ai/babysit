@@ -41,7 +41,10 @@ no ticket/requirement, stop with `NEEDS_CONTEXT`.
    leaves the working tree dirty by design — commit its output here. Skills
    are infra-isolated: they edit files; every commit in this workflow is
    autopilot's own step.
-4. Run `review-pr --fix` in the current autopilot session via SKILL.md's
+4. On a v2 checkpoint, use autopilot references/verification.md to begin and
+   record each gate around its actual execution. New managed children require
+   this producer; plain markdown verdicts cannot satisfy their readiness.
+   Run `review-pr --fix` in the current autopilot session via SKILL.md's
    **Current-session gates (`review-pr`, `qa`)** policy (applies fixes to
    the working tree), then persist and read back the
    verdict with `bbs ticket set-verdict --skill review-pr` and

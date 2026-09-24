@@ -1,5 +1,14 @@
 @import "tailwindcss";
 
+.project-panel { font-size: 13px; overflow-wrap: anywhere; min-width: 0; }
+.project-table { width: 100%; border-collapse: collapse; min-width: 560px; }
+.project-table th, .project-table td { text-align: left; vertical-align: top; padding: 12px 8px; border-bottom: 1px solid var(--border-hairline); }
+.project-table th { font-size: 11px; font-weight: 500; color: var(--text-secondary); }
+.project-table td:first-child { width: 38%; }
+.project-panel summary { cursor: pointer; min-height: 44px; display: list-item; padding-top: 10px; }
+.project-panel a { color: var(--accent); }
+.project-panel button:not(:disabled) { min-height: 44px; }
+
 @theme {
   --color-bbs-accent: oklch(0.58 0.18 268);
   --font-mono: "Berkeley Mono", "JetBrains Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;

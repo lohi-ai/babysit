@@ -105,6 +105,8 @@ func runAutopilot(args []string) {
 		} else {
 			ladder().attemptV2(rest)
 		}
+	case "verification":
+		ladder().verification(rest)
 	case "base-branch":
 		fmt.Println(project().baseBranch())
 	case "git-flow":

@@ -22,9 +22,11 @@ with a prototype the human can open.
    - **Existing product:** derive it from what ships — extract tokens from
      the live styles, inventory components (`bbs design components`), codify
      the de facto reuse rules. No rebrand.
-   - **New project (no UI yet):** brand and style are the human's call — a
-     User Challenge. Gather product type, audience, mood/style keywords, and
-     any brand color via the mode's escalation surface, draft with
+   - **New project (no UI yet):** derive routine brand/style choices from the
+     accepted audience, product intent and constraints through the Taste
+     framework. A durable Foreman `--auto` delegation covers those choices.
+     Missing audience, conflicting brand requirements or a material direction
+     change is a User Challenge through the invocation channel. Draft with
      `bbs design suggest --product "<type>"` (product types in
      `data/products.csv`), write DESIGN.md, then prototype against it.
    Record how the file was authored as the first Decisions Log row.
@@ -76,11 +78,13 @@ with a prototype the human can open.
   either one provides.
 - Every prototype element maps to a named component in DESIGN.md's inventory,
   or is flagged `NEW:` in the spec with a one-clause why — a novel component
-  is a decision the human approves, never an accident.
+  is a logged Taste decision within accepted direction. Respect an explicit
+  human-held checkpoint; novelty alone does not override design delegation.
 - On an existing page, the sibling sections outrank the global inventory:
   reuse the exact section/card/form primitives that page already uses;
   diverging from the host page's local patterns is itself a `NEW:` flag,
-  not a taste choice.
+  and a logged decision with its reason. A material direction change returns
+  to the parent checkpoint.
 - Prototype code is disposable and isolated: never wire it into production
   navigation, routes, or shared state — `implement` rebuilds it properly
   following this spec; do not build the production feature here.

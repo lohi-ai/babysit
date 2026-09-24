@@ -82,9 +82,10 @@ type Record struct {
 	// reader because every `bbs foreman mailbox wait` is a separate process:
 	// a delivery id held in memory dies with the call that fetched it, and the
 	// batch it would have acknowledged replays for ever.
-	Delivery  string `yaml:"delivery,omitempty"`
-	Status    string `yaml:"status"`
-	Heartbeat string `yaml:"heartbeat"`
+	Delivery   string `yaml:"delivery,omitempty"`
+	Status     string `yaml:"status"`
+	Heartbeat  string `yaml:"heartbeat"`
+	Completion string `yaml:"completion,omitempty"`
 	// Unreachable is the RFC3339 stamp of the last poke that could not be
 	// delivered to this foreman's workspace, cleared on the next one that
 	// lands. It is a separate field from Status because the two answer

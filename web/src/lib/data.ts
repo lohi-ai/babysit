@@ -234,6 +234,7 @@ export interface TicketDag {
 }
 
 export interface TicketDetail extends TicketSummary {
+	project_contract?: string | null;
   requirement: string | null;
   plan: string | null;
   design: string | null;

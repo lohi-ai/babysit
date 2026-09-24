@@ -26,6 +26,15 @@ const foremanUsage = `Usage:
   bbs foreman list
   bbs foreman inbox <id>
   bbs foreman report <parent-ticket>     read the last durable project report
+  bbs foreman contract <parent> --file project.json
+  bbs foreman bind <parent> --seed <key> --child <ticket>
+  bbs foreman snapshot <parent> --json
+  bbs foreman readiness <parent> --action dispatch|finish --json
+  bbs foreman seal <child>               preserve verified v2 inputs before delivery
+  bbs foreman evidence <parent> --begin --file spec.json
+  bbs foreman evidence <parent> --attempt <id> --file results.json
+  bbs foreman progress <ticket> --file progress.json
+  bbs foreman complete <parent> --foreman <id>
   bbs foreman register <id> [--dir <path>] [--workspace-title <title>] [--session <uuid>]
   bbs foreman adopt [<id>] [--agent <name>] [--auto]
   bbs foreman heartbeat <id> [--status <status>] [--session <uuid>]
@@ -106,6 +115,8 @@ func dispatchForeman(args []string) error {
 		return foremanInbox(rest)
 	case "report":
 		return foremanReport(rest)
+	case "contract", "bind", "snapshot", "readiness", "seal", "evidence", "progress", "complete":
+		return foremanProjectCommand(sub, rest)
 	case "register":
 		return foremanRegister(rest)
 	case "adopt":
@@ -155,7 +166,7 @@ func foremanFlags(args []string) (id string, kv map[string]string, err error) {
 			return "", nil, fmt.Errorf("foreman: unexpected argument '%s'", a)
 		}
 		key := strings.TrimPrefix(a, "--")
-		if key == "keep-workspace" || key == "unbounded" || key == "once" || key == "ack" || key == "auto" { // the boolean flags
+		if key == "keep-workspace" || key == "unbounded" || key == "once" || key == "ack" || key == "auto" || key == "json" || key == "begin" { // the boolean flags
 			kv[key] = "1"
 			continue
 		}
@@ -451,6 +462,11 @@ func foremanHeartbeat(args []string) error {
 		return err
 	}
 	if s := kv["status"]; s != "" {
+		if strings.EqualFold(s, "done") {
+			if err := foremanCompletionCurrent(r); err != nil {
+				return fmt.Errorf("use foreman complete: %w", err)
+			}
+		}
 		r.Status = s
 	}
 	if s := kv["session"]; s != "" {

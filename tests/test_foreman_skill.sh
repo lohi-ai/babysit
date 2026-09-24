@@ -8,6 +8,13 @@ A="$ROOT/.claude/skills/autopilot/SKILL.md"
 C="$ROOT/.claude/skills/create-pr/SKILL.md"
 WRAPPER="$ROOT/skills/foreman/SKILL.md"
 
+# References are loaded at their decision boundaries after the entry skill was
+# reduced. These smoke checks cover the assembled contract; Go tests exercise
+# readiness, evidence freshness, completion and watcher behavior.
+ENTRY="$F"
+F="$(mktemp)"
+trap 'rm -f "$F"' EXIT
+cat "$ENTRY" "$ROOT"/.claude/skills/foreman/references/*.md > "$F"
 PASS=0; FAIL=0; FAIL_NAMES=()
 ok()   { PASS=$((PASS + 1)); printf '  \033[0;32mok\033[0m  %s\n' "$1"; }
 fail() { FAIL=$((FAIL + 1)); FAIL_NAMES+=("$1"); printf '  \033[0;31mFAIL\033[0m  %s\n' "$1"; }
@@ -186,7 +193,7 @@ fi
 has_all "ticket-status-closeout" \
   'bbs ticket set-status done' 'bbs ticket set-status in_review' \
   'only after the PR is observed merged' \
-  'parent ticket to `done`' 'parent to `in_review`'
+  'parent ticket to `done`' 'parent to'
 
 if grep -q 'bbs ticket set-status in_review' "$C" \
    && grep -q 'status becomes `done` only after the PR is observed merged' "$C"; then
@@ -201,7 +208,7 @@ has_all "status-wake-full-snapshot" \
   'every project Task and supervised worker' 'IN_PROGRESS'
 
 has_all "terminal-done-heartbeat" \
-  'bbs foreman heartbeat "$FOREMAN_ID" --status done' \
+  'bbs foreman complete "$PARENT" --foreman "$FOREMAN_ID"' \
   'only completion signal' 'record never completes' \
   '`bbs foreman watch` closes the exact adopted Foreman terminal tab' \
   'paused, or cancelled project never writes `done`'

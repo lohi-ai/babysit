@@ -172,6 +172,10 @@ func (e *snapshotError) Error() string { return e.Message }
 // itself violate the read-purity contract. One changed sample is retried and a
 // persistently moving state is reported rather than returned as a mixed view.
 func collectAutopilotSnapshot(a *apState, explicitTicket string) (*autopilotSnapshot, error) {
+	return collectAutopilotSnapshotIn(a, explicitTicket, "")
+}
+
+func collectAutopilotSnapshotIn(a *apState, explicitTicket, dir string) (*autopilotSnapshot, error) {
 	for attempt := 0; attempt < 2; attempt++ {
 		ticketID := a.ticket
 		if explicitTicket != "" {
@@ -193,7 +197,7 @@ func collectAutopilotSnapshot(a *apState, explicitTicket string) (*autopilotSnap
 		if err != nil {
 			return nil, err
 		}
-		s, err := collectAutopilotSnapshotOnce(a, ticketID, ticketHome)
+		s, err := collectAutopilotSnapshotOnceIn(a, ticketID, ticketHome, dir)
 		if err != nil {
 			return nil, err
 		}
@@ -210,7 +214,11 @@ func collectAutopilotSnapshot(a *apState, explicitTicket string) (*autopilotSnap
 }
 
 func collectAutopilotSnapshotOnce(a *apState, ticketID, ticketHome string) (*autopilotSnapshot, error) {
-	top := gitOut("rev-parse", "--show-toplevel")
+	return collectAutopilotSnapshotOnceIn(a, ticketID, ticketHome, "")
+}
+
+func collectAutopilotSnapshotOnceIn(a *apState, ticketID, ticketHome, dir string) (*autopilotSnapshot, error) {
+	top := gitOutIn(dir, "rev-parse", "--show-toplevel")
 	if top == "" {
 		return nil, &snapshotError{Code: "NOT_A_REPOSITORY", Message: "snapshot requires a git repository", Exit: 3}
 	}

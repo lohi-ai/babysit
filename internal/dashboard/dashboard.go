@@ -289,6 +289,7 @@ func ticketDetail(o Options, projectDir, tdir string) (obj, bool) {
 		"design":           fileCappedOrNull(filepath.Join(tdir, "design.md"), 51200),
 		"prototype":        prototype(tdir),
 		"manifest":         fileCappedOrNull(filepath.Join(tdir, "manifest.md"), 51200),
+		"project_contract": fileCappedOrNull(filepath.Join(tdir, "project.json"), 51200),
 		"repos":            repos,
 		"checkpoint":       checkpoint,
 		"history":          history,

@@ -17,6 +17,8 @@ Follow [the preamble](../references/preamble.md),
 read them by path, not as `skill://`. Taste is decided and logged.
 Read [the project contract](references/project-contract.md)
 in full at entry and cold resume: project approval, durable report, final QA.
+Read [execution.md](references/execution.md) for the acceptance contract, CLI
+producers, first usable journey, progress/waits and completion boundary.
 Escalate at the project design checkpoint (unless `--auto`), or for User
 Challenges, the non-delegable money/auth/irreversible-data
 floor, an explicit human hold, or an action the repo did not authorize.
@@ -208,7 +210,7 @@ a full project reconciliation, never a liveness-only reply. One tick:
    resource use — the full TICKETS/INTEGRATION_QA/RESOURCES snapshot, not only
    state changes — with the project DAG (`bbs ticket dag "$PARENT" --mermaid`,
    **The project DAG**) so the shape rides with the status it explains.
-5. Dispatch the maximum admitted ready wave, retry only proven failed/stopped
+5. After the first usable journey passes product review, dispatch the maximum admitted ready wave; before then admit that journey and its prerequisites. Retry only proven failed/stopped
    Dispatches, and release settled workers and their resource leases when not
    immediately reused. Remain active for the next bounded check; a tick with
    work remaining is not a terminal outcome.
@@ -288,150 +290,7 @@ the coordinator, but it is not accepted scope until represented on disk.
 
 ## Decompose and prepare topology
 
-Before step 2, pass **Project design checkpoint** in the project contract.
-Step 1 drafts seeds and interfaces; it does not authorize child worktrees or
-production dispatch. Reuse current approved artifacts on resume.
-
-1. Run the real `plan-draft` skill against the parent. Slice into
-   **independent, testable, releasable units**: a child must stand alone as a
-   reviewable change — its own branch, its own `review-pr` + `qa`, its own
-   revert. Size each child to the smallest unit that still satisfies those
-   three, and never split one coherent change across siblings to widen the DAG
-   or fill the worker bound: over-decomposition pays a whole plan/build/QA
-   cycle per child and invents ordering the code does not have. If the slices
-   only land together, they are one ticket.
-   A slice too large for one worker pass is equally not a reason to grow the
-   project graph. Dispatch it with a Task spec that tells the `autopilot`
-   worker to split the work into sub-tickets or to implement it in explicit
-   phases inside its own ticket, and gate on that child's single branch,
-   verdict set, and handoff. Any sub-ticket needing its own worktree is linked
-   on both sides to the parent and added to the DAG like any other child, so
-   foreman stays the only owner of topology.
-   Keep genuine ordering as `blocked_by`/`blocks`; never remove a real
-   dependency to widen the ready wave or shorten the graph.
-   In the parent `manifest.md`, map every acceptance criterion to its proposed
-   child seed and verification evidence, including cross-ticket journeys. Keep
-   the parent plan thin; manifest seed keys stay stable when ticket ids are
-   allocated after approval (record those ids in ticket relations/report).
-   Assign each
-   child exactly one archetype workflow and persist it with
-   `BABYSIT_TICKET="$TICKET" bbs ticket set-pointer workflow <workflow>`;
-   default to `builder` only when the work shape is ordinary production work.
-   For a requested lifecycle loop, model promotion as dependency edges and
-   create or unblock the next child only when the prerequisite handoff's
-   `LIFECYCLE` and `TRIGGER` evidence satisfy autopilot's Lifecycle loop. Do not
-   create or pre-admit speculative grower or maintainer work before its metric or
-   operational signal exists. Record shared
-   interfaces (API/data shape, compatibility, migration order) before their
-   consumers start. Shared-file edits need explicit ownership or ordering;
-   separate worktrees alone do not make conflicting changes independent.
-   Missing required coverage becomes a child or an in-scope repair assignment,
-   never an unexplained omission. Escalate only if closing it changes accepted
-   product scope or requires a non-delegable decision.
-2. For each accepted seed, run `bbs ticket ensure --mode=worktree
-   --from-input-file "$SEED_PATH" --reason foreman-decompose` from the
-   canonical repo/base. `ensure` owns the ticket id, branch naming, and
-   initial checkout — it only cuts on its slow path, so never pre-create the
-   ticket id: a resolved `BABYSIT_TICKET` forces the fast-path no-op and no
-   worktree is made. Parse and persist its `TICKET`/`BRANCH`/`WORKTREE`
-   output; never `eval` it. Existing child → read `manifest.yaml` and reuse
-   its exact branch/worktree instead of calling `ensure` again.
-3. Initialize each child as a sub-ticket from inside its own worktree:
-   `bbs ticket init --parent <parent> --origin-type sub_ticket --seed <seed
-   path> --plan <parent plan> --position <n> --worktree <path>`. Running it
-   from the worktree records the ticket branch in `pointers.branch`; from
-   the primary it would record `main`. Write `requirement.md`, link both
-   sides of every relation, and assign parent and children to this foreman.
-   The moment both sides of every relation are linked, emit the DAG with the
-   dispatch plan — **The project DAG**.
-4. Validate the primary checkout, `git worktree list`, every recorded path,
-   branch head, and configured base before dispatch. Recreate a missing clean
-   worktree only from its recorded branch. A dirty or divergent worktree is a
-   recovery case, not permission to replace it.
-5. A dependent child starts only after its prerequisites passed per-ticket
-   gates. Bring prerequisite branch heads into the dependent worktree with a
-   normal recorded merge before dispatch. Persist the exact prerequisite SHAs
-   in its Task assignment/handoff. On conflict, leave the conflict to a
-   supervised worker on that ticket; foreman never edits the resolution.
-   If a prerequisite is repaired later, invalidate affected dependents and
-   parent integration evidence. At a settled worker boundary, merge the new
-   prerequisite revision into each affected dependent and dispatch repair /
-   re-verification in dependency order. Never merge into a live worker's tree
-   or accept its old gates as proof for a dependency revision it never tested.
-
-Resolve the worker bound on every fresh invocation or resume:
-
-```bash
-MAX_WORKERS="$(bbs config get parallel_max_workers 2>/dev/null || true)"
-[ -n "$MAX_WORKERS" ] || MAX_WORKERS=4
-```
-
-An explicit `MAX_WORKERS` value must be a positive integer; otherwise report
-`BLOCKED` with the invalid value. It is a per-foreman ceiling, not the host
-safety limit. Every ready Task must also reserve machine-global weighted
-capacity through `bbs foreman resource` before `worker-start`; the broker
-atomically serializes all foremen and derives a host CPU/RAM budget
-from the current host. `parallel_global_units` may lower that automatic budget
-but never raise it. Current CPU or memory pressure queues new work without
-stopping a running worker.
-
-Classify the Task from its requirement, plan, and acceptance commands:
-
-| Profile | Use for |
-|---|---|
-| `plan` | planning, design feedback, and other read-only work |
-| `standard` | ordinary implementation, compilation, and tests |
-| `android-simulator` | Android emulator/device acceptance |
-| `ios-simulator` | iOS simulator acceptance |
-| `local-ml` | local model loading, training, or inference |
-
-If workload evidence is ambiguous between `standard` and a heavy profile, use
-the heavy profile. Simulator profiles reserve the shared mobile stack and GPU;
-`local-ml` reserves the GPU. Before each new or reused Dispatch:
-
-```bash
-RESOURCE_OUT="$(bbs foreman resource reserve "$FOREMAN_ID" \
-  --ticket "$TICKET" --task "$ORCA_TASK_ID" --profile "$RESOURCE_PROFILE")"
-```
-
-Parse `ADMISSION` and `LEASE` from the output; never `eval` it. `queued` means
-leave that Task pending and dispatch other admitted work: resource backpressure
-is not a failed attempt. `reserved` means immediately persist the lease id as
-`pointers.resource_lease` on that ticket, then call `worker-start`. If worker
-creation fails, release the lease before retrying. Keep one writer per child worktree;
-never exceed `MAX_WORKERS` even when global capacity remains. The broker also
-checks `parallel_max_workers` atomically, counting current reservations rather
-than historical worker rows.
-A reservation is keyed by Foreman + Orca Task and is idempotent across resume.
-After an interruption or a delayed launch, heartbeat the foreman and repeat
-`reserve` immediately before `worker-start`; persist the returned lease id again.
-Each replacement reservation has a new id, so an old cleanup cannot release it.
-A launch reservation with no new Dispatch is reclaimed after ten minutes if its
-owner is stale or missing. A live Dispatch never expires merely because the
-foreman stopped heartbeating or the laptop slept.
-
-Both `reserve` and `status`, plus the detached watcher, reconcile all foremen's
-leases. An exited agent whose Dispatch is still active is stopped by exact
-Dispatch id, then its terminal state is verified before its lease is released.
-A live agent or unverifiable remote host retains capacity; `RESOURCE_HELD`
-explains unresolved recovery. Follow Orca's recovery evidence for these workers,
-not repeated blind waits or a manual release based only on age. Count only
-current held reservations toward the worker ceiling, and retry stopped Tasks
-through their failed Dispatch, preserving worktrees and checkpoints.
-Release a settled reservation with
-`bbs foreman resource release "$RESOURCE_LEASE"`, then clear
-`pointers.resource_lease`. When reusing a settled worker for a new Dispatch,
-release the old Task's lease and reserve the new Task's profile first.
-
-Every worker Task spec must establish the execution envelope before naming its
-ticket work: this is a supervised Orca Dispatch, its effective
-`AGENT_ROLE=orca`, and it is already spawned. It also names the resource
-profile Foreman reserved for this Task. The worker invokes the installed skill
-directly in that turn, skips any developer `/goal` copy/paste handoff, uses
-Orca `ask` for a genuine User Challenge, and follows the injected lifecycle
-through exactly one `worker_done`. This statement in the Task spec is
-load-bearing because `worker-start --agent` does not expose an environment
-option; never assume a coordinator shell export reached the worker process.
+Read [topology](references/topology.md) before creating or changing children. It owns accepted seeds, worktrees, dependencies and global resource admission.
 
 ## The project DAG
 
@@ -474,83 +333,7 @@ the terminal snapshot until the project finishes.
 
 ## Worker model and effort routing
 
-The pack's canonical harness → model list is
-[model routing](../references/model-routing.md): the tier definitions, each
-harness's ladder with capacity and list prices, the phase-routing table, and
-the tier → model rows. Read it before dispatch. It is the one place those IDs
-are written down, so never invent a model ID and never read an agent type name
-as a model name.
-
-Classify the ticket once as `simple`, `normal`, or `critical` / `hard` from its
-requirement, plan, and acceptance commands. Then route by phase:
-
-- Plan and design-feedback Dispatches use the ticket tier. Hard planning takes
-  the strongest normally routed planner: Codex `gpt-5.6-sol` at `high`, Claude
-  `opus` at `high`, or OMP `@slow` under the current canonical table.
-- Build, review, and per-ticket QA use `simple` for a simple ticket and
-  `normal` otherwise. Hardness does not make ordinary implementation occupy
-  the planning rung: a hard ticket drops to the normal row for Build.
-- Integration QA classifies the composed parent surface independently and may
-  use the hard route for cross-system or non-delegable reasoning.
-
-Almost every implementation runs on the routine rung — `gpt-5.6-sol`, `opus`,
-`@default`. The top rung (`gpt-6-astra`, Fable 5.1) costs 2–2.5x the workhorse
-per token and a foreman multiplies that across a batch, so a `critical`
-classification alone never buys it. Escalate only under the shared table's
-trigger: floor or cross-system work whose workhorse attempt already came back
-short. Name the trigger beside the model, log the cost, and keep escalation to
-the Plan or gate Dispatch that needs it. Ordinary Build still returns to the
-normal route.
-
-Take the row for the harness this worker actually runs on — the CLI
-`worker_agent` selects for this run, which `bbs foreman worker-command
---prompt <text>` resolves and preflights (its printed command leads with that
-agent). A model ID from another harness's ladder is not a valid start for this
-one. Pass both values on a fresh-worker start:
-
-```bash
-orca orchestration worker-start --task "$ORCA_TASK_ID" --worktree current \
-  --agent <worker agent> --model <model> --effort <effort> --json
-```
-
-`--effort` requires `--model`, neither combines with `--terminal`, and both
-apply only where that agent and model take them. Read the receipt:
-`launch.effective` is the model the worker actually got, and a receipt that
-does not echo the request means the start ran without it — record that
-limitation, never assume the route was honored. An explicit phase-specific
-model or effort the user named wins over the table.
-
-Two cases start without a model flag, each recorded with the Dispatch's
-handoff: the harness or its connected worker server does not accept launch
-preferences, or the harness has no ladder in the shared table. An `omp` worker
-keeps its role binding and a `grok` worker its `grok-4.6` default; persist
-that resolved value rather than leaving it empty. Phase routing still applies
-to them as recorded intent — a hard `omp` ticket releases its planner and
-starts a fresh Build worker like any other — but both phases run on the bound
-role, so `planner_model` and `worker_model` persist the same resolved value.
-
-Persist Plan and Build routes separately so resume and retry cannot silently
-collapse them:
-
-```bash
-BABYSIT_TICKET="$TICKET" bbs ticket set-pointer planner_model "<model-or-role>"
-BABYSIT_TICKET="$TICKET" bbs ticket set-pointer planner_effort "<effort-or-unsupported>"
-BABYSIT_TICKET="$TICKET" bbs ticket set-pointer worker_model "<model-or-role>"
-BABYSIT_TICKET="$TICKET" bbs ticket set-pointer worker_effort "<effort-or-unsupported>"
-```
-
-A hard ticket always archives and releases its settled planner, releases the
-Plan resource lease, then starts a fresh normal Build worker rather than
-`--terminal` reuse — even when Codex maps both phases to `gpt-5.6-sol`. Simple
-and normal tickets may reuse a settled worker only when the exact agent,
-model/role, effort, and resource profile match. Re-classify and overwrite these
-pointers only when accepted scope changes. Phase route → model is a Taste
-decision: log the ticket tier, phase, harness, model, effort, and classifying
-evidence through the Auto-Decision Framework.
-
-This routes workers. Foreman's own session model is whatever `foreman_agent`
-launched on; it cannot be changed mid-run, and a multi-day coordinator should
-stay on a routine rung rather than charging top-rung rates for reconciliation.
+Read [worker routing](references/worker-routing.md) before allocating or retrying a worker. The canonical harness/model table and launch receipts govern model selection.
 
 ## Two-phase ticket dispatch
 
@@ -665,126 +448,7 @@ cannot report `DONE` while a required child or integration gate is blocked.
 
 ## Eager per-ticket finish
 
-A child whose finish prerequisites pass finishes at the tick that observes it.
-PR/review-ready tickets and settled workers need not wait for final project
-QA. Local lands wait for the last per-ticket surface mutation and pre-land
-integration gate, because those operations can reset base.
-
-An evidence-only child is eligible when its workflow verdict, acceptance
-evidence, lifecycle signal, and clean worktree are current. Archive its
-artifacts, run `BABYSIT_TICKET="$CHILD" bbs ticket set-status done`, release and
-close its worker surfaces, and remove the verified-clean non-primary worktree;
-keep the branch.
-If any code changed, use the code-bearing path instead.
-
-A code-bearing child is eligible when all of these hold:
-
-- current `review-pr` + `qa` verdicts are DONE or DONE_WITH_CONCERNS;
-- `bbs ticket readiness --action <land|pr|review> --json` allows that exact
-  action — under `review` it still guards a dirty tree, an active attempt,
-  and stale evidence, even though Foreman performs no merge or remote write;
-- every prerequisite child has itself finished (landed, PRed, or — under
-  `review` — gates passed); dependency order is preserved, never reordered;
-- under `land`, every required code-bearing child has settled per-ticket
-  review/QA, no worker can still compose the primary, and any Pre-land
-  integration QA Task passed. `surface compose` resets local base to
-  `origin/<base>` and would discard an early merge. Final Integration QA
-  depends on these lands, so it must not be a prerequisite of the land handler.
-
-Foreman runs the handler itself — a clean git operation is coordination, not
-code — in dependency order, one child at a time:
-
-- `land` — `bbs ticket land <child>` from the primary checkout. Revert any
-   scratch composition first (`bbs ticket surface revert`); `land` BLOCKs on
-   a nonempty `bbs-serving` marker. It merges locally and never pushes. After
-   the finish receipt is persisted and the landed head is verified on base,
-   run `BABYSIT_TICKET="$CHILD" bbs ticket set-status done`.
-- `pr` — invoke the real `create-pr` skill for that child as soon as its
-   gates pass; a PR does not mutate base, so final integration QA does not
-   hold PR creation, but it still gates project completion. Read back the
-   child's `pointers.pr` and `in_review` status persisted
-   by `create-pr`; do not repeat those writes. It becomes `done`
-   only after the PR is observed merged.
-- `review` — no merge is authorized. Run Orca worktree close-out and keep the
-   clean branch and Git worktree for human inspection. Run
-   `BABYSIT_TICKET="$CHILD" bbs ticket set-status in_review`.
-
-After a successful `review`, `land`, or `pr`: archive the settled worker's
-output, `worker-release` it, release the resource lease, and run Orca worktree
-close-out. After `land` or `pr`, also remove the verified-clean non-primary Git
-worktree with ordinary `git worktree remove`; keep the branch. On any failure
-or hold, close settled terminals but keep the Git worktree recoverable.
-
-**Orca worktree close-out** — `worker-release` closes only the one agent
-terminal its Dispatch owns. Before any bulk close, prove nothing supervised is
-still live in that worktree: every Dispatch recorded on the ticket is settled,
-and `orca orchestration worker-list --run <run_id> --terminal-state active
---include-remote --json` shows no worker placed at that path — a `reclaimable`
-row there gets its own `worker-release` first. Then close every other terminal
-and harness process owned by that exact ticket worktree:
-
-```bash
-orca terminal close --worktree path:<worktreePath> --all --json
-orca tab list --worktree path:<worktreePath> --json        # then per row:
-orca tab close --page <browserPageId> --json
-orca emulator list --worktree path:<worktreePath> --json   # then per row:
-orca emulator kill --emulator <id> --json
-orca terminal list --worktree path:<worktreePath> --json   # verify: zero rows
-orca worktree set --worktree path:<worktreePath> \
-  --workspace-status <in-review|completed> --json          # in-review under
-                                                          #   review/pr, completed under land
-orca automations list --json                               # land/pr only: rows whose
-                                                          #   runContext.path matches
-orca automations edit <id> --disabled --json               #   disable, keep history
-git worktree remove <worktreePath>                          # land/pr only; last
-```
-
-The bulk terminal close is mandatory even under `review`: it stops setup
-shells, agent harnesses, and configured terminal tabs instead of leaving zombie
-processes beside a dormant checkout. Never run it while a Dispatch is active or
-unverifiable. `selector_not_found` on a `path:` selector means Orca tracks
-nothing there — the clean case, not an error. A surface that refuses to close
-keeps the Git worktree recoverable like any other hold. Never substitute
-`orca worktree rm`: it also tries to delete the checked-out local branch, which
-the ticket keeps — so after `git worktree remove` the Orca worktree record
-stays behind pointing at a deleted path. That stale card is expected; it is
-not a reason to run `worktree rm`, which would delete the branch outright once
-the checkout is gone.
-
-Failure routing — never blind-retry an unchanged state:
-
-- surface-lease contention → leave the child eligible; the next tick retries;
-- stale or `ready:false` readiness → return the child to verification
-  (re-run the affected gate in its worktree) before landing;
-- merge conflict → a supervised repair Dispatch in the child's worktree
-  resolves it (merge `origin/<base>` in, never local base); keep the
-  worktree and do not retry the land until that Dispatch settles;
-- a `land` BLOCK that is not a conflict (dirty primary, off-base checkout,
-  scratch marker) → report it in the tick output and stop retrying until the
-  primary state changes;
-- a discarded merge — a `surface compose`/`revert` reset base after the
-  land, so the branch is no longer an ancestor — → re-land at the next tick;
-  if the worktree was already removed, recreate it from the recorded branch
-  first (`land` evaluates readiness inside it);
-- a `create-pr` failure → retry once at the next tick, then mark the child
-  blocked with evidence.
-
-On resume, recognize a finish receipt before evaluating worktree-bound
-readiness. Persist each successful handler's action, verified branch/head and
-dependency SHAs, gate evidence paths, and PR URL or landed revision in the
-child handoff before removing its worktree. A `pointers.pr` link or
-`git merge-base --is-ancestor` result is a recovery lead, not proof of current
-acceptance. Verify the receipt still matches current scope and revisions; for
-`pr`, read the PR's state and head (an open or merged PR's head must match the
-verified revision; later unverified commits and closed-unmerged PRs are not a
-successful finish). For `land`, verify the
-recorded head remains in base. Reuse valid evidence without recreating a
-worktree just to run readiness; missing/stale proof requires reconstruction
-from the recorded branch and re-verification. For a changed PR head, first
-fetch and inspect that actual head; do not re-verify an obsolete local branch
-and call the remote change covered. Preserve any divergent local work and
-dispatch reconciliation without force-pushing. Recover a lost receipt from
-actual handler state and existing gate evidence, never by assuming success.
+Read [delivery](references/delivery.md) when a child settles or delivery needs recovery. It owns dependency-order finish, exact PR heads, worker release and worktree cleanup.
 
 ## Finish and cleanup
 
@@ -792,7 +456,8 @@ The eager pass finishes most children; this sequence is the fallback for
 what it could not — held lands, failed handlers, mandatory final Integration
 QA on the delivered branch, and the terminal heartbeat.
 
-Start the finish handlers only after every parent acceptance criterion has
+Seal verified children with `bbs foreman seal` before finish/cleanup as described
+in execution.md. Start the finish handlers only after every parent acceptance criterion has
 per-ticket or preliminary integration evidence,
 every required code-bearing child has current passing `review-pr` + `qa`
 evidence, every evidence-only child has its workflow verdict and artifacts,
@@ -832,22 +497,25 @@ and bulk-close it once Orca proves no Dispatch remains active. Never use
 `--force`, broad Git worktree removal, or terminal-close commands in place of
 Orca `worker-release`.
 
-After child close-out, set the parent ticket to `done` when every required
-change landed locally or every child was evidence-only. Under `review` or while
-any created PR is still open, set the parent to `in_review`; only an observed
-merge closes those PR-backed tickets. This ticket status records delivery
-state and is separate from the Foreman process heartbeat below.
+After child close-out, `foreman complete` sets the parent ticket to `done`
+when every required change landed locally or every child was evidence-only.
+Under `review` or while any created PR is still open, it sets the parent to
+`in_review`; only an observed merge closes those PR-backed tickets. This ticket
+status records delivery state separately from the coordinator completion.
 
-The terminal write is the `done` heartbeat, and it is last:
+The terminal write is validated completion, and it is last:
 
 ```bash
-bbs foreman heartbeat "$FOREMAN_ID" --status done
+bbs foreman readiness "$PARENT" --action finish --json
+bbs foreman complete "$PARENT" --foreman "$FOREMAN_ID"
 ```
 
-`Record.Status == done` is the only completion signal the external watcher
-consumes. Write it only after every durable gate, finish handler, worker
-release, and eligible worktree cleanup succeeded; the record never completes
-from prose, a `worker_done` message, or a printed status block. The user-facing
+Require `data.ready: true` before complete. The completion receipt is the
+only completion signal the external watcher accepts alongside `Record.Status
+== done`. `heartbeat --status done` cannot bypass it. Complete only after every
+durable gate, finish handler, worker release, and eligible worktree cleanup
+succeeded; the record never completes from prose, a `worker_done` message, or a
+printed status block. The user-facing
 terminal report comes first. After a short delivery grace, the external
 `bbs foreman watch` closes the exact adopted Foreman terminal tab, which stops
 the coordinator harness without closing unrelated terminals in its shared

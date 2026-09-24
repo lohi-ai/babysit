@@ -9,6 +9,7 @@ import { Field, inputStyle } from '../components/Field';
 import { Markdown } from '../components/Markdown';
 import { PrototypeFrame } from '../components/PrototypeFrame';
 import { ApprovalPanel } from './ApprovalPanel';
+import { ProjectPanel } from './ProjectPanel';
 import { Modal } from '../components/Modal';
 import { controlTone } from '../components/ControlChip';
 import { TopBar } from '../components/TopBar';
@@ -21,7 +22,7 @@ import { useScopedTicketDetail, useScopedTickets } from '../lib/scope';
 // Split rather than ordered, because the split is what keeps the strip from
 // overflowing: eight tabs pushed Reviews off a 1440px screen entirely.
 type Tab =
-  | 'requirement' | 'plan' | 'dag' | 'prototype' | 'handoffs' | 'qa'
+  | 'project' | 'requirement' | 'plan' | 'dag' | 'prototype' | 'handoffs' | 'qa'
   | 'activity' | 'reviews' | 'manifest' | 'repos' | 'approval';
 
 const OVERFLOW: Tab[] = ['activity', 'reviews', 'manifest', 'repos', 'approval'];
@@ -88,6 +89,7 @@ export function TicketDetail({ snapshot, ticketId }: { snapshot: Snapshot; ticke
   // unclickable teaches nothing that "no Plan tab" does not.
   const qaCount = detail ? detail.verdicts.length + detail.evidence.length : 0;
   const tabs: TabSpec[] = detail ? ([
+    { key: 'project',     label: 'Project',     available: !!detail.project_contract || !!detail.manifest || !!detail.children?.length },
     { key: 'requirement', label: 'Requirement', available: !!detail.requirement },
     { key: 'plan',        label: 'Plan',        available: !!detail.plan },
     { key: 'dag',         label: 'DAG',         count: detail.dag?.counts.nodes, available: !!detail.dag },
@@ -212,6 +214,7 @@ export function TicketDetail({ snapshot, ticketId }: { snapshot: Snapshot; ticke
         </div>
 
         <div className="pt-4" id={TABPANEL_ID} role="tabpanel">
+          {activeTab === 'project' && <ProjectPanel project={project} ticket={detail.id} />}
           {activeTab === 'requirement' && detail.requirement && <Markdown source={detail.requirement} />}
           {activeTab === 'plan' && detail.plan && <Markdown source={detail.plan} />}
           {activeTab === 'dag' && detail.dag && <DagPanel dag={detail.dag} />}
@@ -1014,7 +1017,7 @@ function StatusStrip({
     { label: 'Foreman', value: foreman },
     { label: 'QA', value: <Tag tone={VERDICT_TONE[qa] ?? 'muted'}>{qa}</Tag> },
     { label: 'Review', value: <Tag tone={VERDICT_TONE[review] ?? 'muted'}>{review}</Tag> },
-    { label: 'Readiness', value: readinessValue(readiness) },
+    { label: 'Readiness', value: detail.project_contract || detail.children?.length ? <span>See Project tab</span> : readinessValue(readiness) },
     { label: 'Size', value: detail.size ?? '—' },
     { label: 'Updated', value: <span title={formatDate(detail.updated_at)}>{formatRelative(detail.updated_at)}</span> },
   ];

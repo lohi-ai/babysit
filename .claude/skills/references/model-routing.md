@@ -143,7 +143,11 @@ Escalate one Dispatch at a time, and only when one of these holds:
 - the ticket is on the non-delegable floor — security, auth, money,
   irreversible or live-data migration — or is a cross-system architecture
   decision, **and** the workhorse already ran it and came back short: a
-  `BLOCKED`, an inadequate plan, or a gate that failed on reasoning.
+  `BLOCKED`, an inadequate plan, or a gate that failed on reasoning, or
+- a bounded implementation attempt repeatedly failed the same accepted behavior
+  after a changed hypothesis, and the failure evidence identifies a model
+  capability gap. This permits an affected Build Dispatch to escalate too;
+  preserve retry counts and record the next-launch rationale.
 
 Name the trigger beside the model in the handoff, with the cost delta, and log
 it as the Taste decision. "It looks hard" is not a trigger — when in doubt stay

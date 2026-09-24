@@ -56,14 +56,18 @@ func runReadiness(args []string) {
 }
 
 func evaluateReadiness(env identity.Env, action string) (readinessResult, error) {
+	return evaluateReadinessIn(env, action, "")
+}
+
+func evaluateReadinessIn(env identity.Env, action, dir string) (readinessResult, error) {
 	a := &apState{slug: env.Slug, branch: env.Branch, ticket: env.Ticket, stateRoot: env.ProjectHome}
-	s, err := collectAutopilotSnapshot(a, env.Ticket)
+	s, err := collectAutopilotSnapshotIn(a, env.Ticket, dir)
 	if err != nil {
 		return readinessResult{}, err
 	}
 	result := readinessResult{
 		ContractVersion: 1, Action: action, Gates: s.Gates,
-		CurrentSubject: currentEvidenceSubject(s),
+		CurrentSubject: currentEvidenceSubjectIn(s, dir),
 	}
 	if s.Run != nil {
 		result.ContractVersion = s.Run.Contract
@@ -117,7 +121,7 @@ func evaluateReadiness(env identity.Env, action string) (readinessResult, error)
 		if readErr != nil {
 			return readinessResult{}, readErr
 		}
-		if err := validateAcceptedV2Evidence(ev, env, cp, gate, attemptID); err != nil {
+		if err := validateAcceptedV2EvidenceIn(ev, env, cp, gate, attemptID, gitOutIn(dir, "rev-parse", "--show-toplevel")); err != nil {
 			return readinessResult{}, fmt.Errorf("accepted %s evidence is invalid: %w", gate, err)
 		}
 		for _, reason := range evidenceReadinessReasons(ev, gate, result.CurrentSubject) {
@@ -129,7 +133,11 @@ func evaluateReadiness(env identity.Env, action string) (readinessResult, error)
 }
 
 func validateAcceptedV2Evidence(ev map[string]interface{}, env identity.Env, cp map[string]interface{}, gate, attemptID string) error {
-	if err := validateV2VerificationEvidence(ev, env); err != nil {
+	return validateAcceptedV2EvidenceIn(ev, env, cp, gate, attemptID, gitOut("rev-parse", "--show-toplevel"))
+}
+
+func validateAcceptedV2EvidenceIn(ev map[string]interface{}, env identity.Env, cp map[string]interface{}, gate, attemptID, top string) error {
+	if err := validateV2VerificationEvidenceIn(ev, env, top); err != nil {
 		return err
 	}
 	attempt, err := readAttemptRecordStrict(filepath.Join(ticket.New(env).Home(), "attempts", attemptID+".json"))
@@ -155,6 +163,10 @@ func validateAcceptedV2Evidence(ev map[string]interface{}, env identity.Env, cp 
 }
 
 func currentEvidenceSubject(s *autopilotSnapshot) map[string]interface{} {
+	return currentEvidenceSubjectIn(s, "")
+}
+
+func currentEvidenceSubjectIn(s *autopilotSnapshot, dir string) map[string]interface{} {
 	artifacts := map[string]string{}
 	for _, artifact := range s.Artifacts {
 		artifacts[artifact.Role] = artifact.Digest
@@ -167,12 +179,16 @@ func currentEvidenceSubject(s *autopilotSnapshot) map[string]interface{} {
 		"repo_id": repoID, "base_sha": s.Git.BaseSHA, "head_sha": s.Git.Head,
 		"tree_digest": s.Git.TreeDigest, "requirement_digest": artifacts["requirement"],
 		"plan_digest": artifacts["plan"], "policy_digest": s.Policy.Digest,
-		"surface_fingerprint": currentSurfaceFingerprint(),
+		"surface_fingerprint": surfaceFingerprintIn(dir),
 	}
 }
 
 func currentSurfaceFingerprint() string {
-	top := gitOut("rev-parse", "--show-toplevel")
+	return surfaceFingerprintIn("")
+}
+
+func surfaceFingerprintIn(dir string) string {
+	top := gitOutIn(dir, "rev-parse", "--show-toplevel")
 	var rows []map[string]string
 	for _, rel := range []string{
 		"go.mod", "go.sum", ".babysit/qa.yaml", "package.json", "package-lock.json",
@@ -205,7 +221,7 @@ func evidenceReadinessReasons(ev map[string]interface{}, gate string, current ma
 		reasons = append(reasons, "material_findings")
 	}
 	subject, _ := ev["subject"].(map[string]interface{})
-	for _, key := range []string{"repo_id", "base_sha", "tree_digest", "requirement_digest", "plan_digest", "policy_digest"} {
+	for _, key := range []string{"repo_id", "base_sha", "head_sha", "tree_digest", "requirement_digest", "plan_digest", "policy_digest"} {
 		if stringValue(subject[key]) != stringValue(current[key]) {
 			reasons = append(reasons, "stale_"+key)
 		}
@@ -353,6 +369,10 @@ func setV2VerificationEvidence(env identity.Env, body []byte) (string, error) {
 }
 
 func validateV2VerificationEvidence(ev map[string]interface{}, env identity.Env) error {
+	return validateV2VerificationEvidenceIn(ev, env, gitOut("rev-parse", "--show-toplevel"))
+}
+
+func validateV2VerificationEvidenceIn(ev map[string]interface{}, env identity.Env, top string) error {
 	required := []string{"ticket", "run_id", "attempt_id", "gate", "status", "result", "subject", "producer", "checks", "unresolved_findings", "limitations", "started_at", "completed_at"}
 	for _, key := range required {
 		if _, ok := ev[key]; !ok {
@@ -430,7 +450,6 @@ func validateV2VerificationEvidence(ev map[string]interface{}, env identity.Env)
 			return fmt.Errorf("PASS contradicts checks[%d].exit_code", i)
 		}
 		ticketHome := ticket.New(env).Home()
-		top := gitOut("rev-parse", "--show-toplevel")
 		resolvedCWD, err := resolveEvidencePath(cwd, ticketHome, top)
 		if err != nil {
 			return fmt.Errorf("checks[%d].cwd: %w", i, err)
@@ -478,9 +497,6 @@ func resolveEvidencePath(path string, roots ...string) (string, error) {
 		}
 		absRoot, _ := filepath.Abs(root)
 		absCandidate, _ := filepath.Abs(candidate)
-		if absCandidate != absRoot && !strings.HasPrefix(absCandidate, absRoot+string(os.PathSeparator)) {
-			continue
-		}
 		resolvedRoot, rootErr := filepath.EvalSymlinks(absRoot)
 		resolvedCandidate, candidateErr := filepath.EvalSymlinks(absCandidate)
 		if rootErr == nil && candidateErr == nil && (resolvedCandidate == resolvedRoot || strings.HasPrefix(resolvedCandidate, resolvedRoot+string(os.PathSeparator))) {

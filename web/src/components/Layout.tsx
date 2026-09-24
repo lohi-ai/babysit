@@ -65,6 +65,7 @@ export function Layout({
 }) {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
+  const [navigationOpen, setNavigationOpen] = useState(false);
 
   const scopeRef = useRef<FocusScope | null>(null);
   const filterKeyRef = useRef<(() => void) | null>(null) as FilterKeyRef;
@@ -126,9 +127,13 @@ export function Layout({
   return (
     <FocusScopeContext.Provider value={scopeRef}>
       <FilterKeyContext.Provider value={filterKeyRef}>
-      <div className="min-h-screen flex" style={{ backgroundColor: 'var(--surface-bg)', color: 'var(--text-primary)' }}>
+      <div className="min-h-screen flex flex-col sm:flex-row" style={{ backgroundColor: 'var(--surface-bg)', color: 'var(--text-primary)' }}>
+        <button type="button" className="sm:hidden min-h-11 px-6 text-left" aria-controls="bbs-navigation" aria-expanded={navigationOpen} onClick={() => setNavigationOpen(open => !open)}>
+          {navigationOpen ? 'Hide navigation' : 'Show navigation'}
+        </button>
         <nav
-          className="w-60 flex flex-col p-4 shrink-0 sticky top-0 self-start h-screen overflow-y-auto"
+          id="bbs-navigation"
+          className={`${navigationOpen ? 'flex' : 'hidden'} sm:flex w-full sm:w-60 flex-col p-4 shrink-0 sm:sticky top-0 self-start sm:h-screen overflow-y-auto`}
           style={{ backgroundColor: 'var(--surface-nav)', color: 'var(--text-nav)' }}
         >
           {snapshot ? (

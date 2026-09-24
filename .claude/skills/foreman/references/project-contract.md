@@ -18,14 +18,15 @@ Before child creation, worktrees, or production dispatch:
    contracts, acceptance ownership and integration checks. This is a preview
    of decomposition, not permission to spawn. Keep runtime ticket ids and
    status in relations/report, so progress does not rewrite approved design.
-3. Publish once with the parent in scope:
+3. Write the structured `project.json` acceptance contract through
+   `bbs foreman contract` (see execution.md), then publish with the parent in scope:
 
    ```bash
    BABYSIT_TICKET="$PARENT" bbs ticket approval publish --kind project-plan \
      --note "Review the project plan, design/prototype, and proposed tickets"
    ```
 
-   The record fingerprints requirement, plan, design, prototype and manifest
+   The record fingerprints requirement, plan, design, prototype, manifest and the structured project contract
    (respecting their pointers). `approval status` returns `stale` when those
    artifacts change or disappear; a stale record cannot be approved. Refresh
    the artifacts and re-publish it. Never overwrite a pending review's
@@ -174,3 +175,10 @@ acceptance evidence. Use a read-only QA worker; fixes go to owning children.
    retained lands, re-land and verify every required head before testing base
    again. Only current PASS (or justified evidence-only N/A), successful
    handlers and cleanup permit the final report and `done` heartbeat.
+
+## Executable completion
+
+Use the before/after evidence attempts and `bbs foreman complete` protocol in
+[execution.md](execution.md). Markdown reports remain readable context; the shared
+CLI/dashboard evaluator is the finish gate. Never infer readiness from command
+exit success alone: inspect `data.ready` and its reasons.

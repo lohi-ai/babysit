@@ -359,7 +359,16 @@ func TestWatchLaggingStatusEchoDoesNotRefund(t *testing.T) {
 // the external watcher closes its exact terminal tab. This lets the final
 // report render without leaving the coordinator harness alive indefinitely.
 func TestWatchClosesDoneForemanAfterDeliveryGrace(t *testing.T) {
+	st, _, _ := verifiedExecution(t)
+	originalPath := os.Getenv("PATH")
 	client, r, _, log := watchFixture(t)
+	t.Setenv("PATH", os.Getenv("PATH")+string(os.PathListSeparator)+originalPath)
+	var completionErr error
+	captureStdout(t, func() { completionErr = projectComplete(st, r.ID) })
+	if completionErr != nil {
+		t.Fatal(completionErr)
+	}
+	r, _ = foreman.Load(r.ID)
 	completedAt := time.Now().UTC().Truncate(time.Second)
 	r.Status = "done"
 	r.Heartbeat = completedAt.Format(time.RFC3339)
@@ -392,7 +401,16 @@ func TestWatchClosesDoneForemanAfterDeliveryGrace(t *testing.T) {
 // grace cannot be proven, but leaving the terminal up re-selects the record
 // on every tick and wedges the watcher in CLOSE-BLOCKED forever.
 func TestWatchClosesDoneForemanWithBadHeartbeat(t *testing.T) {
+	st, _, _ := verifiedExecution(t)
+	originalPath := os.Getenv("PATH")
 	client, r, _, log := watchFixture(t)
+	t.Setenv("PATH", os.Getenv("PATH")+string(os.PathListSeparator)+originalPath)
+	var completionErr error
+	captureStdout(t, func() { completionErr = projectComplete(st, r.ID) })
+	if completionErr != nil {
+		t.Fatal(completionErr)
+	}
+	r, _ = foreman.Load(r.ID)
 	r.Status = "done"
 	r.Heartbeat = "not-a-timestamp"
 	if err := foreman.Save(r); err != nil {

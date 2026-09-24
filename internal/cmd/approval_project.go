@@ -31,6 +31,14 @@ func projectApprovalRevision(st *ticket.Store, doc ticket.Doc) (string, error) {
 		}
 		fmt.Fprintf(h, "%s\x00%s\x00%t\x00%x\n", name, path, err == nil, sha256.Sum256(body))
 	}
+	// Preserve legacy fingerprints until a structured contract is introduced.
+	// Its durable pointer makes removal an error, never a return to legacy.
+	path := projectContractPath(st)
+	if body, err := os.ReadFile(path); err == nil {
+		fmt.Fprintf(h, "project_contract\x00%x\n", sha256.Sum256(body))
+	} else if !os.IsNotExist(err) || doc.Get("pointers.project_contract") != "" {
+		return "", fmt.Errorf("project contract: %w", err)
+	}
 	return fmt.Sprintf("%x", h.Sum(nil)), nil
 }
 
